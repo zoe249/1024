@@ -879,7 +879,7 @@
     "_id": "49dLw+HndLraMaOQEpsIVw"
   },
   {
-    "__type__": "dc01bWyR6xAb6UC4MrehYt2",
+    "__type__": "fb23bCRN9pK3aMz5OXGm9Sg",
     "_name": "",
     "_objFlags": 0,
     "__editorExtras__": {},
@@ -888,7 +888,11 @@
     },
     "_enabled": true,
     "__prefab": null,
-    "_id": "aaJDihLbZJp4nl/24aP1wK"
+    "basePieceController": {
+      "__uuid__": "b917f987-1be4-44ee-9e0c-44255523fe3e",
+      "__expectedType__": "cc.Prefab"
+    },
+    "_id": "dbWPmc0yBGU7olYX6FbrrD"
   },
   {
     "__type__": "cc.UITransform",
