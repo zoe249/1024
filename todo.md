@@ -1,8 +1,8 @@
 ## 棋盘结构
 
 ```typescript
-// 十行五列
-const ROW = 10
+// 七行五列
+const ROW = 7
 const COL = 5
 
 let board: number[][] = Array.from({ length: ROW }, () => Array(COL).fill(0))

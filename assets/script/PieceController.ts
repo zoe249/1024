@@ -58,7 +58,7 @@ export class PieceController extends Component {
   fastSpeed: number = 500
 
   private currentSpeed: number = 200
-  private isFalling: boolean = true
+  isFalling: boolean = true
 
   start() {}
 
