@@ -176,8 +176,6 @@ export class PlayController extends Component {
     if (!this.currentPiece || this.isGameOver || this.isResolving || this.isPaused) {
       return
     }
-
-    this.isFastDropping = false
   }
 
   private resetBoard() {
@@ -1035,7 +1033,7 @@ export class PlayController extends Component {
       return
     }
 
-    this.statusLabel.string = `Current ${value} - Drag to choose column, release to fast drop`
+    this.statusLabel.string = `Current ${value} - Drag to choose column, tap to fast drop until landing`
   }
 
   private refreshPauseButton() {
