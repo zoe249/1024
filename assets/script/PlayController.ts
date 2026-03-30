@@ -1,9 +1,10 @@
-import {
+﻿import {
   _decorator,
   Button,
   Color,
   Component,
   EventTouch,
+  Graphics,
   instantiate,
   Label,
   Node,
@@ -39,6 +40,21 @@ type DirectedMergeResult = {
 }
 
 const MAX_ACTIVE_FX = 18
+const BOARD_BORDER_WIDTH = 20
+// Match the board inner corner radius with the piece corner radius.
+const BOARD_INNER_RADIUS = 8
+// Draw the board entirely in code and keep the fill and border on one graphics layer.
+const BOARD_FRAME_COLOR = new Color(255, 215, 0, 255)
+const BOARD_FILL_COLOR = new Color(255, 175, 0, 255)
+// Match the outer corner to a true 20px ring so the border and fill stay seamless.
+const BOARD_OUTER_RADIUS = BOARD_INNER_RADIUS + BOARD_BORDER_WIDTH
+// Use softer rounded dash blocks so the separators blend into the board fill.
+const BOARD_DASH_WIDTH = 4
+const BOARD_DASH_LENGTH = 16
+const BOARD_DASH_GAP = 12
+const BOARD_DASH_INSET = 16
+const BOARD_DASH_RADIUS = 2
+const BOARD_DASH_COLOR = new Color(223, 146, 10, 150)
 
 @ccclass('PlayController')
 export class PlayController extends Component {
@@ -73,6 +89,7 @@ export class PlayController extends Component {
   spawnOffsetY = 160
 
   private readonly basePieceList = [2, 4, 8, 16, 32, 64, 128]
+  // 浜岀淮鏁扮粍琛ㄧず浜斿垪涓冭鐨勬鐩橈紝绌轰綅涓?null
   private board: BoardCell[][] = []
   private currentPiece: PieceController | null = null
   private currentColumn = 0
@@ -87,16 +104,17 @@ export class PlayController extends Component {
   private pauseOverlayHint: Label | null = null
   private trailTimer = 0
   private activeFx = new Set<Node>()
-
+  // 先初始化棋盘/背景/状态提示与输入
   onLoad() {
     this.resetBoard()
     this.fitBackgroundToScreen()
+    this.ensureBoardDecorations()
     this.ensureStatusLabel()
     this.ensurePauseButton()
     this.ensurePauseOverlay()
     this.bindInput()
   }
-
+  // Scene 初始后再生成第一颗棋子
   start() {
     this.spawnPiece()
   }
@@ -108,6 +126,7 @@ export class PlayController extends Component {
     this.node.getChildByName('PauseButton')?.off(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
   }
 
+  // 姣忓抚鏇存柊锛氳绠楄惤鐐广€佺Щ鍔ㄥ綋鍓嶆瀛愩€佽Е鍙戣惤鍦伴€昏緫
   update(dt: number) {
     if (!this.currentPiece || this.isGameOver || this.isResolving || this.isPaused) {
       return
@@ -142,12 +161,13 @@ export class PlayController extends Component {
     }
   }
 
+  // 缁戝畾鍏ㄥ眬瑙︽懜浜嬩欢锛岀敤浜庡揩閫熶笅钀戒笌鍒楅€夋嫨
   private bindInput() {
     this.node.on(Node.EventType.TOUCH_START, this.handleTouchStart, this)
     this.node.on(Node.EventType.TOUCH_END, this.handleTouchEnd, this)
     this.node.on(Node.EventType.TOUCH_CANCEL, this.handleTouchEnd, this)
   }
-
+  // 触摸按下时确定列并开启快速下落
   private handleTouchStart(event: EventTouch) {
     if (this.isGameOver) {
       void this.restartGame()
@@ -172,19 +192,21 @@ export class PlayController extends Component {
     }
   }
 
+  // 瑙︽懜鎶捣鏃跺仠姝㈠姞閫燂紙鐩墠閫昏緫浠呴噸缃揩钀芥爣璁帮級
   private handleTouchEnd() {
     if (!this.currentPiece || this.isGameOver || this.isResolving || this.isPaused) {
       return
     }
   }
 
+  // 閲嶇疆妫嬬洏鏁版嵁骞堕粯璁ゆ媺鍒颁腑闂村垪
   private resetBoard() {
     this.board = Array.from({ length: this.boardheight }, () =>
       Array.from({ length: this.boardwidth }, () => null)
     )
     this.currentColumn = Math.floor(this.boardwidth / 2)
   }
-
+  // 生成下一颗棋子并放到 spawn 区
   private spawnPiece() {
     if (this.isBoardFull() || !this.basePieceController) {
       this.endGame()
@@ -203,6 +225,11 @@ export class PlayController extends Component {
       pieceNode.destroy()
       return
     }
+    const pieceTransform = pieceNode.getComponent(UITransform)
+    if (pieceTransform) {
+      // Keep the prefab visuals in sync with the gameplay cell size.
+      pieceTransform.setContentSize(this.pieceSize, this.pieceSize)
+    }
 
     const value = this.basePieceList[Math.floor(Math.random() * this.basePieceList.length)]
     this.currentColumn = column
@@ -216,6 +243,7 @@ export class PlayController extends Component {
     this.refreshStatus()
   }
 
+  // 妫嬪瓙钀藉湴锛氬啓鍏ユ鐩樸€佸紑濮嬫秷闄ら摼
   private async landPiece(row: number, column: number) {
     if (!this.currentPiece || this.isResolving) {
       return
@@ -242,6 +270,7 @@ export class PlayController extends Component {
     this.spawnPiece()
   }
 
+  // 閫愯疆搴旂敤閲嶅姏涓庡悎骞讹紝鐩村埌妫嬬洏绋冲畾
   private async settleBoard(preferredAnchor: PieceController | null) {
     while (true) {
       const moved = await this.applyGravityAllColumns()
@@ -259,6 +288,7 @@ export class PlayController extends Component {
     }
   }
 
+  // 鎺㈡祴褰撳墠钀界偣闄勮繎鏄惁鑳藉舰鎴愯繛閿佸悎骞讹紝浼樺厛缁х画鍚戜笂婊氬姩
   private async resolveLandingChain(anchor: PieceController): Promise<DirectedMergeResult> {
     let currentAnchor: PieceController | null = anchor
     let changed = false
@@ -276,7 +306,7 @@ export class PlayController extends Component {
 
     return { anchor: currentAnchor, changed }
   }
-
+  // 扫描全盘获取所有可合并组
   private findMergeGroups(preferredAnchor: PieceController | null) {
     const visited = Array.from({ length: this.boardheight }, () =>
       Array.from({ length: this.boardwidth }, () => false)
@@ -326,6 +356,7 @@ export class PlayController extends Component {
     return groups
   }
 
+  // 骞垮害浼樺厛鎼滅储杩為€氬潡
   private collectComponent(startRow: number, startColumn: number, visited: boolean[][]) {
     const startPiece = this.board[startRow][startColumn]
     if (!startPiece) {
@@ -365,7 +396,7 @@ export class PlayController extends Component {
 
     return component
   }
-
+  // 按照规则选出连通块的锚点
   private chooseAnchor(component: CellPosition[], preferredAnchor: PieceController | null) {
     if (preferredAnchor) {
       const preferredPos = this.findPiece(preferredAnchor)
@@ -395,7 +426,7 @@ export class PlayController extends Component {
       return current.column < best.column ? current : best
     })
   }
-
+  // 统一播放所有合并动画
   private async playMergeGroups(groups: MergeGroup[]) {
     const animations: Promise<void>[] = []
 
@@ -417,6 +448,7 @@ export class PlayController extends Component {
     await Promise.all(animations)
   }
 
+  // 鍙洿缁曡惤鐐规娴嬭繛閫氬潡锛屽苟鎶婂彲鍚堝苟鎴愬憳鍚搁檮鍒拌閿氱偣
   private async mergeLandingComponent(anchorPiece: PieceController): Promise<DirectedMergeResult> {
     const anchorPos = this.findPiece(anchorPiece)
     if (!anchorPos) {
@@ -465,6 +497,7 @@ export class PlayController extends Component {
     return { anchor: mergeAnchor, changed: true }
   }
 
+  // 閫夋嫨钀界偣鍒楀唴鏈€闈犱笂鐨勫渾蹇冿紝鑻ユ棤鍒欏洖閫€鍒版暣缁勬渶杩戠殑鏍煎瓙
   private chooseLandingAnchor(component: CellPosition[], landingColumn: number) {
     const sameColumn = component.filter(pos => pos.column === landingColumn)
     const candidates = sameColumn.length > 0 ? sameColumn : component
@@ -481,6 +514,7 @@ export class PlayController extends Component {
     })
   }
 
+  // 鍗曟潯鍚堝苟缁勭殑鍔ㄧ敾灏佽锛屽鐢?directed merge
   private async animateMergeGroup(
     anchor: PieceController,
     anchorPosition: Vec3,
@@ -490,6 +524,7 @@ export class PlayController extends Component {
     await this.animateDirectedMerge(anchor, anchorPosition, consumed, nextValue)
   }
 
+  // 鍏ㄧ洏涓嬭惤锛氭墍鏈夊垪鏀剁缉鍒版渶搴曢儴
   private async applyGravityAllColumns() {
     const animations: Promise<void>[] = []
     let moved = false
@@ -523,7 +558,7 @@ export class PlayController extends Component {
 
     return moved
   }
-
+  // 指定列重力落下
   private async applyGravityColumns(columns: number[]) {
     const uniqueColumns = [...new Set(columns)].filter(column => column >= 0 && column < this.boardwidth)
     if (uniqueColumns.length === 0) {
@@ -562,7 +597,7 @@ export class PlayController extends Component {
 
     return moved
   }
-
+  // 缓动节点移动到目标格子
   private animateMove(node: Node, position: Vec3, duration: number) {
     Tween.stopAllByTarget(node)
     return new Promise<void>(resolve => {
@@ -572,7 +607,7 @@ export class PlayController extends Component {
         .start()
     })
   }
-
+  // 吸附并回弹合成特效
   private async animateDirectedMerge(
     anchor: PieceController,
     anchorPosition: Vec3,
@@ -613,7 +648,7 @@ export class PlayController extends Component {
         .start()
     })
   }
-
+  // 控制下落拖尾的生成节奏
   private updateFallingTrail(dt: number) {
     if (!this.currentPiece) {
       return
@@ -628,7 +663,7 @@ export class PlayController extends Component {
     this.trailTimer = 0
     this.spawnTrailParticles(this.currentPiece)
   }
-
+  // 根据速度生成拖尾粒子
   private spawnTrailParticles(piece: PieceController) {
     const count = this.isFastDropping ? 2 : 1
     if (!this.canSpawnFx(count)) {
@@ -685,6 +720,7 @@ export class PlayController extends Component {
     }
   }
 
+  // 绠€鍗曠殑鍚堟垚闂厜
   private spawnMergeFlash(anchor: PieceController, position: Vec3, strength: number) {
     if (!this.canSpawnFx(1)) {
       return
@@ -711,7 +747,7 @@ export class PlayController extends Component {
       .call(() => this.destroyFxNode(flash))
       .start()
   }
-
+  // 合成时的爆裂粒子
   private spawnMergeBurst(anchor: PieceController, position: Vec3, strength: number) {
     const count = Math.min(4, 2 + strength)
     if (!this.canSpawnFx(count)) {
@@ -748,6 +784,7 @@ export class PlayController extends Component {
     }
   }
 
+  // 涓存椂绮掑瓙鑺傜偣澶嶇敤妫嬪瓙璐村浘
   private createFxPiece(source: PieceController) {
     const node = new Node('FxPiece')
     const transform = node.addComponent(UITransform)
@@ -760,15 +797,16 @@ export class PlayController extends Component {
     return node
   }
 
+  // 閬垮厤鐗规晥鑺傜偣杩囧
   private canSpawnFx(count: number) {
     return this.activeFx.size + count <= MAX_ACTIVE_FX
   }
-
+  // 销毁并移除特效节点
   private destroyFxNode(node: Node) {
     this.activeFx.delete(node)
     node.destroy()
   }
-
+  // 停止并清理所有运行中粒子
   private clearTransientFx() {
     for (const node of this.activeFx) {
       Tween.stopAllByTarget(node)
@@ -781,6 +819,7 @@ export class PlayController extends Component {
     this.activeFx.clear()
   }
 
+  // 鏌ユ壘涓€涓瀛愬綋鍓嶅湪妫嬬洏涓殑浣嶇疆
   private findPiece(target: PieceController) {
     for (let row = 0; row < this.boardheight; row++) {
       for (let column = 0; column < this.boardwidth; column++) {
@@ -793,10 +832,11 @@ export class PlayController extends Component {
     return null
   }
 
+  // 鍒ゆ柇鍧愭爣鏄惁鍦ㄦ鐩樺唴
   private isInsideBoard(row: number, column: number) {
     return row >= 0 && row < this.boardheight && column >= 0 && column < this.boardwidth
   }
-
+  // 检查每列是否已满
   private isBoardFull() {
     for (let column = 0; column < this.boardwidth; column++) {
       if (this.getDropRow(column) >= 0) {
@@ -805,7 +845,7 @@ export class PlayController extends Component {
     }
     return true
   }
-
+  // 返回某列第一个空行
   private getDropRow(column: number) {
     for (let row = 0; row < this.boardheight; row++) {
       if (!this.board[row][column]) {
@@ -814,7 +854,7 @@ export class PlayController extends Component {
     }
     return -1
   }
-
+  // 找到离目标列最近的可用列
   private getNearestAvailableColumn(preferredColumn: number) {
     if (preferredColumn >= 0 && preferredColumn < this.boardwidth && this.getDropRow(preferredColumn) >= 0) {
       return preferredColumn
@@ -835,6 +875,7 @@ export class PlayController extends Component {
     return -1
   }
 
+  // 鏍规嵁鐐瑰嚮浣嶇疆鎹㈢畻鍑鸿惤鍦ㄧ鍑犲垪
   private getColumnFromTouch(event: EventTouch) {
     const uiTransform = this.node.getComponent(UITransform)
     if (!uiTransform) {
@@ -844,24 +885,202 @@ export class PlayController extends Component {
     const uiLocation = event.getUILocation()
     const local = uiTransform.convertToNodeSpaceAR(new Vec3(uiLocation.x, uiLocation.y, 0))
     const step = this.getStepSize()
-    const column = Math.round((local.x - this.x) / step)
+    // Derive the grid origin from the live board size so touch columns stay aligned after board style changes.
+    const column = Math.round((local.x - this.getBoardGridOriginX()) / step)
     return Math.max(0, Math.min(this.boardwidth - 1, column))
   }
-
+  // 行列转屏幕坐标
   private getCellPosition(row: number, column: number) {
     const step = this.getStepSize()
-    return new Vec3(this.x + column * step, this.y + row * step, 0)
+    // Always place pieces from the current board inner rect so edge columns do not drift outside the frame.
+    return new Vec3(this.getBoardGridOriginX() + column * step, this.getBoardGridOriginY() + row * step, 0)
   }
-
+  // 获取生成点坐标
   private getSpawnPosition(column: number) {
     const step = this.getStepSize()
-    return new Vec3(this.x + column * step, this.y + this.boardheight * step + this.spawnOffsetY, 0)
+    // Reuse the same dynamic grid origin for spawn points so falling pieces line up with the board columns.
+    return new Vec3(
+      this.getBoardGridOriginX() + column * step,
+      this.getBoardGridOriginY() + this.boardheight * step + this.spawnOffsetY,
+      0
+    )
   }
 
+  // 鏍煎瓙涓庨棿璺濇€诲拰
   private getStepSize() {
     return this.pieceSize + this.spacing
   }
 
+  // Keep the board visuals aligned with the gameplay grid.
+  private ensureBoardDecorations() {
+    const boardNode = this.node.getChildByName('board')
+    if (!boardNode) {
+      return
+    }
+
+    const innerWidth = this.getBoardInnerWidth()
+    const innerHeight = this.getBoardInnerHeight()
+    const boardSprite = boardNode.getComponent(Sprite)
+    if (boardSprite) {
+      boardSprite.enabled = false
+    }
+    const boardGraphics = boardNode.getComponent(Graphics)
+    if (boardGraphics) {
+      boardGraphics.clear()
+      boardGraphics.enabled = false
+    }
+
+    let boardFrame = boardNode.getChildByName('BoardFrame')
+    if (!boardFrame) {
+      boardFrame = new Node('BoardFrame')
+      boardFrame.setParent(boardNode)
+    }
+    boardFrame.setPosition(0, 0, 0)
+    boardFrame.setSiblingIndex(0)
+
+    const frameTransform = boardFrame.getComponent(UITransform) ?? boardFrame.addComponent(UITransform)
+    frameTransform.setContentSize(
+      innerWidth + BOARD_BORDER_WIDTH * 2,
+      innerHeight + BOARD_BORDER_WIDTH * 2
+    )
+
+    const frameGraphics = boardFrame.getComponent(Graphics) ?? boardFrame.addComponent(Graphics)
+    frameGraphics.enabled = true
+    frameGraphics.clear()
+    // Fill the entire outer frame first so there is no seam between border and board background.
+    frameGraphics.fillColor = BOARD_FRAME_COLOR
+    frameGraphics.roundRect(
+      -innerWidth / 2 - BOARD_BORDER_WIDTH,
+      -innerHeight / 2 - BOARD_BORDER_WIDTH,
+      innerWidth + BOARD_BORDER_WIDTH * 2,
+      innerHeight + BOARD_BORDER_WIDTH * 2,
+      BOARD_OUTER_RADIUS
+    )
+    frameGraphics.fill()
+    // Cover the center with the board color so the visible result is a seamless rounded ring.
+    frameGraphics.fillColor = BOARD_FILL_COLOR
+    frameGraphics.roundRect(
+      -innerWidth / 2,
+      -innerHeight / 2,
+      innerWidth,
+      innerHeight,
+      BOARD_INNER_RADIUS
+    )
+    frameGraphics.fill()
+
+    const boardFill = boardNode.getChildByName('BoardFill')
+    if (boardFill) {
+      boardFill.setPosition(0, 0, 0)
+      boardFill.setSiblingIndex(1)
+      const fillTransform = boardFill.getComponent(UITransform)
+      if (fillTransform) {
+        fillTransform.setContentSize(innerWidth, innerHeight)
+      }
+      const fillSprite = boardFill.getComponent(Sprite)
+      if (fillSprite) {
+        fillSprite.enabled = false
+      }
+      const fillGraphics = boardFill.getComponent(Graphics) ?? boardFill.addComponent(Graphics)
+      fillGraphics.enabled = false
+      fillGraphics.clear()
+    }
+
+    for (let column = 0; column < this.boardwidth; column++) {
+      const columnNode = boardNode.getChildByName(`column${column + 1}`)
+      if (!columnNode) {
+        continue
+      }
+
+      columnNode.setPosition(this.getBoardColumnCenterX(column), 0, 0)
+      const columnTransform = columnNode.getComponent(UITransform)
+      if (columnTransform) {
+        columnTransform.setContentSize(innerWidth / this.boardwidth, innerHeight)
+      }
+
+      const columnSprite = columnNode.getComponent(Sprite)
+      if (columnSprite) {
+        columnSprite.enabled = false
+      }
+    }
+
+    let dashedLines = boardNode.getChildByName('BoardDashedLines')
+    if (!dashedLines) {
+      dashedLines = new Node('BoardDashedLines')
+      dashedLines.setParent(boardNode)
+    }
+    dashedLines.setPosition(0, 0, 0)
+
+    let dashedTransform = dashedLines.getComponent(UITransform)
+    if (!dashedTransform) {
+      dashedTransform = dashedLines.addComponent(UITransform)
+    }
+    dashedTransform.setContentSize(innerWidth, innerHeight)
+
+    let graphics = dashedLines.getComponent(Graphics)
+    if (!graphics) {
+      graphics = dashedLines.addComponent(Graphics)
+    }
+
+    graphics.clear()
+    graphics.fillColor = BOARD_DASH_COLOR
+
+    const top = innerHeight / 2 - BOARD_DASH_INSET
+    const bottom = -innerHeight / 2 + BOARD_DASH_INSET
+    for (let column = 0; column < this.boardwidth - 1; column++) {
+      const x = this.getBoardSeparatorX(column)
+      for (let y = bottom; y < top; y += BOARD_DASH_LENGTH + BOARD_DASH_GAP) {
+        const segmentEnd = Math.min(y + BOARD_DASH_LENGTH, top)
+        graphics.roundRect(
+          x - BOARD_DASH_WIDTH / 2,
+          y,
+          BOARD_DASH_WIDTH,
+          Math.max(0, segmentEnd - y),
+          BOARD_DASH_RADIUS
+        )
+      }
+    }
+    graphics.fill()
+  }
+
+  private getBoardInnerWidth() {
+    const boardTransform = this.node.getChildByName('board')?.getComponent(UITransform)
+    if (boardTransform) {
+      return boardTransform.width - BOARD_BORDER_WIDTH * 2
+    }
+
+    return this.getStepSize() * this.boardwidth
+  }
+
+  private getBoardInnerHeight() {
+    const boardTransform = this.node.getChildByName('board')?.getComponent(UITransform)
+    if (boardTransform) {
+      return boardTransform.height - BOARD_BORDER_WIDTH * 2
+    }
+
+    return this.getStepSize() * this.boardheight
+  }
+
+  private getBoardColumnCenterX(column: number) {
+    const columnWidth = this.getBoardInnerWidth() / this.boardwidth
+    return -this.getBoardInnerWidth() / 2 + columnWidth * (column + 0.5)
+  }
+
+  private getBoardSeparatorX(column: number) {
+    const columnWidth = this.getBoardInnerWidth() / this.boardwidth
+    return -this.getBoardInnerWidth() / 2 + columnWidth * (column + 1)
+  }
+
+  // Keep the logical grid origin locked to the current board inner width.
+  private getBoardGridOriginX() {
+    return -this.getBoardInnerWidth() / 2 + this.getStepSize() / 2
+  }
+
+  // Keep the logical grid origin locked to the current board inner height.
+  private getBoardGridOriginY() {
+    return -this.getBoardInnerHeight() / 2 + this.getStepSize() / 2
+  }
+
+  // 背景铺满屏幕
   private fitBackgroundToScreen() {
     const selfTransform = this.node.getComponent(UITransform)
     const parentTransform = this.node.parent?.getComponent(UITransform) ?? null
@@ -876,7 +1095,7 @@ export class PlayController extends Component {
       bgSprite.sizeMode = Sprite.SizeMode.CUSTOM
     }
   }
-
+  // 确保状态提示节点存在
   private ensureStatusLabel() {
     const existing = this.node.getChildByName('StatusLabel')
     if (existing) {
@@ -901,6 +1120,7 @@ export class PlayController extends Component {
     this.refreshStatus()
   }
 
+  // 淇濆簳鍒涘缓鏆傚仠鎸夐挳
   private ensurePauseButton() {
     const existing = this.node.getChildByName('PauseButton')
     if (existing) {
@@ -941,6 +1161,7 @@ export class PlayController extends Component {
     this.refreshPauseButton()
   }
 
+  // 淇濆簳鍒涘缓鏆傚仠閬僵
   private ensurePauseOverlay() {
     const existing = this.node.getChildByName('PauseOverlay')
     if (existing) {
@@ -992,6 +1213,7 @@ export class PlayController extends Component {
     this.refreshPauseOverlay()
   }
 
+  // 鏆傚仠鎸夐挳浜嬩欢
   private onPauseButtonTap(event: EventTouch) {
     event.propagationStopped = true
     if (this.isResolving || this.isGameOver) {
@@ -1006,7 +1228,7 @@ export class PlayController extends Component {
     this.refreshPauseButton()
     this.refreshPauseOverlay()
   }
-
+  // 更新状态栏文字
   private refreshStatus() {
     if (!this.statusLabel) {
       return
@@ -1036,6 +1258,7 @@ export class PlayController extends Component {
     this.statusLabel.string = `Current ${value} - Drag to choose column, tap to fast drop until landing`
   }
 
+  // 鏍规嵁鏆傚仠鐘舵€佽皟鏁存寜閽枃瀛?棰滆壊
   private refreshPauseButton() {
     if (!this.pauseButtonLabel) {
       return
@@ -1048,6 +1271,7 @@ export class PlayController extends Component {
     }
   }
 
+  // 鎺у埗閬僵鐨勬樉闅愪笌娣″叆
   private refreshPauseOverlay() {
     if (!this.pauseOverlay) {
       return
@@ -1073,14 +1297,14 @@ export class PlayController extends Component {
       this.pauseOverlayHint.string = 'Tap the top-right button to resume'
     }
   }
-
+  // 进入游戏结束流程
   private endGame() {
     this.isGameOver = true
     this.currentPiece = null
     this.clearTransientFx()
     this.refreshStatus()
   }
-
+  // 重新开始游戏并清空棋盘
   private async restartGame() {
     if (this.isResolving) {
       return

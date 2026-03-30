@@ -2,7 +2,7 @@
   "ver": "1.0.27",
   "importer": "image",
   "imported": true,
-  "uuid": "af1d401f-3669-447b-ac4c-e4ec2e543b03",
+  "uuid": "0b781da5-ef9b-4e03-bebe-2848be04f37b",
   "files": [
     ".json",
     ".png"
@@ -10,14 +10,14 @@
   "subMetas": {
     "6c48a": {
       "importer": "texture",
-      "uuid": "af1d401f-3669-447b-ac4c-e4ec2e543b03@6c48a",
+      "uuid": "0b781da5-ef9b-4e03-bebe-2848be04f37b@6c48a",
       "displayName": "yellowBtnTapped",
       "id": "6c48a",
       "name": "texture",
       "userData": {
         "wrapModeS": "clamp-to-edge",
         "wrapModeT": "clamp-to-edge",
-        "imageUuidOrDatabaseUri": "af1d401f-3669-447b-ac4c-e4ec2e543b03",
+        "imageUuidOrDatabaseUri": "0b781da5-ef9b-4e03-bebe-2848be04f37b",
         "isUuid": true,
         "visible": false,
         "minfilter": "linear",
@@ -34,7 +34,7 @@
     },
     "f9941": {
       "importer": "sprite-frame",
-      "uuid": "af1d401f-3669-447b-ac4c-e4ec2e543b03@f9941",
+      "uuid": "0b781da5-ef9b-4e03-bebe-2848be04f37b@f9941",
       "displayName": "yellowBtnTapped",
       "id": "f9941",
       "name": "spriteFrame",
@@ -49,10 +49,10 @@
         "height": 256,
         "rawWidth": 256,
         "rawHeight": 256,
-        "borderTop": 0,
-        "borderBottom": 0,
-        "borderLeft": 0,
-        "borderRight": 0,
+        "borderTop": 10,
+        "borderBottom": 10,
+        "borderLeft": 10,
+        "borderRight": 10,
         "packable": true,
         "pixelsToUnit": 100,
         "pivotX": 0.5,
@@ -113,7 +113,7 @@
           ]
         },
         "isUuid": true,
-        "imageUuidOrDatabaseUri": "af1d401f-3669-447b-ac4c-e4ec2e543b03@6c48a",
+        "imageUuidOrDatabaseUri": "0b781da5-ef9b-4e03-bebe-2848be04f37b@6c48a",
         "atlasUuid": "",
         "trimType": "auto"
       },
@@ -129,6 +129,6 @@
     "type": "sprite-frame",
     "fixAlphaTransparencyArtifacts": false,
     "hasAlpha": true,
-    "redirect": "af1d401f-3669-447b-ac4c-e4ec2e543b03@6c48a"
+    "redirect": "0b781da5-ef9b-4e03-bebe-2848be04f37b@6c48a"
   }
 }
