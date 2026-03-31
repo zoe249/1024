@@ -1,22 +1,6 @@
-﻿import {
-  _decorator,
-  Button,
-  Color,
-  Component,
-  EventTouch,
-  Graphics,
-  instantiate,
-  Label,
-  Node,
-  Prefab,
-  Sprite,
-  tween,
-  Tween,
-  UITransform,
-  UIOpacity,
-  Vec3
-} from 'cc'
+﻿import { _decorator, Color, Component, EventTouch, instantiate, Node, Prefab, Sprite, tween, Tween, UITransform, UIOpacity, Vec2, Vec3 } from 'cc'
 import { PieceController } from './PieceController'
+import { PlayUIController, type PlayUIState } from './PlayUIController'
 
 const { ccclass, property } = _decorator
 
@@ -44,22 +28,6 @@ type DirectedMergeResult = {
 
 // 控制同屏特效节点上限，避免频繁创建粒子导致卡顿。
 const MAX_ACTIVE_FX = 18
-// 棋盘边框厚度，所有棋盘内区与列宽都会基于这个值重新计算。
-const BOARD_BORDER_WIDTH = 20
-// 棋盘内层圆角与棋子圆角保持一致，保证视觉语言统一。
-const BOARD_INNER_RADIUS = 8
-// 棋盘边框与底色都由代码绘制，避免贴图圆角和代码圆角不一致。
-const BOARD_FRAME_COLOR = new Color(255, 215, 0, 255)
-const BOARD_FILL_COLOR = new Color(255, 175, 0, 255)
-// 外层圆角 = 内层圆角 + 边框厚度，这样得到的就是一圈真正厚度一致的外框。
-const BOARD_OUTER_RADIUS = BOARD_INNER_RADIUS + BOARD_BORDER_WIDTH
-// 虚线采用圆角短条，而不是硬边直线，让它和棋盘底色看起来更像一个整体。
-const BOARD_DASH_WIDTH = 4
-const BOARD_DASH_LENGTH = 16
-const BOARD_DASH_GAP = 12
-const BOARD_DASH_INSET = 16
-const BOARD_DASH_RADIUS = 2
-const BOARD_DASH_COLOR = new Color(223, 146, 10, 150)
 
 @ccclass('PlayController')
 export class PlayController extends Component {
@@ -119,30 +87,31 @@ export class PlayController extends Component {
   private isResolving = false
   // 暂停标记，暂停时 update 不再推动棋子下落。
   private isPaused = false
-  // 顶部状态栏文本。
-  private statusLabel: Label | null = null
-  // 右上角暂停按钮文字。
-  private pauseButtonLabel: Label | null = null
-  // 暂停遮罩节点。
-  private pauseOverlay: Node | null = null
-  private pauseOverlayTitle: Label | null = null
-  private pauseOverlayHint: Label | null = null
+  // UI 渲染组件，专门负责棋盘绘制、状态栏、控制栏和暂停遮罩。
+  private uiController: PlayUIController | null = null
   // 拖尾生成计时器，用来控制特效频率。
   private trailTimer = 0
   // 当前屏幕上仍未销毁的特效节点集合，便于统一清理。
   private activeFx = new Set<Node>()
-  // 生命周期入口：先准备棋盘数据、背景、棋盘装饰、UI 与输入绑定。
+  // 生命周期入口：先准备棋盘数据，再把界面初始化交给独立的 UI 组件。
   onLoad() {
     this.resetBoard()
-    this.fitBackgroundToScreen()
-    this.ensureBoardDecorations()
-    this.ensureStatusLabel()
-    this.ensurePauseButton()
-    this.ensurePauseOverlay()
+    this.uiController = this.getComponent(PlayUIController) ?? this.addComponent(PlayUIController)
+    // UI 组件只接收绘制所需参数和按钮回调，不参与玩法计算。
+    this.uiController.setup({
+      boardwidth: this.boardwidth,
+      boardheight: this.boardheight,
+      pieceSize: this.pieceSize,
+      spacing: this.spacing,
+      onPauseTap: () => this.togglePauseFromUi()
+    })
     this.bindInput()
   }
   // 等场景节点初始化完成后再生成第一颗棋子，避免引用未准备好的节点。
   start() {
+    // 某些平台会在启动后一帧才拿到稳定的安全区，这里让 UI 组件再补一次布局。
+    this.uiController?.syncLayout()
+    this.refreshUiState()
     this.spawnPiece()
   }
 
@@ -150,7 +119,7 @@ export class PlayController extends Component {
     this.node.off(Node.EventType.TOUCH_START, this.handleTouchStart, this)
     this.node.off(Node.EventType.TOUCH_END, this.handleTouchEnd, this)
     this.node.off(Node.EventType.TOUCH_CANCEL, this.handleTouchEnd, this)
-    this.node.getChildByName('PauseButton')?.off(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
+    this.uiController = null
   }
 
   // 每帧更新当前下落棋子的目标位置，并在接近落点时触发落地结算。
@@ -215,7 +184,7 @@ export class PlayController extends Component {
       this.currentColumn = availableColumn
       this.isFastDropping = true
       this.trailTimer = 0
-      this.refreshStatus()
+      this.refreshUiState()
     }
   }
 
@@ -267,7 +236,7 @@ export class PlayController extends Component {
     pieceNode.setPosition(this.getSpawnPosition(column))
     this.node.addChild(pieceNode)
     this.currentPiece = pieceController
-    this.refreshStatus()
+    this.refreshUiState()
   }
 
   // 棋子真正落地后写入棋盘，再触发定向合并与全盘结算。
@@ -282,13 +251,13 @@ export class PlayController extends Component {
     this.clearTransientFx()
     this.board[row][column] = landedPiece
     landedPiece.node.setPosition(this.getCellPosition(row, column))
-    this.refreshStatus()
+    this.refreshUiState()
 
     const directedResult = await this.resolveLandingChain(landedPiece)
     await this.settleBoard(directedResult.anchor)
 
     this.isResolving = false
-    this.refreshStatus()
+    this.refreshUiState()
     if (this.isBoardFull()) {
       this.endGame()
       return
@@ -910,11 +879,26 @@ export class PlayController extends Component {
     }
 
     const uiLocation = event.getUILocation()
+    // 棋盘外的触摸不参与列选择，避免底栏、状态栏等区域误触发加速下落。
+    if (!this.isTouchInsideBoard(uiLocation.x, uiLocation.y)) {
+      return -1
+    }
+
     const local = uiTransform.convertToNodeSpaceAR(new Vec3(uiLocation.x, uiLocation.y, 0))
     const step = this.getStepSize()
     // 棋盘尺寸和边框可能会调整，所以这里不能再依赖旧的固定 x 偏移。
     const column = Math.round((local.x - this.getBoardGridOriginX()) / step)
     return Math.max(0, Math.min(this.boardwidth - 1, column))
+  }
+
+  // 使用棋盘节点的世界包围盒判断触摸是否真的落在棋盘区域内。
+  private isTouchInsideBoard(x: number, y: number) {
+    const boardTransform = this.node.getChildByName('board')?.getComponent(UITransform)
+    if (!boardTransform) {
+      return false
+    }
+
+    return boardTransform.getBoundingBoxToWorld().contains(new Vec2(x, y))
   }
   // 把棋盘中的行列坐标换成节点本地坐标，所有落点、重力和合并都走这套换算。
   private getCellPosition(row: number, column: number) {
@@ -938,169 +922,34 @@ export class PlayController extends Component {
     return this.pieceSize + this.spacing
   }
 
-  // 用代码重建棋盘外框、底色、列宽和虚线，让视觉层与逻辑网格完全一致。
-  private ensureBoardDecorations() {
-    const boardNode = this.node.getChildByName('board')
-    if (!boardNode) {
-      return
-    }
-
-    const innerWidth = this.getBoardInnerWidth()
-    const innerHeight = this.getBoardInnerHeight()
-    const boardSprite = boardNode.getComponent(Sprite)
-    if (boardSprite) {
-      boardSprite.enabled = false
-    }
-    const boardGraphics = boardNode.getComponent(Graphics)
-    if (boardGraphics) {
-      boardGraphics.clear()
-      boardGraphics.enabled = false
-    }
-
-    let boardFrame = boardNode.getChildByName('BoardFrame')
-    if (!boardFrame) {
-      boardFrame = new Node('BoardFrame')
-      boardFrame.setParent(boardNode)
-    }
-    boardFrame.setPosition(0, 0, 0)
-    boardFrame.setSiblingIndex(0)
-
-    const frameTransform = boardFrame.getComponent(UITransform) ?? boardFrame.addComponent(UITransform)
-    frameTransform.setContentSize(
-      innerWidth + BOARD_BORDER_WIDTH * 2,
-      innerHeight + BOARD_BORDER_WIDTH * 2
-    )
-
-    const frameGraphics = boardFrame.getComponent(Graphics) ?? boardFrame.addComponent(Graphics)
-    frameGraphics.enabled = true
-    frameGraphics.clear()
-    // 先画完整外框底色，避免“先填充再描边”时出现边缘缝隙。
-    frameGraphics.fillColor = BOARD_FRAME_COLOR
-    frameGraphics.roundRect(
-      -innerWidth / 2 - BOARD_BORDER_WIDTH,
-      -innerHeight / 2 - BOARD_BORDER_WIDTH,
-      innerWidth + BOARD_BORDER_WIDTH * 2,
-      innerHeight + BOARD_BORDER_WIDTH * 2,
-      BOARD_OUTER_RADIUS
-    )
-    frameGraphics.fill()
-    // 再覆盖内层底色，最终得到一圈没有接缝的圆角边框。
-    frameGraphics.fillColor = BOARD_FILL_COLOR
-    frameGraphics.roundRect(
-      -innerWidth / 2,
-      -innerHeight / 2,
-      innerWidth,
-      innerHeight,
-      BOARD_INNER_RADIUS
-    )
-    frameGraphics.fill()
-
-    const boardFill = boardNode.getChildByName('BoardFill')
-    if (boardFill) {
-      boardFill.setPosition(0, 0, 0)
-      boardFill.setSiblingIndex(1)
-      const fillTransform = boardFill.getComponent(UITransform)
-      if (fillTransform) {
-        fillTransform.setContentSize(innerWidth, innerHeight)
-      }
-      const fillSprite = boardFill.getComponent(Sprite)
-      if (fillSprite) {
-        fillSprite.enabled = false
-      }
-      const fillGraphics = boardFill.getComponent(Graphics) ?? boardFill.addComponent(Graphics)
-      fillGraphics.enabled = false
-      fillGraphics.clear()
-    }
-
-    for (let column = 0; column < this.boardwidth; column++) {
-      const columnNode = boardNode.getChildByName(`column${column + 1}`)
-      if (!columnNode) {
-        continue
-      }
-
-      columnNode.setPosition(this.getBoardColumnCenterX(column), 0, 0)
-      const columnTransform = columnNode.getComponent(UITransform)
-      if (columnTransform) {
-        columnTransform.setContentSize(innerWidth / this.boardwidth, innerHeight)
-      }
-
-      // 列节点只保留占位和触摸对齐作用，不再使用原先的半透明背景。
-      const columnSprite = columnNode.getComponent(Sprite)
-      if (columnSprite) {
-        columnSprite.enabled = false
-      }
-    }
-
-    let dashedLines = boardNode.getChildByName('BoardDashedLines')
-    if (!dashedLines) {
-      dashedLines = new Node('BoardDashedLines')
-      dashedLines.setParent(boardNode)
-    }
-    dashedLines.setPosition(0, 0, 0)
-
-    let dashedTransform = dashedLines.getComponent(UITransform)
-    if (!dashedTransform) {
-      dashedTransform = dashedLines.addComponent(UITransform)
-    }
-    dashedTransform.setContentSize(innerWidth, innerHeight)
-
-    let graphics = dashedLines.getComponent(Graphics)
-    if (!graphics) {
-      graphics = dashedLines.addComponent(Graphics)
-    }
-
-    // 单独绘制 4 条列虚线，保持列分隔和棋盘本体在视觉上是一个整体。
-    graphics.clear()
-    graphics.fillColor = BOARD_DASH_COLOR
-
-    const top = innerHeight / 2 - BOARD_DASH_INSET
-    const bottom = -innerHeight / 2 + BOARD_DASH_INSET
-    for (let column = 0; column < this.boardwidth - 1; column++) {
-      const x = this.getBoardSeparatorX(column)
-      for (let y = bottom; y < top; y += BOARD_DASH_LENGTH + BOARD_DASH_GAP) {
-        const segmentEnd = Math.min(y + BOARD_DASH_LENGTH, top)
-        graphics.roundRect(
-          x - BOARD_DASH_WIDTH / 2,
-          y,
-          BOARD_DASH_WIDTH,
-          Math.max(0, segmentEnd - y),
-          BOARD_DASH_RADIUS
-        )
-      }
-    }
-    graphics.fill()
-  }
-
-  // 读取棋盘内区宽度；如果 scene 中存在 board 节点，优先按实际节点尺寸计算。
+  // 读取棋盘内区宽度；逻辑层优先读 BoardFill，避免继续依赖具体边框画法。
   private getBoardInnerWidth() {
+    const fillTransform = this.node.getChildByName('board')?.getChildByName('BoardFill')?.getComponent(UITransform)
+    if (fillTransform) {
+      return fillTransform.width
+    }
+
     const boardTransform = this.node.getChildByName('board')?.getComponent(UITransform)
     if (boardTransform) {
-      return boardTransform.width - BOARD_BORDER_WIDTH * 2
+      return boardTransform.width - 40
     }
 
     return this.getStepSize() * this.boardwidth
   }
 
-  // 读取棋盘内区高度；边框厚度变化后，这个值会自动随之更新。
+  // 读取棋盘内区高度；逻辑层只关心有效落子区域，不关心具体边框样式。
   private getBoardInnerHeight() {
+    const fillTransform = this.node.getChildByName('board')?.getChildByName('BoardFill')?.getComponent(UITransform)
+    if (fillTransform) {
+      return fillTransform.height
+    }
+
     const boardTransform = this.node.getChildByName('board')?.getComponent(UITransform)
     if (boardTransform) {
-      return boardTransform.height - BOARD_BORDER_WIDTH * 2
+      return boardTransform.height - 40
     }
 
     return this.getStepSize() * this.boardheight
-  }
-
-  // 计算每一列中心点的 x 坐标，供列节点和棋子落点共同使用。
-  private getBoardColumnCenterX(column: number) {
-    const columnWidth = this.getBoardInnerWidth() / this.boardwidth
-    return -this.getBoardInnerWidth() / 2 + columnWidth * (column + 0.5)
-  }
-
-  // 计算列与列之间分隔虚线所在的 x 坐标。
-  private getBoardSeparatorX(column: number) {
-    const columnWidth = this.getBoardInnerWidth() / this.boardwidth
-    return -this.getBoardInnerWidth() / 2 + columnWidth * (column + 1)
   }
 
   // 根据棋盘当前内区宽度计算左下角第一个格子的中心 x 坐标。
@@ -1113,142 +962,23 @@ export class PlayController extends Component {
     return -this.getBoardInnerHeight() / 2 + this.getStepSize() / 2
   }
 
-  // 背景铺满屏幕
-  private fitBackgroundToScreen() {
-    const selfTransform = this.node.getComponent(UITransform)
-    const parentTransform = this.node.parent?.getComponent(UITransform) ?? null
-    if (!selfTransform || !parentTransform) {
-      return
-    }
-
-    selfTransform.setContentSize(parentTransform.width, parentTransform.height)
-
-    const bgSprite = this.node.getComponent(Sprite)
-    if (bgSprite) {
-      bgSprite.sizeMode = Sprite.SizeMode.CUSTOM
-    }
-  }
-  // 确保状态提示节点存在
-  private ensureStatusLabel() {
-    const existing = this.node.getChildByName('StatusLabel')
-    if (existing) {
-      this.statusLabel = existing.getComponent(Label)
-      return
-    }
-
-    const labelNode = new Node('StatusLabel')
-    labelNode.setParent(this.node)
-    labelNode.setPosition(0, 565, 0)
-
-    const transform = labelNode.addComponent(UITransform)
-    transform.setContentSize(680, 80)
-
-    const label = labelNode.addComponent(Label)
-    label.fontSize = 28
-    label.lineHeight = 34
-    label.horizontalAlign = Label.HorizontalAlign.CENTER
-    label.color = new Color(250, 246, 242, 255)
-
-    this.statusLabel = label
-    this.refreshStatus()
+  // 把当前玩法状态统一推送给 UI 组件，避免逻辑层分别操作多个界面节点。
+  private refreshUiState() {
+    this.uiController?.renderState(this.buildUiState())
   }
 
-  // 确保暂停按钮存在；若 scene 里没有，就在运行时补建一个。
-  private ensurePauseButton() {
-    const existing = this.node.getChildByName('PauseButton')
-    if (existing) {
-      this.pauseButtonLabel = existing.getChildByName('Label')?.getComponent(Label) ?? null
-      existing.off(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
-      existing.on(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
-      this.refreshPauseButton()
-      return
+  // 逻辑层只暴露一份纯数据状态给 UI 层，保证职责边界清晰。
+  private buildUiState(): PlayUIState {
+    return {
+      currentValue: this.currentPiece?.getValue() ?? null,
+      isGameOver: this.isGameOver,
+      isPaused: this.isPaused,
+      isResolving: this.isResolving
     }
-
-    const buttonNode = new Node('PauseButton')
-    buttonNode.setParent(this.node)
-    buttonNode.setPosition(280, 575, 0)
-
-    const transform = buttonNode.addComponent(UITransform)
-    transform.setContentSize(140, 56)
-    buttonNode.addComponent(Button)
-
-    const bg = buttonNode.addComponent(Sprite)
-    bg.color = new Color(37, 55, 80, 235)
-
-    const labelNode = new Node('Label')
-    labelNode.setParent(buttonNode)
-    labelNode.setPosition(0, 0, 0)
-    const labelTransform = labelNode.addComponent(UITransform)
-    labelTransform.setContentSize(140, 56)
-
-    const label = labelNode.addComponent(Label)
-    label.string = 'Pause'
-    label.fontSize = 26
-    label.lineHeight = 30
-    label.horizontalAlign = Label.HorizontalAlign.CENTER
-    label.verticalAlign = Label.VerticalAlign.CENTER
-    label.color = new Color(245, 250, 255, 255)
-
-    buttonNode.on(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
-    this.pauseButtonLabel = label
-    this.refreshPauseButton()
   }
 
-  // 确保暂停遮罩存在；遮罩只负责视觉提示，不参与棋盘逻辑。
-  private ensurePauseOverlay() {
-    const existing = this.node.getChildByName('PauseOverlay')
-    if (existing) {
-      this.pauseOverlay = existing
-      this.pauseOverlayTitle = existing.getChildByName('Title')?.getComponent(Label) ?? null
-      this.pauseOverlayHint = existing.getChildByName('Hint')?.getComponent(Label) ?? null
-      this.refreshPauseOverlay()
-      return
-    }
-
-    const overlay = new Node('PauseOverlay')
-    overlay.setParent(this.node)
-    overlay.setSiblingIndex(999)
-    overlay.active = false
-    this.pauseOverlay = overlay
-
-    const overlayTransform = overlay.addComponent(UITransform)
-    overlayTransform.setContentSize(750, 1334)
-
-    const overlayBg = overlay.addComponent(Sprite)
-    overlayBg.color = new Color(10, 16, 24, 150)
-
-    const titleNode = new Node('Title')
-    titleNode.setParent(overlay)
-    titleNode.setPosition(0, 70, 0)
-    const titleTransform = titleNode.addComponent(UITransform)
-    titleTransform.setContentSize(420, 80)
-    const titleLabel = titleNode.addComponent(Label)
-    titleLabel.string = 'Paused'
-    titleLabel.fontSize = 54
-    titleLabel.lineHeight = 60
-    titleLabel.horizontalAlign = Label.HorizontalAlign.CENTER
-    titleLabel.color = new Color(250, 252, 255, 255)
-    this.pauseOverlayTitle = titleLabel
-
-    const hintNode = new Node('Hint')
-    hintNode.setParent(overlay)
-    hintNode.setPosition(0, -5, 0)
-    const hintTransform = hintNode.addComponent(UITransform)
-    hintTransform.setContentSize(500, 60)
-    const hintLabel = hintNode.addComponent(Label)
-    hintLabel.string = 'Tap the top-right button to resume'
-    hintLabel.fontSize = 24
-    hintLabel.lineHeight = 30
-    hintLabel.horizontalAlign = Label.HorizontalAlign.CENTER
-    hintLabel.color = new Color(210, 220, 235, 255)
-    this.pauseOverlayHint = hintLabel
-
-    this.refreshPauseOverlay()
-  }
-
-  // 点击暂停按钮时切换暂停状态，同时刷新状态栏、按钮文字和遮罩。
-  private onPauseButtonTap(event: EventTouch) {
-    event.propagationStopped = true
+  // UI 层按钮点击后只通过这个入口切换暂停，真正的状态变化仍由逻辑层维护。
+  private togglePauseFromUi() {
     if (this.isResolving || this.isGameOver) {
       return
     }
@@ -1257,85 +987,14 @@ export class PlayController extends Component {
     if (!this.isPaused) {
       this.trailTimer = 0
     }
-    this.refreshStatus()
-    this.refreshPauseButton()
-    this.refreshPauseOverlay()
-  }
-  // 更新状态栏文字
-  private refreshStatus() {
-    if (!this.statusLabel) {
-      return
-    }
-
-    if (this.isGameOver) {
-      this.statusLabel.string = 'Game Over - Tap to restart'
-      return
-    }
-
-    if (this.isResolving) {
-      this.statusLabel.string = 'Resolving...'
-      return
-    }
-
-    if (this.isPaused) {
-      this.statusLabel.string = 'Paused'
-      return
-    }
-
-    const value = this.currentPiece?.getValue()
-    if (!value) {
-      this.statusLabel.string = ''
-      return
-    }
-
-    this.statusLabel.string = `Current ${value} - Drag to choose column, tap to fast drop until landing`
-  }
-
-  // 根据暂停状态更新按钮文案和背景色，让当前状态一眼可见。
-  private refreshPauseButton() {
-    if (!this.pauseButtonLabel) {
-      return
-    }
-
-    this.pauseButtonLabel.string = this.isPaused ? 'Resume' : 'Pause'
-    const bg = this.pauseButtonLabel.node.parent?.getComponent(Sprite)
-    if (bg) {
-      bg.color = this.isPaused ? new Color(73, 111, 83, 240) : new Color(37, 55, 80, 235)
-    }
-  }
-
-  // 控制暂停遮罩的显示和透明度动画，避免切换时过于生硬。
-  private refreshPauseOverlay() {
-    if (!this.pauseOverlay) {
-      return
-    }
-
-    const opacity = this.pauseOverlay.getComponent(UIOpacity) ?? this.pauseOverlay.addComponent(UIOpacity)
-    Tween.stopAllByTarget(opacity)
-
-    if (this.isPaused) {
-      this.pauseOverlay.active = true
-      opacity.opacity = 0
-      tween(opacity).to(0.12, { opacity: 255 }).start()
-    } else {
-      opacity.opacity = 0
-      this.pauseOverlay.active = false
-    }
-
-    if (this.pauseOverlayTitle) {
-      this.pauseOverlayTitle.string = 'Paused'
-    }
-
-    if (this.pauseOverlayHint) {
-      this.pauseOverlayHint.string = 'Tap the top-right button to resume'
-    }
+    this.refreshUiState()
   }
   // 进入游戏结束流程
   private endGame() {
     this.isGameOver = true
     this.currentPiece = null
     this.clearTransientFx()
-    this.refreshStatus()
+    this.refreshUiState()
   }
   // 重新开始游戏并清空棋盘
   private async restartGame() {
@@ -1361,8 +1020,7 @@ export class PlayController extends Component {
     this.isPaused = false
     this.resetBoard()
     this.spawnPiece()
-    this.refreshStatus()
-    this.refreshPauseButton()
-    this.refreshPauseOverlay()
   }
 }
+
+
