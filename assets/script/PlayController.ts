@@ -22,11 +22,13 @@ const { ccclass, property } = _decorator
 
 type BoardCell = PieceController | null
 
+// 统一描述棋盘中的格子坐标，row 从下往上增长，column 从左往右增长。
 type CellPosition = {
   row: number
   column: number
 }
 
+// 表示一次可执行的合并组，anchor 是保留下来的棋子，其余成员会向它聚合。
 type MergeGroup = {
   value: number
   anchor: PieceController
@@ -34,21 +36,24 @@ type MergeGroup = {
   members: PieceController[]
 }
 
+// 定向合并的结果，anchor 表示合并后继续参与后续连锁的棋子。
 type DirectedMergeResult = {
   anchor: PieceController | null
   changed: boolean
 }
 
+// 控制同屏特效节点上限，避免频繁创建粒子导致卡顿。
 const MAX_ACTIVE_FX = 18
+// 棋盘边框厚度，所有棋盘内区与列宽都会基于这个值重新计算。
 const BOARD_BORDER_WIDTH = 20
-// Match the board inner corner radius with the piece corner radius.
+// 棋盘内层圆角与棋子圆角保持一致，保证视觉语言统一。
 const BOARD_INNER_RADIUS = 8
-// Draw the board entirely in code and keep the fill and border on one graphics layer.
+// 棋盘边框与底色都由代码绘制，避免贴图圆角和代码圆角不一致。
 const BOARD_FRAME_COLOR = new Color(255, 215, 0, 255)
 const BOARD_FILL_COLOR = new Color(255, 175, 0, 255)
-// Match the outer corner to a true 20px ring so the border and fill stay seamless.
+// 外层圆角 = 内层圆角 + 边框厚度，这样得到的就是一圈真正厚度一致的外框。
 const BOARD_OUTER_RADIUS = BOARD_INNER_RADIUS + BOARD_BORDER_WIDTH
-// Use softer rounded dash blocks so the separators blend into the board fill.
+// 虚线采用圆角短条，而不是硬边直线，让它和棋盘底色看起来更像一个整体。
 const BOARD_DASH_WIDTH = 4
 const BOARD_DASH_LENGTH = 16
 const BOARD_DASH_GAP = 12
@@ -58,53 +63,75 @@ const BOARD_DASH_COLOR = new Color(223, 146, 10, 150)
 
 @ccclass('PlayController')
 export class PlayController extends Component {
+  // 棋盘列数，当前玩法固定为 5 列。
   @property({ tooltip: 'Board columns' })
   boardwidth = 5
 
+  // 棋盘行数，当前玩法固定为 7 行。
   @property({ tooltip: 'Board rows' })
   boardheight = 7
 
+  // 棋子预制体，运行时会从这里实例化新的下落棋子。
   @property({ type: Prefab, tooltip: 'Piece prefab' })
   basePieceController: Prefab | null = null
 
+  // 单元格之间的额外间距，步长 = 棋子尺寸 + 间距。
   @property({ tooltip: 'Cell spacing' })
   spacing = 10
 
+  // 旧版手动配置的棋盘原点，当前主要作为序列化兼容字段保留。
   @property({ tooltip: 'Bottom-left cell center X' })
   x = -260
 
+  // 旧版手动配置的棋盘原点，当前主要作为序列化兼容字段保留。
   @property({ tooltip: 'Bottom-left cell center Y' })
   y = -390
 
+  // 棋子显示尺寸，生成棋子和特效时都会同步使用这个尺寸。
   @property({ tooltip: 'Piece size' })
   pieceSize = 120
 
+  // 普通下落速度。
   @property({ tooltip: 'Normal fall speed' })
   fallSpeed = 360
 
+  // 快速下落速度，按下时切换到这个速度。
   @property({ tooltip: 'Fast fall speed' })
   fastFallSpeed = 1800
 
+  // 新棋子出生在棋盘顶部之外的偏移量，给玩家留出观察和拖动时间。
   @property({ tooltip: 'Spawn offset above board' })
   spawnOffsetY = 160
 
+  // 可直接随机生成的初始数字池，超过 128 的数字只能通过合成得到。
   private readonly basePieceList = [2, 4, 8, 16, 32, 64, 128]
-  // 浜岀淮鏁扮粍琛ㄧず浜斿垪涓冭鐨勬鐩橈紝绌轰綅涓?null
+  // 二维数组表示棋盘状态，board[row][column] 为空时用 null 表示。
   private board: BoardCell[][] = []
+  // 当前正在下落的棋子；当它落地并结算后，这里会被清空。
   private currentPiece: PieceController | null = null
+  // 当前下落棋子的目标列。
   private currentColumn = 0
+  // 是否处于按住后的快速下落状态。
   private isFastDropping = false
+  // 游戏结束标记，结束后点击任意位置会重新开始。
   private isGameOver = false
+  // 是否正在执行合并、重力结算等异步流程；期间禁止再次操作。
   private isResolving = false
+  // 暂停标记，暂停时 update 不再推动棋子下落。
   private isPaused = false
+  // 顶部状态栏文本。
   private statusLabel: Label | null = null
+  // 右上角暂停按钮文字。
   private pauseButtonLabel: Label | null = null
+  // 暂停遮罩节点。
   private pauseOverlay: Node | null = null
   private pauseOverlayTitle: Label | null = null
   private pauseOverlayHint: Label | null = null
+  // 拖尾生成计时器，用来控制特效频率。
   private trailTimer = 0
+  // 当前屏幕上仍未销毁的特效节点集合，便于统一清理。
   private activeFx = new Set<Node>()
-  // 先初始化棋盘/背景/状态提示与输入
+  // 生命周期入口：先准备棋盘数据、背景、棋盘装饰、UI 与输入绑定。
   onLoad() {
     this.resetBoard()
     this.fitBackgroundToScreen()
@@ -114,7 +141,7 @@ export class PlayController extends Component {
     this.ensurePauseOverlay()
     this.bindInput()
   }
-  // Scene 初始后再生成第一颗棋子
+  // 等场景节点初始化完成后再生成第一颗棋子，避免引用未准备好的节点。
   start() {
     this.spawnPiece()
   }
@@ -126,7 +153,7 @@ export class PlayController extends Component {
     this.node.getChildByName('PauseButton')?.off(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
   }
 
-  // 姣忓抚鏇存柊锛氳绠楄惤鐐广€佺Щ鍔ㄥ綋鍓嶆瀛愩€佽Е鍙戣惤鍦伴€昏緫
+  // 每帧更新当前下落棋子的目标位置，并在接近落点时触发落地结算。
   update(dt: number) {
     if (!this.currentPiece || this.isGameOver || this.isResolving || this.isPaused) {
       return
@@ -161,7 +188,7 @@ export class PlayController extends Component {
     }
   }
 
-  // 缁戝畾鍏ㄥ眬瑙︽懜浜嬩欢锛岀敤浜庡揩閫熶笅钀戒笌鍒楅€夋嫨
+  // 绑定全局触摸事件，玩家通过按下位置选择列，并用按住实现快速下落。
   private bindInput() {
     this.node.on(Node.EventType.TOUCH_START, this.handleTouchStart, this)
     this.node.on(Node.EventType.TOUCH_END, this.handleTouchEnd, this)
@@ -192,14 +219,14 @@ export class PlayController extends Component {
     }
   }
 
-  // 瑙︽懜鎶捣鏃跺仠姝㈠姞閫燂紙鐩墠閫昏緫浠呴噸缃揩钀芥爣璁帮級
+  // 触摸抬起时结束本次按住状态；当前逻辑中只需要停止继续加速即可。
   private handleTouchEnd() {
     if (!this.currentPiece || this.isGameOver || this.isResolving || this.isPaused) {
       return
     }
   }
 
-  // 閲嶇疆妫嬬洏鏁版嵁骞堕粯璁ゆ媺鍒颁腑闂村垪
+  // 重置棋盘数据，并把默认目标列放在中间列。
   private resetBoard() {
     this.board = Array.from({ length: this.boardheight }, () =>
       Array.from({ length: this.boardwidth }, () => null)
@@ -227,7 +254,7 @@ export class PlayController extends Component {
     }
     const pieceTransform = pieceNode.getComponent(UITransform)
     if (pieceTransform) {
-      // Keep the prefab visuals in sync with the gameplay cell size.
+      // 让预制体的真实显示尺寸和当前棋盘格子尺寸保持一致。
       pieceTransform.setContentSize(this.pieceSize, this.pieceSize)
     }
 
@@ -243,7 +270,7 @@ export class PlayController extends Component {
     this.refreshStatus()
   }
 
-  // 妫嬪瓙钀藉湴锛氬啓鍏ユ鐩樸€佸紑濮嬫秷闄ら摼
+  // 棋子真正落地后写入棋盘，再触发定向合并与全盘结算。
   private async landPiece(row: number, column: number) {
     if (!this.currentPiece || this.isResolving) {
       return
@@ -270,7 +297,7 @@ export class PlayController extends Component {
     this.spawnPiece()
   }
 
-  // 閫愯疆搴旂敤閲嶅姏涓庡悎骞讹紝鐩村埌妫嬬洏绋冲畾
+  // 反复执行“重力下落 -> 全盘合并”，直到棋盘稳定为止。
   private async settleBoard(preferredAnchor: PieceController | null) {
     while (true) {
       const moved = await this.applyGravityAllColumns()
@@ -288,7 +315,7 @@ export class PlayController extends Component {
     }
   }
 
-  // 鎺㈡祴褰撳墠钀界偣闄勮繎鏄惁鑳藉舰鎴愯繛閿佸悎骞讹紝浼樺厛缁х画鍚戜笂婊氬姩
+  // 只围绕刚落地的棋子做定向连锁检测，优先保证“当前落点继续向上连锁”的手感。
   private async resolveLandingChain(anchor: PieceController): Promise<DirectedMergeResult> {
     let currentAnchor: PieceController | null = anchor
     let changed = false
@@ -306,7 +333,7 @@ export class PlayController extends Component {
 
     return { anchor: currentAnchor, changed }
   }
-  // 扫描全盘获取所有可合并组
+  // 扫描整个棋盘，把所有值相同且四向连通的棋子分组成待合并组。
   private findMergeGroups(preferredAnchor: PieceController | null) {
     const visited = Array.from({ length: this.boardheight }, () =>
       Array.from({ length: this.boardwidth }, () => false)
@@ -356,7 +383,7 @@ export class PlayController extends Component {
     return groups
   }
 
-  // 骞垮害浼樺厛鎼滅储杩為€氬潡
+  // 通过广度优先搜索收集一个连通块，连通规则只看上下左右四个方向。
   private collectComponent(startRow: number, startColumn: number, visited: boolean[][]) {
     const startPiece = this.board[startRow][startColumn]
     if (!startPiece) {
@@ -396,7 +423,7 @@ export class PlayController extends Component {
 
     return component
   }
-  // 按照规则选出连通块的锚点
+  // 按规则决定整组保留哪颗棋子作为锚点，其他棋子都会向它聚合并消失。
   private chooseAnchor(component: CellPosition[], preferredAnchor: PieceController | null) {
     if (preferredAnchor) {
       const preferredPos = this.findPiece(preferredAnchor)
@@ -426,7 +453,7 @@ export class PlayController extends Component {
       return current.column < best.column ? current : best
     })
   }
-  // 统一播放所有合并动画
+  // 并发播放当前批次的所有合并动画，等全部完成后再进入下一轮结算。
   private async playMergeGroups(groups: MergeGroup[]) {
     const animations: Promise<void>[] = []
 
@@ -448,7 +475,7 @@ export class PlayController extends Component {
     await Promise.all(animations)
   }
 
-  // 鍙洿缁曡惤鐐规娴嬭繛閫氬潡锛屽苟鎶婂彲鍚堝苟鎴愬憳鍚搁檮鍒拌閿氱偣
+  // 只检查落地点所在的连通块，并把其中可合并的成员全部吸附到新的锚点上。
   private async mergeLandingComponent(anchorPiece: PieceController): Promise<DirectedMergeResult> {
     const anchorPos = this.findPiece(anchorPiece)
     if (!anchorPos) {
@@ -497,7 +524,7 @@ export class PlayController extends Component {
     return { anchor: mergeAnchor, changed: true }
   }
 
-  // 閫夋嫨钀界偣鍒楀唴鏈€闈犱笂鐨勫渾蹇冿紝鑻ユ棤鍒欏洖閫€鍒版暣缁勬渶杩戠殑鏍煎瓙
+  // 落地后的首次合并优先保留落点列里最靠下的棋子，保证玩家对合并方向的预期稳定。
   private chooseLandingAnchor(component: CellPosition[], landingColumn: number) {
     const sameColumn = component.filter(pos => pos.column === landingColumn)
     const candidates = sameColumn.length > 0 ? sameColumn : component
@@ -514,7 +541,7 @@ export class PlayController extends Component {
     })
   }
 
-  // 鍗曟潯鍚堝苟缁勭殑鍔ㄧ敾灏佽锛屽鐢?directed merge
+  // 单个合并组的动画封装，底层复用定向合并的表现逻辑。
   private async animateMergeGroup(
     anchor: PieceController,
     anchorPosition: Vec3,
@@ -524,7 +551,7 @@ export class PlayController extends Component {
     await this.animateDirectedMerge(anchor, anchorPosition, consumed, nextValue)
   }
 
-  // 鍏ㄧ洏涓嬭惤锛氭墍鏈夊垪鏀剁缉鍒版渶搴曢儴
+  // 对全盘应用重力：每一列都向下压缩，消除中间空洞。
   private async applyGravityAllColumns() {
     const animations: Promise<void>[] = []
     let moved = false
@@ -597,17 +624,17 @@ export class PlayController extends Component {
 
     return moved
   }
-  // 缓动节点移动到目标格子
+  // 用统一的缓动方式把节点移动到目标格子，保证落子和重力动画节奏一致。
   private animateMove(node: Node, position: Vec3, duration: number) {
     Tween.stopAllByTarget(node)
     return new Promise<void>(resolve => {
       tween(node)
         .to(Math.min(duration, 0.09), { position }, { easing: 'quadOut' })
-        .call(resolve)
+        .call(resolve as any)
         .start()
     })
   }
-  // 吸附并回弹合成特效
+  // 执行一次完整的合并表现：成员吸附、锚点升级、闪光和爆裂，再做回弹。
   private async animateDirectedMerge(
     anchor: PieceController,
     anchorPosition: Vec3,
@@ -644,11 +671,11 @@ export class PlayController extends Component {
           tween().to(0.12, { scale: new Vec3(0.98, 0.98, 1) }, { easing: 'sineInOut' }),
           tween().to(0.08, { scale: Vec3.ONE }, { easing: 'sineOut' })
         )
-        .call(resolve)
+        .call(resolve as any)
         .start()
     })
   }
-  // 控制下落拖尾的生成节奏
+  // 用计时器控制下落拖尾的生成频率，避免每帧都创建特效。
   private updateFallingTrail(dt: number) {
     if (!this.currentPiece) {
       return
@@ -663,7 +690,7 @@ export class PlayController extends Component {
     this.trailTimer = 0
     this.spawnTrailParticles(this.currentPiece)
   }
-  // 根据速度生成拖尾粒子
+  // 根据当前下落速度生成拖尾粒子，快速下落时会更密、更长。
   private spawnTrailParticles(piece: PieceController) {
     const count = this.isFastDropping ? 2 : 1
     if (!this.canSpawnFx(count)) {
@@ -720,7 +747,7 @@ export class PlayController extends Component {
     }
   }
 
-  // 绠€鍗曠殑鍚堟垚闂厜
+  // 合并瞬间在锚点位置补一个短暂的闪光，加强升级反馈。
   private spawnMergeFlash(anchor: PieceController, position: Vec3, strength: number) {
     if (!this.canSpawnFx(1)) {
       return
@@ -747,7 +774,7 @@ export class PlayController extends Component {
       .call(() => this.destroyFxNode(flash))
       .start()
   }
-  // 合成时的爆裂粒子
+  // 合并时向四周喷射碎片粒子，strength 越高，粒子越多、扩散越远。
   private spawnMergeBurst(anchor: PieceController, position: Vec3, strength: number) {
     const count = Math.min(4, 2 + strength)
     if (!this.canSpawnFx(count)) {
@@ -784,7 +811,7 @@ export class PlayController extends Component {
     }
   }
 
-  // 涓存椂绮掑瓙鑺傜偣澶嶇敤妫嬪瓙璐村浘
+  // 创建一个用于特效表现的临时棋子节点，复用原棋子的颜色与外观。
   private createFxPiece(source: PieceController) {
     const node = new Node('FxPiece')
     const transform = node.addComponent(UITransform)
@@ -797,7 +824,7 @@ export class PlayController extends Component {
     return node
   }
 
-  // 閬垮厤鐗规晥鑺傜偣杩囧
+  // 限制特效节点总数，避免短时间内创建过多粒子。
   private canSpawnFx(count: number) {
     return this.activeFx.size + count <= MAX_ACTIVE_FX
   }
@@ -819,7 +846,7 @@ export class PlayController extends Component {
     this.activeFx.clear()
   }
 
-  // 鏌ユ壘涓€涓瀛愬綋鍓嶅湪妫嬬洏涓殑浣嶇疆
+  // 在棋盘数组里查找某颗棋子当前所在的行列坐标。
   private findPiece(target: PieceController) {
     for (let row = 0; row < this.boardheight; row++) {
       for (let column = 0; column < this.boardwidth; column++) {
@@ -832,7 +859,7 @@ export class PlayController extends Component {
     return null
   }
 
-  // 鍒ゆ柇鍧愭爣鏄惁鍦ㄦ鐩樺唴
+  // 判断给定的行列是否仍处在棋盘合法范围内。
   private isInsideBoard(row: number, column: number) {
     return row >= 0 && row < this.boardheight && column >= 0 && column < this.boardwidth
   }
@@ -875,7 +902,7 @@ export class PlayController extends Component {
     return -1
   }
 
-  // 鏍规嵁鐐瑰嚮浣嶇疆鎹㈢畻鍑鸿惤鍦ㄧ鍑犲垪
+  // 把触摸点换算成列索引，换算时使用当前棋盘实时计算出的网格原点。
   private getColumnFromTouch(event: EventTouch) {
     const uiTransform = this.node.getComponent(UITransform)
     if (!uiTransform) {
@@ -885,20 +912,20 @@ export class PlayController extends Component {
     const uiLocation = event.getUILocation()
     const local = uiTransform.convertToNodeSpaceAR(new Vec3(uiLocation.x, uiLocation.y, 0))
     const step = this.getStepSize()
-    // Derive the grid origin from the live board size so touch columns stay aligned after board style changes.
+    // 棋盘尺寸和边框可能会调整，所以这里不能再依赖旧的固定 x 偏移。
     const column = Math.round((local.x - this.getBoardGridOriginX()) / step)
     return Math.max(0, Math.min(this.boardwidth - 1, column))
   }
-  // 行列转屏幕坐标
+  // 把棋盘中的行列坐标换成节点本地坐标，所有落点、重力和合并都走这套换算。
   private getCellPosition(row: number, column: number) {
     const step = this.getStepSize()
-    // Always place pieces from the current board inner rect so edge columns do not drift outside the frame.
+    // 从棋盘当前内区实时计算原点，避免边框或尺寸变化后边缘列跑出外框。
     return new Vec3(this.getBoardGridOriginX() + column * step, this.getBoardGridOriginY() + row * step, 0)
   }
-  // 获取生成点坐标
+  // 获取新棋子的出生点，x 与列严格对齐，y 位于棋盘顶部之外。
   private getSpawnPosition(column: number) {
     const step = this.getStepSize()
-    // Reuse the same dynamic grid origin for spawn points so falling pieces line up with the board columns.
+    // 出生点也复用同一套网格原点，保证生成后垂直落下时不会偏列。
     return new Vec3(
       this.getBoardGridOriginX() + column * step,
       this.getBoardGridOriginY() + this.boardheight * step + this.spawnOffsetY,
@@ -906,12 +933,12 @@ export class PlayController extends Component {
     )
   }
 
-  // 鏍煎瓙涓庨棿璺濇€诲拰
+  // 单格步长 = 棋子尺寸 + 列间距，这是所有坐标换算的基础。
   private getStepSize() {
     return this.pieceSize + this.spacing
   }
 
-  // Keep the board visuals aligned with the gameplay grid.
+  // 用代码重建棋盘外框、底色、列宽和虚线，让视觉层与逻辑网格完全一致。
   private ensureBoardDecorations() {
     const boardNode = this.node.getChildByName('board')
     if (!boardNode) {
@@ -947,7 +974,7 @@ export class PlayController extends Component {
     const frameGraphics = boardFrame.getComponent(Graphics) ?? boardFrame.addComponent(Graphics)
     frameGraphics.enabled = true
     frameGraphics.clear()
-    // Fill the entire outer frame first so there is no seam between border and board background.
+    // 先画完整外框底色，避免“先填充再描边”时出现边缘缝隙。
     frameGraphics.fillColor = BOARD_FRAME_COLOR
     frameGraphics.roundRect(
       -innerWidth / 2 - BOARD_BORDER_WIDTH,
@@ -957,7 +984,7 @@ export class PlayController extends Component {
       BOARD_OUTER_RADIUS
     )
     frameGraphics.fill()
-    // Cover the center with the board color so the visible result is a seamless rounded ring.
+    // 再覆盖内层底色，最终得到一圈没有接缝的圆角边框。
     frameGraphics.fillColor = BOARD_FILL_COLOR
     frameGraphics.roundRect(
       -innerWidth / 2,
@@ -997,6 +1024,7 @@ export class PlayController extends Component {
         columnTransform.setContentSize(innerWidth / this.boardwidth, innerHeight)
       }
 
+      // 列节点只保留占位和触摸对齐作用，不再使用原先的半透明背景。
       const columnSprite = columnNode.getComponent(Sprite)
       if (columnSprite) {
         columnSprite.enabled = false
@@ -1021,6 +1049,7 @@ export class PlayController extends Component {
       graphics = dashedLines.addComponent(Graphics)
     }
 
+    // 单独绘制 4 条列虚线，保持列分隔和棋盘本体在视觉上是一个整体。
     graphics.clear()
     graphics.fillColor = BOARD_DASH_COLOR
 
@@ -1042,6 +1071,7 @@ export class PlayController extends Component {
     graphics.fill()
   }
 
+  // 读取棋盘内区宽度；如果 scene 中存在 board 节点，优先按实际节点尺寸计算。
   private getBoardInnerWidth() {
     const boardTransform = this.node.getChildByName('board')?.getComponent(UITransform)
     if (boardTransform) {
@@ -1051,6 +1081,7 @@ export class PlayController extends Component {
     return this.getStepSize() * this.boardwidth
   }
 
+  // 读取棋盘内区高度；边框厚度变化后，这个值会自动随之更新。
   private getBoardInnerHeight() {
     const boardTransform = this.node.getChildByName('board')?.getComponent(UITransform)
     if (boardTransform) {
@@ -1060,22 +1091,24 @@ export class PlayController extends Component {
     return this.getStepSize() * this.boardheight
   }
 
+  // 计算每一列中心点的 x 坐标，供列节点和棋子落点共同使用。
   private getBoardColumnCenterX(column: number) {
     const columnWidth = this.getBoardInnerWidth() / this.boardwidth
     return -this.getBoardInnerWidth() / 2 + columnWidth * (column + 0.5)
   }
 
+  // 计算列与列之间分隔虚线所在的 x 坐标。
   private getBoardSeparatorX(column: number) {
     const columnWidth = this.getBoardInnerWidth() / this.boardwidth
     return -this.getBoardInnerWidth() / 2 + columnWidth * (column + 1)
   }
 
-  // Keep the logical grid origin locked to the current board inner width.
+  // 根据棋盘当前内区宽度计算左下角第一个格子的中心 x 坐标。
   private getBoardGridOriginX() {
     return -this.getBoardInnerWidth() / 2 + this.getStepSize() / 2
   }
 
-  // Keep the logical grid origin locked to the current board inner height.
+  // 根据棋盘当前内区高度计算左下角第一个格子的中心 y 坐标。
   private getBoardGridOriginY() {
     return -this.getBoardInnerHeight() / 2 + this.getStepSize() / 2
   }
@@ -1120,7 +1153,7 @@ export class PlayController extends Component {
     this.refreshStatus()
   }
 
-  // 淇濆簳鍒涘缓鏆傚仠鎸夐挳
+  // 确保暂停按钮存在；若 scene 里没有，就在运行时补建一个。
   private ensurePauseButton() {
     const existing = this.node.getChildByName('PauseButton')
     if (existing) {
@@ -1161,7 +1194,7 @@ export class PlayController extends Component {
     this.refreshPauseButton()
   }
 
-  // 淇濆簳鍒涘缓鏆傚仠閬僵
+  // 确保暂停遮罩存在；遮罩只负责视觉提示，不参与棋盘逻辑。
   private ensurePauseOverlay() {
     const existing = this.node.getChildByName('PauseOverlay')
     if (existing) {
@@ -1213,7 +1246,7 @@ export class PlayController extends Component {
     this.refreshPauseOverlay()
   }
 
-  // 鏆傚仠鎸夐挳浜嬩欢
+  // 点击暂停按钮时切换暂停状态，同时刷新状态栏、按钮文字和遮罩。
   private onPauseButtonTap(event: EventTouch) {
     event.propagationStopped = true
     if (this.isResolving || this.isGameOver) {
@@ -1258,7 +1291,7 @@ export class PlayController extends Component {
     this.statusLabel.string = `Current ${value} - Drag to choose column, tap to fast drop until landing`
   }
 
-  // 鏍规嵁鏆傚仠鐘舵€佽皟鏁存寜閽枃瀛?棰滆壊
+  // 根据暂停状态更新按钮文案和背景色，让当前状态一眼可见。
   private refreshPauseButton() {
     if (!this.pauseButtonLabel) {
       return
@@ -1271,7 +1304,7 @@ export class PlayController extends Component {
     }
   }
 
-  // 鎺у埗閬僵鐨勬樉闅愪笌娣″叆
+  // 控制暂停遮罩的显示和透明度动画，避免切换时过于生硬。
   private refreshPauseOverlay() {
     if (!this.pauseOverlay) {
       return
