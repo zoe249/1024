@@ -1,5 +1,6 @@
 ﻿import {
   _decorator,
+  AudioSource,
   Button,
   Color,
   Component,
@@ -13,8 +14,8 @@
   Tween,
   UITransform,
   UIOpacity,
-  SafeArea,
-  sys
+  sys,
+  Vec3
 } from 'cc'
 
 const { ccclass } = _decorator
@@ -49,6 +50,16 @@ const BOARD_DASH_INSET = 16
 const BOARD_DASH_RADIUS = 2
 // 虚线颜色。
 const BOARD_DASH_COLOR = new Color(223, 146, 10, 150)
+// 暂停面板滑入滑出的动画时长。
+const PAUSE_PANEL_ANIM_DURATION = 0.26
+// 暂停蒙版淡入淡出的动画时长。
+const PAUSE_MASK_ANIM_DURATION = 0.18
+// 暂停面板完全滑出屏幕右侧后额外保留一点距离，避免边缘露在屏幕内。
+const PAUSE_PANEL_HIDDEN_GAP = 32
+// 背景音乐音量本地存储键。
+const AUDIO_MUSIC_VOLUME_KEY = 'play.audio.musicVolume'
+// 音效音量本地存储键。
+const AUDIO_SOUND_EFFECT_KEY = 'play.audio.soundEffectVolume'
 
 @ccclass('PlayUIController')
 export class PlayUIController extends Component {
@@ -75,10 +86,38 @@ export class PlayUIController extends Component {
   private statusLabel: Label | null = null
   // 底部暂停按钮文字。
   private pauseButtonLabel: Label | null = null
-  // 暂停遮罩节点。
+  // 暂停弹窗根节点，由 scene 中的 PauseOverlay 提供。
   private pauseOverlay: Node | null = null
-  private pauseOverlayTitle: Label | null = null
-  private pauseOverlayHint: Label | null = null
+  // 半透明蒙版节点，只负责遮罩和拦截触摸。
+  private pauseOverlayMask: Node | null = null
+  // 右侧滑入的弹窗面板节点。
+  private pauseOverlayPanel: Node | null = null
+  // 记录面板在 scene 中配置好的最终显示位置，打开弹窗时滑到这里。
+  private pausePanelShownPosition: Vec3 | null = null
+  // 背景音乐控制行容器。
+  private bgMusicControl: Node | null = null
+  // 背景音乐滑块轨道节点。
+  private bgMusicTrack: Node | null = null
+  // 背景音乐滑块把手节点。
+  private bgMusicThumb: Node | null = null
+  // 背景音乐滑块把手在 scene 中配置的最左和最右位置，全部基于现有层级数据计算。
+  private bgMusicThumbMinX = 0
+  private bgMusicThumbMaxX = 0
+  // 背景音乐滑块把手固定使用 scene 中配置好的纵向位置。
+  private bgMusicThumbY = 0
+  // 音效控制行容器。
+  private soundEffectControl: Node | null = null
+  // 音效滑块把手图标节点。
+  private soundEffectIcon: Node | null = null
+  // 音效滑块把手在 scene 中配置的最左和最右位置。
+  private soundEffectThumbMinX = 0
+  private soundEffectThumbMaxX = 0
+  // 音效滑块把手固定使用 scene 中配置好的纵向位置。
+  private soundEffectThumbY = 0
+  // 当前背景音乐音量，范围固定在 0 到 1。
+  private bgMusicVolume = 1
+  // 当前音效音量，范围固定在 0 到 1。
+  private soundEffectVolume = 1
 
   // 由逻辑层在启动时调用，把棋盘尺寸和交互回调交给 UI 层管理。
   setup(options: {
@@ -99,6 +138,7 @@ export class PlayUIController extends Component {
     this.ensureStatusLabel()
     this.ensurePauseButton()
     this.ensurePauseOverlay()
+    this.ensureAudioControls()
     this.configureControlBar()
     this.renderState(this.currentState)
   }
@@ -106,6 +146,9 @@ export class PlayUIController extends Component {
   // 某些平台启动后一帧安全区才稳定，因此开放一个额外布局入口给逻辑层补收。
   syncLayout() {
     this.configureControlBar()
+    this.ensurePauseOverlayMaskSprite()
+    this.configureAudioControlLayout()
+    this.refreshAudioControls()
   }
 
   // 逻辑层每次状态变化后只需要把结果喂给 UI 层即可。
@@ -119,6 +162,25 @@ export class PlayUIController extends Component {
   onDestroy() {
     // UI 组件自己负责解绑按钮事件，避免逻辑层还要知道具体节点层级。
     this.getControlContainer().getChildByName('PauseButton')?.off(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
+    this.pauseOverlayMask?.off(Node.EventType.TOUCH_START, this.swallowOverlayTouch, this)
+    this.pauseOverlayMask?.off(Node.EventType.TOUCH_MOVE, this.swallowOverlayTouch, this)
+    this.pauseOverlayMask?.off(Node.EventType.TOUCH_END, this.swallowOverlayTouch, this)
+    this.pauseOverlayMask?.off(Node.EventType.TOUCH_CANCEL, this.swallowOverlayTouch, this)
+    this.bgMusicControl?.off(Node.EventType.TOUCH_START, this.onBgMusicControlTouch, this)
+    this.bgMusicControl?.off(Node.EventType.TOUCH_MOVE, this.onBgMusicControlTouch, this)
+    this.bgMusicControl?.off(Node.EventType.TOUCH_END, this.onBgMusicControlTouch, this)
+    this.bgMusicTrack?.off(Node.EventType.TOUCH_START, this.onBgMusicControlTouch, this)
+    this.bgMusicTrack?.off(Node.EventType.TOUCH_MOVE, this.onBgMusicControlTouch, this)
+    this.bgMusicTrack?.off(Node.EventType.TOUCH_END, this.onBgMusicControlTouch, this)
+    this.bgMusicThumb?.off(Node.EventType.TOUCH_START, this.onBgMusicControlTouch, this)
+    this.bgMusicThumb?.off(Node.EventType.TOUCH_MOVE, this.onBgMusicControlTouch, this)
+    this.bgMusicThumb?.off(Node.EventType.TOUCH_END, this.onBgMusicControlTouch, this)
+    this.soundEffectControl?.off(Node.EventType.TOUCH_START, this.onSoundEffectControlTouch, this)
+    this.soundEffectControl?.off(Node.EventType.TOUCH_MOVE, this.onSoundEffectControlTouch, this)
+    this.soundEffectControl?.off(Node.EventType.TOUCH_END, this.onSoundEffectControlTouch, this)
+    this.soundEffectIcon?.off(Node.EventType.TOUCH_START, this.onSoundEffectControlTouch, this)
+    this.soundEffectIcon?.off(Node.EventType.TOUCH_MOVE, this.onSoundEffectControlTouch, this)
+    this.soundEffectIcon?.off(Node.EventType.TOUCH_END, this.onSoundEffectControlTouch, this)
   }
 
   // 背景节点依然挂在 play 根节点上，这里只负责把它铺满整个画布。
@@ -316,13 +378,20 @@ export class PlayUIController extends Component {
     this.pauseButtonLabel = label
   }
 
-  // 确保暂停遮罩存在；逻辑层只关心 paused 状态，具体节点和动画都由 UI 层负责。
+  // 确保暂停弹窗节点存在；优先复用 scene 中已搭好的 PauseOverlay / Mask / Panel 结构。
   private ensurePauseOverlay() {
     const existing = this.node.getChildByName('PauseOverlay')
     if (existing) {
       this.pauseOverlay = existing
-      this.pauseOverlayTitle = existing.getChildByName('Title')?.getComponent(Label) ?? null
-      this.pauseOverlayHint = existing.getChildByName('Hint')?.getComponent(Label) ?? null
+      // scene 里允许先保持可见方便调样式，但运行时首次进入游戏应从隐藏状态开始。
+      this.pauseOverlay.active = false
+      // 暂停层必须始终压在运行时生成的棋子之上，这里先把它放到当前最高层。
+      this.pauseOverlay.setSiblingIndex(this.node.children.length - 1)
+      this.pauseOverlayMask = existing.getChildByName('Mask') ?? null
+      this.pauseOverlayPanel = existing.getChildByName('Panel') ?? null
+      this.pausePanelShownPosition = this.pauseOverlayPanel?.position.clone() ?? null
+      this.ensurePauseOverlayMaskSprite()
+      this.bindPauseOverlayMask()
       return
     }
 
@@ -335,34 +404,26 @@ export class PlayUIController extends Component {
     const overlayTransform = overlay.addComponent(UITransform)
     overlayTransform.setContentSize(750, 1334)
 
-    const overlayBg = overlay.addComponent(Sprite)
-    overlayBg.color = new Color(10, 16, 24, 150)
+    // 即使 scene 里没配，也补出最小可用的遮罩和面板结构，避免暂停按钮直接失效。
+    const mask = new Node('Mask')
+    mask.setParent(overlay)
+    const maskTransform = mask.addComponent(UITransform)
+    maskTransform.setContentSize(750, 1334)
+    const maskSprite = mask.addComponent(Sprite)
+    maskSprite.color = new Color(0, 0, 0, 160)
+    this.pauseOverlayMask = mask
+    this.ensurePauseOverlayMaskSprite()
 
-    const titleNode = new Node('Title')
-    titleNode.setParent(overlay)
-    titleNode.setPosition(0, 70, 0)
-    const titleTransform = titleNode.addComponent(UITransform)
-    titleTransform.setContentSize(420, 80)
-    const titleLabel = titleNode.addComponent(Label)
-    titleLabel.string = 'Paused'
-    titleLabel.fontSize = 54
-    titleLabel.lineHeight = 60
-    titleLabel.horizontalAlign = Label.HorizontalAlign.CENTER
-    titleLabel.color = new Color(250, 252, 255, 255)
-    this.pauseOverlayTitle = titleLabel
-
-    const hintNode = new Node('Hint')
-    hintNode.setParent(overlay)
-    hintNode.setPosition(0, -5, 0)
-    const hintTransform = hintNode.addComponent(UITransform)
-    hintTransform.setContentSize(500, 60)
-    const hintLabel = hintNode.addComponent(Label)
-    hintLabel.string = 'Tap the top-right button to resume'
-    hintLabel.fontSize = 24
-    hintLabel.lineHeight = 30
-    hintLabel.horizontalAlign = Label.HorizontalAlign.CENTER
-    hintLabel.color = new Color(210, 220, 235, 255)
-    this.pauseOverlayHint = hintLabel
+    const panel = new Node('Panel')
+    panel.setParent(overlay)
+    const panelTransform = panel.addComponent(UITransform)
+    panelTransform.setContentSize(360, 560)
+    const panelSprite = panel.addComponent(Sprite)
+    panelSprite.color = new Color(255, 255, 255, 255)
+    panel.setPosition(150, 0, 0)
+    this.pauseOverlayPanel = panel
+    this.pausePanelShownPosition = panel.position.clone()
+    this.bindPauseOverlayMask()
   }
 
   // 底部控制栏的视觉样式尽量交给 scene，这里只做异形屏安全区补偿。
@@ -433,30 +494,65 @@ export class PlayUIController extends Component {
     }
   }
 
-  // 根据 paused 状态显示或隐藏遮罩，并播放简单的淡入动画。
+  // 根据 paused 状态播放暂停弹窗动画：蒙版淡入淡出，面板从右侧滑入滑出。
   private refreshPauseOverlay() {
     if (!this.pauseOverlay) {
       return
     }
 
-    const opacity = this.pauseOverlay.getComponent(UIOpacity) ?? this.pauseOverlay.addComponent(UIOpacity)
-    Tween.stopAllByTarget(opacity)
+    // 每次弹窗打开前都把暂停层提到最上面，避免被新生成的棋子或特效节点盖住。
+    this.pauseOverlay.setSiblingIndex(this.node.children.length - 1)
+    const maskNode = this.pauseOverlayMask ?? this.pauseOverlay
+    const maskOpacity = maskNode.getComponent(UIOpacity) ?? maskNode.addComponent(UIOpacity)
+    Tween.stopAllByTarget(maskOpacity)
+    if (this.pauseOverlayPanel) {
+      Tween.stopAllByTarget(this.pauseOverlayPanel)
+    }
 
     if (this.currentState.isPaused) {
       this.pauseOverlay.active = true
-      opacity.opacity = 0
-      tween(opacity).to(0.12, { opacity: 255 }).start()
+      maskOpacity.opacity = 0
+      tween(maskOpacity).to(PAUSE_MASK_ANIM_DURATION, { opacity: 255 }).start()
+
+      if (this.pauseOverlayPanel) {
+        const shown = this.getPausePanelShownPosition()
+        this.pauseOverlayPanel.setPosition(this.getPausePanelHiddenX(), shown.y, shown.z)
+        tween(this.pauseOverlayPanel)
+          .to(PAUSE_PANEL_ANIM_DURATION, { position: shown }, { easing: 'cubicOut' })
+          .start()
+      }
     } else {
-      opacity.opacity = 0
-      this.pauseOverlay.active = false
-    }
+      if (!this.pauseOverlay.active) {
+        maskOpacity.opacity = 0
+        if (this.pauseOverlayPanel) {
+          const shown = this.getPausePanelShownPosition()
+          this.pauseOverlayPanel.setPosition(this.getPausePanelHiddenX(), shown.y, shown.z)
+        }
+        return
+      }
 
-    if (this.pauseOverlayTitle) {
-      this.pauseOverlayTitle.string = 'Paused'
-    }
+      tween(maskOpacity).to(PAUSE_MASK_ANIM_DURATION, { opacity: 0 }).start()
 
-    if (this.pauseOverlayHint) {
-      this.pauseOverlayHint.string = 'Tap the top-right button to resume'
+      if (this.pauseOverlayPanel) {
+        const shown = this.getPausePanelShownPosition()
+        tween(this.pauseOverlayPanel)
+          .to(
+            PAUSE_PANEL_ANIM_DURATION,
+            { position: new Vec3(this.getPausePanelHiddenX(), shown.y, shown.z) },
+            { easing: 'cubicIn' }
+          )
+          .call(() => {
+            // 关闭动画结束后再隐藏整层，避免面板刚开始滑出时整层直接消失。
+            if (!this.currentState.isPaused) {
+              if (this.pauseOverlay) {
+                this.pauseOverlay.active = false
+              }
+            }
+          })
+          .start()
+      } else {
+        this.pauseOverlay.active = false
+      }
     }
   }
 
@@ -464,6 +560,337 @@ export class PlayUIController extends Component {
   private onPauseButtonTap(event: EventTouch) {
     event.propagationStopped = true
     this.pauseHandler?.()
+  }
+
+  // 蒙版层只负责拦截触摸，防止暂停时点穿到底层棋盘和控制栏。
+  private swallowOverlayTouch(event: EventTouch) {
+    event.propagationStopped = true
+  }
+
+  // 给蒙版补上统一的拦截事件绑定，避免重复绑定导致回调执行多次。
+  private bindPauseOverlayMask() {
+    if (!this.pauseOverlayMask) {
+      return
+    }
+
+    this.pauseOverlayMask.off(Node.EventType.TOUCH_START, this.swallowOverlayTouch, this)
+    this.pauseOverlayMask.off(Node.EventType.TOUCH_MOVE, this.swallowOverlayTouch, this)
+    this.pauseOverlayMask.off(Node.EventType.TOUCH_END, this.swallowOverlayTouch, this)
+    this.pauseOverlayMask.off(Node.EventType.TOUCH_CANCEL, this.swallowOverlayTouch, this)
+    this.pauseOverlayMask.on(Node.EventType.TOUCH_START, this.swallowOverlayTouch, this)
+    this.pauseOverlayMask.on(Node.EventType.TOUCH_MOVE, this.swallowOverlayTouch, this)
+    this.pauseOverlayMask.on(Node.EventType.TOUCH_END, this.swallowOverlayTouch, this)
+    this.pauseOverlayMask.on(Node.EventType.TOUCH_CANCEL, this.swallowOverlayTouch, this)
+  }
+
+  // Mask 节点强制使用可显示的 SpriteFrame，避免空 SpriteFrame 导致蒙版完全不显示。
+  private ensurePauseOverlayMaskSprite() {
+    if (!this.pauseOverlayMask) {
+      return
+    }
+
+    const maskTransform = this.pauseOverlayMask.getComponent(UITransform)
+    const maskSprite = this.pauseOverlayMask.getComponent(Sprite)
+    if (!maskTransform || !maskSprite) {
+      return
+    }
+
+    const rootSprite = this.node.getComponent(Sprite)
+    if (!maskSprite.spriteFrame && rootSprite?.spriteFrame) {
+      // 复用场景根节点已有的背景 SpriteFrame，确保蒙版一定有可渲染贴图。
+      maskSprite.spriteFrame = rootSprite.spriteFrame
+    }
+
+    maskSprite.enabled = true
+    maskSprite.sizeMode = Sprite.SizeMode.CUSTOM
+    maskSprite.type = Sprite.Type.SIMPLE
+    // 蒙版只需要统一压暗画面，因此固定使用半透明黑色。
+    maskSprite.color = new Color(0, 0, 0, 170)
+    maskTransform.setContentSize(maskTransform.width, maskTransform.height)
+  }
+
+  // 复用 Panel 中已搭好的音乐和音效节点，补上交互、存档和视觉状态。
+  private ensureAudioControls() {
+    const panel = this.pauseOverlayPanel ?? this.node.getChildByName('PauseOverlay')?.getChildByName('Panel') ?? null
+    if (!panel) {
+      return
+    }
+
+    this.bgMusicControl = panel.getChildByName('Music On') ?? null
+    this.bgMusicTrack = this.bgMusicControl?.getChildByName('BgMusic') ?? null
+    this.bgMusicThumb = this.bgMusicControl?.getChildByName('options_icon_512px') ?? null
+    this.soundEffectControl = panel.getChildByName('Notifications') ?? null
+    this.soundEffectIcon = this.soundEffectControl?.getChildByName('options_icon_512px') ?? null
+
+    this.loadAudioSettings()
+    this.configureAudioControlLayout()
+    this.bindAudioControlEvents()
+    this.refreshAudioControls()
+    this.applyAudioSettings()
+  }
+
+  // 读取本地保存的背景音乐和音效音量，保证玩家下次进入游戏时保持上次设置。
+  private loadAudioSettings() {
+    const savedVolume = Number.parseFloat(sys.localStorage.getItem(AUDIO_MUSIC_VOLUME_KEY) ?? '1')
+    if (Number.isFinite(savedVolume)) {
+      this.bgMusicVolume = Math.max(0, Math.min(1, savedVolume))
+    }
+
+    const savedEffectVolume = Number.parseFloat(sys.localStorage.getItem(AUDIO_SOUND_EFFECT_KEY) ?? '1')
+    if (Number.isFinite(savedEffectVolume)) {
+      this.soundEffectVolume = Math.max(0, Math.min(1, savedEffectVolume))
+    }
+  }
+
+  // 音频控件的尺寸、图片和排版都以 scene 为准，这里只缓存交互所需的位置数据。
+  private configureAudioControlLayout() {
+    if (this.bgMusicThumb) {
+      this.bgMusicThumb.active = true
+      this.bgMusicThumbMaxX = this.bgMusicThumb.position.x
+      this.bgMusicThumbY = this.bgMusicThumb.position.y
+    }
+
+    const soundEffectTrack = this.soundEffectControl?.getChildByName('SoundEffect') ?? null
+    if (this.bgMusicTrack) {
+      const bgTrackTransform = this.bgMusicTrack.getComponent(UITransform)
+      const bgTrackHalfWidth = bgTrackTransform ? bgTrackTransform.width * 0.5 : 0
+      // 轨道起点取 scene 中轨道节点的左边缘，保证视觉更长，但不改节点尺寸。
+      this.bgMusicThumbMinX = this.bgMusicTrack.position.x - bgTrackHalfWidth + 8
+    }
+
+    if (this.soundEffectIcon) {
+      this.soundEffectIcon.active = true
+      this.soundEffectThumbMaxX = this.soundEffectIcon.position.x
+      this.soundEffectThumbY = this.soundEffectIcon.position.y
+    }
+
+    if (soundEffectTrack && this.soundEffectIcon) {
+      const soundTrackTransform = soundEffectTrack.getComponent(UITransform)
+      const soundTrackHalfWidth = soundTrackTransform ? soundTrackTransform.width * 0.5 : 0
+      // 音效同样使用轨道左边缘作为最小值位置，和背景音乐保持一致的交互模型。
+      this.soundEffectThumbMinX = soundEffectTrack.position.x - soundTrackHalfWidth + 8
+    }
+  }
+
+  // 统一绑定背景音乐和音效滑块拖动事件，先解绑再绑定避免重复触发。
+  private bindAudioControlEvents() {
+    this.bgMusicControl?.off(Node.EventType.TOUCH_START, this.onBgMusicControlTouch, this)
+    this.bgMusicControl?.off(Node.EventType.TOUCH_MOVE, this.onBgMusicControlTouch, this)
+    this.bgMusicControl?.off(Node.EventType.TOUCH_END, this.onBgMusicControlTouch, this)
+    this.bgMusicTrack?.off(Node.EventType.TOUCH_START, this.onBgMusicControlTouch, this)
+    this.bgMusicTrack?.off(Node.EventType.TOUCH_MOVE, this.onBgMusicControlTouch, this)
+    this.bgMusicTrack?.off(Node.EventType.TOUCH_END, this.onBgMusicControlTouch, this)
+    this.bgMusicThumb?.off(Node.EventType.TOUCH_START, this.onBgMusicControlTouch, this)
+    this.bgMusicThumb?.off(Node.EventType.TOUCH_MOVE, this.onBgMusicControlTouch, this)
+    this.bgMusicThumb?.off(Node.EventType.TOUCH_END, this.onBgMusicControlTouch, this)
+    this.bgMusicControl?.on(Node.EventType.TOUCH_START, this.onBgMusicControlTouch, this)
+    this.bgMusicControl?.on(Node.EventType.TOUCH_MOVE, this.onBgMusicControlTouch, this)
+    this.bgMusicControl?.on(Node.EventType.TOUCH_END, this.onBgMusicControlTouch, this)
+    this.bgMusicTrack?.on(Node.EventType.TOUCH_START, this.onBgMusicControlTouch, this)
+    this.bgMusicTrack?.on(Node.EventType.TOUCH_MOVE, this.onBgMusicControlTouch, this)
+    this.bgMusicTrack?.on(Node.EventType.TOUCH_END, this.onBgMusicControlTouch, this)
+    this.bgMusicThumb?.on(Node.EventType.TOUCH_START, this.onBgMusicControlTouch, this)
+    this.bgMusicThumb?.on(Node.EventType.TOUCH_MOVE, this.onBgMusicControlTouch, this)
+    this.bgMusicThumb?.on(Node.EventType.TOUCH_END, this.onBgMusicControlTouch, this)
+
+    this.soundEffectControl?.off(Node.EventType.TOUCH_START, this.onSoundEffectControlTouch, this)
+    this.soundEffectControl?.off(Node.EventType.TOUCH_MOVE, this.onSoundEffectControlTouch, this)
+    this.soundEffectControl?.off(Node.EventType.TOUCH_END, this.onSoundEffectControlTouch, this)
+    this.soundEffectIcon?.off(Node.EventType.TOUCH_START, this.onSoundEffectControlTouch, this)
+    this.soundEffectIcon?.off(Node.EventType.TOUCH_MOVE, this.onSoundEffectControlTouch, this)
+    this.soundEffectIcon?.off(Node.EventType.TOUCH_END, this.onSoundEffectControlTouch, this)
+    this.soundEffectControl?.on(Node.EventType.TOUCH_START, this.onSoundEffectControlTouch, this)
+    this.soundEffectControl?.on(Node.EventType.TOUCH_MOVE, this.onSoundEffectControlTouch, this)
+    this.soundEffectControl?.on(Node.EventType.TOUCH_END, this.onSoundEffectControlTouch, this)
+    this.soundEffectIcon?.on(Node.EventType.TOUCH_START, this.onSoundEffectControlTouch, this)
+    this.soundEffectIcon?.on(Node.EventType.TOUCH_MOVE, this.onSoundEffectControlTouch, this)
+    this.soundEffectIcon?.on(Node.EventType.TOUCH_END, this.onSoundEffectControlTouch, this)
+  }
+
+  // 根据当前设置刷新两条音量滑块的视觉状态。
+  private refreshAudioControls() {
+    this.redrawBgMusicSlider()
+    this.redrawSoundEffectToggle()
+  }
+
+  // 音量变化后立即刷新本地状态、视觉状态和真实音频源。
+  private setBgMusicVolume(volume: number, persist = true) {
+    this.bgMusicVolume = Math.max(0, Math.min(1, volume))
+    if (persist) {
+      sys.localStorage.setItem(AUDIO_MUSIC_VOLUME_KEY, this.bgMusicVolume.toString())
+    }
+
+    this.refreshAudioControls()
+    this.applyAudioSettings()
+  }
+
+  // 音效音量变化后同步保存，并立即影响后续音效播放。
+  private setSoundEffectVolume(volume: number, persist = true) {
+    this.soundEffectVolume = Math.max(0, Math.min(1, volume))
+    if (persist) {
+      sys.localStorage.setItem(AUDIO_SOUND_EFFECT_KEY, this.soundEffectVolume.toString())
+    }
+
+    this.refreshAudioControls()
+    this.applyAudioSettings()
+  }
+
+  // 背景音乐滑块支持点击和拖动，直接把触摸点映射到 0 到 1 的音量范围。
+  private onBgMusicControlTouch(event: EventTouch) {
+    event.propagationStopped = true
+    if (!this.bgMusicControl) {
+      return
+    }
+
+    const controlTransform = this.bgMusicControl.getComponent(UITransform)
+    if (!controlTransform) {
+      return
+    }
+
+    const uiLocation = event.getUILocation()
+    const local = controlTransform.convertToNodeSpaceAR(new Vec3(uiLocation.x, uiLocation.y, 0))
+    const minX = Math.min(this.bgMusicThumbMinX, this.bgMusicThumbMaxX)
+    const maxX = Math.max(this.bgMusicThumbMinX, this.bgMusicThumbMaxX)
+    const volume = (local.x - minX) / Math.max(1, maxX - minX)
+    this.setBgMusicVolume(volume)
+  }
+
+  // 音效滑块支持点击和拖动，直接把触摸点映射到 0 到 1 的音量范围。
+  private onSoundEffectControlTouch(event: EventTouch) {
+    event.propagationStopped = true
+    if (!this.soundEffectControl) {
+      return
+    }
+
+    const controlTransform = this.soundEffectControl.getComponent(UITransform)
+    if (!controlTransform) {
+      return
+    }
+
+    const uiLocation = event.getUILocation()
+    const local = controlTransform.convertToNodeSpaceAR(new Vec3(uiLocation.x, uiLocation.y, 0))
+    const minX = Math.min(this.soundEffectThumbMinX, this.soundEffectThumbMaxX)
+    const maxX = Math.max(this.soundEffectThumbMinX, this.soundEffectThumbMaxX)
+    const volume = (local.x - minX) / Math.max(1, maxX - minX)
+    this.setSoundEffectVolume(volume)
+  }
+
+  // 背景音乐滑块保留 scene 中已有图片尺寸，只移动右侧图片并重绘轨道。
+  private redrawBgMusicSlider() {
+    const trackNode = this.bgMusicTrack
+    const trackTransform = trackNode?.getComponent(UITransform)
+    const trackGraphics = trackNode?.getComponent(Graphics)
+    if (!trackNode || !trackTransform || !trackGraphics) {
+      return
+    }
+
+    const width = Math.max(1, Math.abs(this.bgMusicThumbMaxX - this.bgMusicThumbMinX))
+    const visualHeight = Math.max(12, Math.min(18, trackTransform.height * 0.18))
+    const radius = visualHeight * 0.5
+    const knobX = this.bgMusicThumbMinX + (this.bgMusicThumbMaxX - this.bgMusicThumbMinX) * this.bgMusicVolume
+    const startX = Math.min(this.bgMusicThumbMinX, this.bgMusicThumbMaxX) - trackNode.position.x
+
+    trackGraphics.clear()
+    trackGraphics.fillColor = new Color(59, 53, 74, 255)
+    trackGraphics.roundRect(startX, -visualHeight * 0.5, width, visualHeight, radius)
+    trackGraphics.fill()
+
+    trackGraphics.fillColor = new Color(255, 214, 149, 255)
+    trackGraphics.roundRect(
+      startX,
+      -visualHeight * 0.5,
+      Math.max(visualHeight, width * this.bgMusicVolume),
+      visualHeight,
+      radius
+    )
+    trackGraphics.fill()
+
+    if (this.bgMusicThumb) {
+      // 滑块把手直接复用 scene 中给定的图片和尺寸，这里只更新位置。
+      this.bgMusicThumb.active = true
+      this.bgMusicThumb.setPosition(knobX, this.bgMusicThumbY, 0)
+    }
+  }
+
+  // 音效音量条和背景音乐保持同一套滑块表现，只复用 scene 中已有图片作为把手。
+  private redrawSoundEffectToggle() {
+    const toggleNode = this.soundEffectControl?.getChildByName('SoundEffect') ?? null
+    const toggleTransform = toggleNode?.getComponent(UITransform)
+    const toggleGraphics = toggleNode?.getComponent(Graphics)
+    if (!toggleNode || !toggleTransform || !toggleGraphics) {
+      return
+    }
+
+    const width = Math.max(1, Math.abs(this.soundEffectThumbMaxX - this.soundEffectThumbMinX))
+    const visualHeight = Math.max(12, Math.min(18, toggleTransform.height * 0.18))
+    const radius = visualHeight * 0.5
+    const knobX = this.soundEffectThumbMinX + (this.soundEffectThumbMaxX - this.soundEffectThumbMinX) * this.soundEffectVolume
+    const startX = Math.min(this.soundEffectThumbMinX, this.soundEffectThumbMaxX) - toggleNode.position.x
+
+    toggleGraphics.clear()
+    toggleGraphics.fillColor = new Color(59, 53, 74, 255)
+    toggleGraphics.roundRect(startX, -visualHeight * 0.5, width, visualHeight, radius)
+    toggleGraphics.fill()
+
+    toggleGraphics.fillColor = new Color(255, 214, 149, 255)
+    toggleGraphics.roundRect(
+      startX,
+      -visualHeight * 0.5,
+      Math.max(visualHeight, width * this.soundEffectVolume),
+      visualHeight,
+      radius
+    )
+    toggleGraphics.fill()
+
+    const rowSprite = this.soundEffectControl?.getComponent(Sprite)
+    if (rowSprite) {
+      rowSprite.color = new Color(255, 255, 255, 255)
+    }
+
+    const iconSprite = this.soundEffectIcon?.getComponent(Sprite)
+    if (iconSprite && this.soundEffectIcon) {
+      iconSprite.color = new Color(255, 255, 255, 255)
+      this.soundEffectIcon.setPosition(knobX, this.soundEffectThumbY, 0)
+    }
+  }
+
+  // 如果场景后续挂了 AudioSource，这里会自动把 UI 设置同步到真实音频源。
+  private applyAudioSettings() {
+    const audioSources = this.node.getComponentsInChildren(AudioSource)
+    for (const audioSource of audioSources) {
+      const lowerName = audioSource.node.name.toLowerCase()
+      if (lowerName.includes('bgm') || lowerName.includes('music')) {
+        audioSource.volume = this.bgMusicVolume
+        continue
+      }
+
+      if (lowerName.includes('sfx') || lowerName.includes('effect') || lowerName.includes('sound')) {
+        audioSource.volume = this.soundEffectVolume
+      }
+    }
+  }
+
+  // 读取 scene 中配置好的面板最终显示位置，后续打开弹窗都滑到这里。
+  private getPausePanelShownPosition() {
+    if (this.pausePanelShownPosition) {
+      return this.pausePanelShownPosition.clone()
+    }
+
+    return this.pauseOverlayPanel?.position.clone() ?? Vec3.ZERO.clone()
+  }
+
+  // 根据当前屏幕宽度和面板宽度，动态计算完全滑出屏幕右侧后的隐藏位置。
+  private getPausePanelHiddenX() {
+    const overlayTransform = this.pauseOverlay?.getComponent(UITransform)
+    const panelTransform = this.pauseOverlayPanel?.getComponent(UITransform)
+    const shown = this.getPausePanelShownPosition()
+    if (!overlayTransform || !panelTransform) {
+      return shown.x
+    }
+
+    const overlayHalfWidth = overlayTransform.width * 0.5
+    const panelHalfWidth = panelTransform.width * 0.5
+    return overlayHalfWidth + panelHalfWidth + PAUSE_PANEL_HIDDEN_GAP
   }
 
   // 优先复用 scene 中已有的 Controller 节点，方便继续在层级管理器里调样式。

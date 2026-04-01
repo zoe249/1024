@@ -193,6 +193,9 @@ export class PlayController extends Component {
     if (!this.currentPiece || this.isGameOver || this.isResolving || this.isPaused) {
       return
     }
+
+    // 只有在手指仍按住时才保持快速下落，抬起或取消触摸后要立即恢复正常速度。
+    // this.isFastDropping = false
   }
 
   // 重置棋盘数据，并把默认目标列放在中间列。
