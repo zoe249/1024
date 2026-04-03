@@ -10,6 +10,7 @@
   screen,
   Sprite,
   UITransform,
+  Widget,
   sys
 } from 'cc'
 import { PauseOverlayController } from './PauseOverlayController'
@@ -69,7 +70,7 @@ export class PlayUIController extends Component {
     isResolving: false
   }
   // 顶部状态栏文字。
-  private statusLabel: Label | null = null
+  // private statusLabel: Label | null = null
   // 底部暂停按钮文字。
   private pauseButtonLabel: Label | null = null
   // 暂停弹窗相关逻辑全部拆到独立组件，这里只保留组件引用和调用入口。
@@ -91,8 +92,8 @@ export class PlayUIController extends Component {
 
     this.fitBackgroundToScreen()
     this.ensureBoardDecorations()
-    this.ensureStatusLabel()
-    this.ensurePauseButton()
+    // this.ensureStatusLabel()
+    // this.ensurePauseButton()
     this.ensurePauseOverlay()
     this.configureControlBar()
     this.renderState(this.currentState)
@@ -107,8 +108,8 @@ export class PlayUIController extends Component {
   // 逻辑层每次状态变化后只需要把结果喂给 UI 层即可。
   renderState(state: PlayUIState) {
     this.currentState = state
-    this.refreshStatus()
-    this.refreshPauseButton()
+    // this.refreshStatus()
+    // this.refreshPauseButton()
     this.pauseOverlayController?.renderState(this.currentState.isPaused)
   }
 
@@ -250,67 +251,67 @@ export class PlayUIController extends Component {
   }
 
   // 确保状态文字节点存在；如果 scene 中没有，就由 UI 层自行补建。
-  private ensureStatusLabel() {
-    const existing = this.node.getChildByName('StatusLabel')
-    if (existing) {
-      this.statusLabel = existing.getComponent(Label)
-      return
-    }
+  // private ensureStatusLabel() {
+  //   const existing = this.node.getChildByName('StatusLabel')
+  //   if (existing) {
+  //     // this.statusLabel = existing.getComponent(Label)
+  //     return
+  //   }
 
-    const labelNode = new Node('StatusLabel')
-    labelNode.setParent(this.node)
-    labelNode.setPosition(0, 565, 0)
+  //   const labelNode = new Node('StatusLabel')
+  //   labelNode.setParent(this.node)
+  //   labelNode.setPosition(0, 565, 0)
 
-    const transform = labelNode.addComponent(UITransform)
-    transform.setContentSize(680, 80)
+  //   const transform = labelNode.addComponent(UITransform)
+  //   transform.setContentSize(680, 80)
 
-    const label = labelNode.addComponent(Label)
-    label.fontSize = 28
-    label.lineHeight = 34
-    label.horizontalAlign = Label.HorizontalAlign.CENTER
-    label.color = new Color(250, 246, 242, 255)
+  //   const label = labelNode.addComponent(Label)
+  //   label.fontSize = 28
+  //   label.lineHeight = 34
+  //   label.horizontalAlign = Label.HorizontalAlign.CENTER
+  //   label.color = new Color(250, 246, 242, 255)
 
-    this.statusLabel = label
-  }
+  //   // this.statusLabel = label
+  // }
 
   // 确保底部控制栏里的暂停按钮存在；如果 scene 已经配好，就直接复用。
-  private ensurePauseButton() {
-    const container = this.getControlContainer()
-    const existing = container.getChildByName('PauseButton')
-    if (existing) {
-      this.pauseButtonLabel = existing.getChildByName('Label')?.getComponent(Label) ?? null
-      existing.off(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
-      existing.on(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
-      return
-    }
+  // private ensurePauseButton() {
+  //   const container = this.getControlContainer()
+  //   const existing = container.getChildByName('PauseButton')
+  //   if (existing) {
+  //     this.pauseButtonLabel = existing.getChildByName('Label')?.getComponent(Label) ?? null
+  //     existing.off(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
+  //     existing.on(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
+  //     return
+  //   }
 
-    const buttonNode = new Node('PauseButton')
-    buttonNode.setParent(container)
-    buttonNode.setPosition(0, 0, 0)
+  //   const buttonNode = new Node('PauseButton')
+  //   buttonNode.setParent(container)
+  //   buttonNode.setPosition(0, 0, 0)
 
-    const transform = buttonNode.addComponent(UITransform)
-    transform.setContentSize(140, 56)
-    buttonNode.addComponent(Button)
+  //   const transform = buttonNode.addComponent(UITransform)
+  //   transform.setContentSize(140, 56)
+  //   buttonNode.addComponent(Button)
 
-    const bg = buttonNode.addComponent(Sprite)
-    bg.color = new Color(37, 55, 80, 235)
+  //   const bg = buttonNode.addComponent(Sprite)
+  //   bg.color = new Color(37, 55, 80, 235)
 
-    const labelNode = new Node('Label')
-    labelNode.setParent(buttonNode)
-    labelNode.setPosition(0, 0, 0)
-    const labelTransform = labelNode.addComponent(UITransform)
-    labelTransform.setContentSize(140, 56)
+  //   const labelNode = new Node('Label')
+  //   labelNode.setParent(buttonNode)
+  //   labelNode.setPosition(0, 0, 0)
+  //   const labelTransform = labelNode.addComponent(UITransform)
+  //   labelTransform.setContentSize(140, 56)
 
-    const label = labelNode.addComponent(Label)
-    label.string = 'Pause'
-    label.fontSize = 26
-    label.lineHeight = 30
-    label.horizontalAlign = Label.HorizontalAlign.CENTER
-    label.verticalAlign = Label.VerticalAlign.CENTER
-    label.color = new Color(245, 250, 255, 255)
-    buttonNode.on(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
-    this.pauseButtonLabel = label
-  }
+  //   const label = labelNode.addComponent(Label)
+  //   // label.string = 'Pause'
+  //   label.fontSize = 26
+  //   label.lineHeight = 30
+  //   label.horizontalAlign = Label.HorizontalAlign.CENTER
+  //   label.verticalAlign = Label.VerticalAlign.CENTER
+  //   label.color = new Color(245, 250, 255, 255)
+  //   buttonNode.on(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
+  //   this.pauseButtonLabel = label
+  // }
 
   // PauseOverlay 根节点仍由主 UI 层接入，但节点内部动画和事件完全交给独立组件处理。
   private ensurePauseOverlay() {
@@ -349,46 +350,46 @@ export class PlayUIController extends Component {
   }
 
   // 把当前逻辑状态翻译成状态栏文本。
-  private refreshStatus() {
-    if (!this.statusLabel) {
-      return
-    }
+  // private refreshStatus() {
+  //   if (!this.statusLabel) {
+  //     return
+  //   }
 
-    if (this.currentState.isGameOver) {
-      this.statusLabel.string = 'Game Over - Tap to restart'
-      return
-    }
+  //   if (this.currentState.isGameOver) {
+  //     this.statusLabel.string = 'Game Over - Tap to restart'
+  //     return
+  //   }
 
-    if (this.currentState.isResolving) {
-      this.statusLabel.string = 'Resolving...'
-      return
-    }
+  //   if (this.currentState.isResolving) {
+  //     this.statusLabel.string = 'Resolving...'
+  //     return
+  //   }
 
-    if (this.currentState.isPaused) {
-      this.statusLabel.string = 'Paused'
-      return
-    }
+  //   if (this.currentState.isPaused) {
+  //     this.statusLabel.string = 'Paused'
+  //     return
+  //   }
 
-    if (!this.currentState.currentValue) {
-      this.statusLabel.string = ''
-      return
-    }
+  //   if (!this.currentState.currentValue) {
+  //     this.statusLabel.string = ''
+  //     return
+  //   }
 
-    this.statusLabel.string = `Current ${this.currentState.currentValue} - Drag to choose column, tap to fast drop until landing`
-  }
+  //   this.statusLabel.string = `Current ${this.currentState.currentValue} - Drag to choose column, tap to fast drop until landing`
+  // }
 
   // 根据 paused 状态刷新按钮文案和颜色。
-  private refreshPauseButton() {
-    if (!this.pauseButtonLabel) {
-      return
-    }
+  // private refreshPauseButton() {
+  //   if (!this.pauseButtonLabel) {
+  //     return
+  //   }
 
-    this.pauseButtonLabel.string = this.currentState.isPaused ? 'Resume' : 'Pause'
-    const bg = this.pauseButtonLabel.node.parent?.getComponent(Sprite)
-    if (bg) {
-      bg.color = this.currentState.isPaused ? new Color(73, 111, 83, 240) : new Color(37, 55, 80, 235)
-    }
-  }
+  //   this.pauseButtonLabel.string = this.currentState.isPaused ? 'Resume' : 'Pause'
+  //   const bg = this.pauseButtonLabel.node.parent?.getComponent(Sprite)
+  //   if (bg) {
+  //     bg.color = this.currentState.isPaused ? new Color(73, 111, 83, 240) : new Color(37, 55, 80, 235)
+  //   }
+  // }
 
   // 暂停按钮只负责把点击事件转交给逻辑层，避免 UI 层直接改状态。
   private onPauseButtonTap(event: EventTouch) {
@@ -443,3 +444,4 @@ export class PlayUIController extends Component {
     return -this.getBoardInnerWidth() / 2 + columnWidth * (column + 1)
   }
 }
+
