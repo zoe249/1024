@@ -1,6 +1,5 @@
 ﻿import {
   _decorator,
-  Button,
   Color,
   Component,
   EventTouch,
@@ -10,7 +9,6 @@
   screen,
   Sprite,
   UITransform,
-  Widget,
   sys
 } from 'cc'
 import { PauseOverlayController } from './PauseOverlayController'
@@ -23,6 +21,22 @@ export type PlayUIState = {
   isGameOver: boolean
   isPaused: boolean
   isResolving: boolean
+}
+
+// 只读取胶囊布局会用到的字段，避免在没有微信类型声明时丢失类型约束。
+type WechatMenuButtonRect = {
+  top: number
+  bottom: number
+  left: number
+  right: number
+  width: number
+  height: number
+}
+
+// 微信环境里还需要读取窗口高度和顶部原生偏移，才能把胶囊坐标稳定换算到 Cocos 坐标系。
+type WechatWindowInfo = {
+  windowHeight?: number
+  screenTop?: number
 }
 
 // 棋盘边框厚度，UI 绘制和棋盘内区布局都会基于这个值计算。
@@ -62,6 +76,10 @@ export class PlayUIController extends Component {
   private pauseHandler: (() => void) | null = null
   // 控制栏在 scene 中配置的基础高度，只记录一次，后续只叠加安全区补偿。
   private controlBarBaseHeight = 0
+  // Status/Content 的原始局部坐标需要缓存下来，避免非微信平台也被运行时布局覆盖。
+  private statusContentBasePosition: { x: number; y: number; z: number } | null = null
+  // Content 的原始尺寸同样要保留，方便切回编辑器默认布局。
+  private statusContentBaseSize: { width: number; height: number } | null = null
   // UI 层缓存当前展示状态，便于统一刷新状态栏、按钮和遮罩。
   private currentState: PlayUIState = {
     currentValue: null,
@@ -96,12 +114,14 @@ export class PlayUIController extends Component {
     // this.ensurePauseButton()
     this.ensurePauseOverlay()
     this.configureControlBar()
+    this.configureStatusBar()
     this.renderState(this.currentState)
   }
 
   // 某些平台启动后一帧安全区才稳定，因此开放一个额外布局入口给逻辑层补收。
   syncLayout() {
     this.configureControlBar()
+    this.configureStatusBar()
     this.pauseOverlayController?.syncLayout()
   }
 
@@ -349,6 +369,104 @@ export class PlayUIController extends Component {
     controlTransform.setContentSize(controlTransform.width, totalHeight)
   }
 
+  // 顶部 Status 只在微信小程序里对齐胶囊按钮，其他平台继续使用 scene 中的原始布局。
+  private configureStatusBar() {
+    const statusNode = this.node.getChildByName('Status')
+    const contentNode = statusNode?.getChildByName('Content')
+    const rootTransform = this.node.getComponent(UITransform)
+    const contentTransform = contentNode?.getComponent(UITransform)
+    if (!statusNode || !contentNode || !rootTransform || !contentTransform) {
+      return
+    }
+
+    if (!this.statusContentBasePosition) {
+      // Content 的基础位置只记录一次，避免每次布局后都把运行时位置当成新的默认值。
+      this.statusContentBasePosition = {
+        x: contentNode.position.x,
+        y: contentNode.position.y,
+        z: contentNode.position.z
+      }
+    }
+    if (!this.statusContentBaseSize) {
+      // Content 的基础尺寸同理需要缓存，方便平台切换或调试时恢复。
+      this.statusContentBaseSize = {
+        width: contentTransform.width,
+        height: contentTransform.height
+      }
+    }
+    const basePosition = this.statusContentBasePosition
+    const baseSize = this.statusContentBaseSize
+    if (!baseSize) {
+      return
+    }
+    if (!basePosition) {
+      return
+    }
+
+    const menuMetrics = this.getWechatMenuMetrics()
+    if (!menuMetrics) {
+      this.restoreStatusBarLayout(contentNode, contentTransform)
+      return
+    }
+
+    const sourceWindowHeight = menuMetrics.windowHeight && menuMetrics.windowHeight > 0
+      ? menuMetrics.windowHeight
+      : screen.windowSize.height
+    const heightScale = rootTransform.height / sourceWindowHeight
+    const contentHeight = baseSize.height
+    const anchorY = contentTransform.anchorPoint.y
+    const capsuleTopFromTop = Math.max(0, menuMetrics.menuRect.top - menuMetrics.screenTop) * heightScale
+    const statusHeight = statusNode.getComponent(UITransform)?.height ?? 0
+    const contentLocalY = statusHeight * 0.5 - capsuleTopFromTop - contentHeight * (1 - anchorY)
+    // Content 保留 scene 里的横向位置和尺寸，只把自身距离顶部的偏移改成与胶囊一致。
+    contentNode.setPosition(basePosition.x, contentLocalY, basePosition.z)
+  }
+
+  // 没有胶囊数据时恢复 scene 默认布局，避免浏览器和编辑器里的排版被微信适配逻辑污染。
+  private restoreStatusBarLayout(contentNode: Node, contentTransform: UITransform) {
+    if (this.statusContentBaseSize) {
+      contentTransform.setContentSize(this.statusContentBaseSize.width, this.statusContentBaseSize.height)
+    }
+    if (this.statusContentBasePosition) {
+      contentNode.setPosition(
+        this.statusContentBasePosition.x,
+        this.statusContentBasePosition.y,
+        this.statusContentBasePosition.z
+      )
+    }
+  }
+
+  // 微信小程序和小游戏里，胶囊矩形需要和窗口信息一起读取，才能消掉真机顶部原生偏移。
+  private getWechatMenuMetrics(): { menuRect: WechatMenuButtonRect; windowHeight: number; screenTop: number } | null {
+    const wxApi = (globalThis as {
+      wx?: {
+        getMenuButtonBoundingClientRect?: () => WechatMenuButtonRect
+        getWindowInfo?: () => WechatWindowInfo
+        getSystemInfoSync?: () => WechatWindowInfo
+      }
+    }).wx
+    if (!wxApi || typeof wxApi.getMenuButtonBoundingClientRect !== 'function') {
+      return null
+    }
+
+    const menuRect = wxApi.getMenuButtonBoundingClientRect()
+    if (!menuRect || menuRect.width <= 0 || menuRect.height <= 0) {
+      return null
+    }
+
+    const windowInfo = typeof wxApi.getWindowInfo === 'function'
+      ? wxApi.getWindowInfo()
+      : typeof wxApi.getSystemInfoSync === 'function'
+        ? wxApi.getSystemInfoSync()
+        : null
+
+    return {
+      menuRect,
+      windowHeight: windowInfo?.windowHeight ?? 0,
+      screenTop: windowInfo?.screenTop ?? 0
+    }
+  }
+
   // 把当前逻辑状态翻译成状态栏文本。
   // private refreshStatus() {
   //   if (!this.statusLabel) {
@@ -444,4 +562,3 @@ export class PlayUIController extends Component {
     return -this.getBoardInnerWidth() / 2 + columnWidth * (column + 1)
   }
 }
-
