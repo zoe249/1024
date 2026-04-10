@@ -8,6 +8,8 @@
   Node,
   screen,
   Sprite,
+  tween,
+  Tween,
   UITransform,
   sys
 } from 'cc'
@@ -18,6 +20,7 @@ const { ccclass } = _decorator
 // UI 层只关心界面展示所需的最小状态，不参与棋盘运算和合并逻辑。
 export type PlayUIState = {
   currentValue: number | null
+  score: number
   isGameOver: boolean
   isPaused: boolean
   isResolving: boolean
@@ -83,6 +86,7 @@ export class PlayUIController extends Component {
   // UI 层缓存当前展示状态，便于统一刷新状态栏、按钮和遮罩。
   private currentState: PlayUIState = {
     currentValue: null,
+    score: 0,
     isGameOver: false,
     isPaused: false,
     isResolving: false
@@ -91,6 +95,12 @@ export class PlayUIController extends Component {
   // private statusLabel: Label | null = null
   // 底部暂停按钮文字。
   private pauseButtonLabel: Label | null = null
+  // 分数数值文本直接复用 scene 里的 Score/Number 节点，UI 层只负责刷新显示。
+  private scoreNumberLabel: Label | null = null
+  // 当前已经显示到界面的分数，数字滚动动画会从这个值补间到目标值。
+  private displayedScore = 0
+  // Tween 直接驱动这个简单对象，避免去改节点缩放或位置。
+  private readonly scoreTweenState = { value: 0 }
   // 暂停弹窗相关逻辑全部拆到独立组件，这里只保留组件引用和调用入口。
   private pauseOverlayController: PauseOverlayController | null = null
 
@@ -110,6 +120,7 @@ export class PlayUIController extends Component {
 
     this.fitBackgroundToScreen()
     this.ensureBoardDecorations()
+    this.ensureScoreDisplay()
     // this.ensureStatusLabel()
     // this.ensurePauseButton()
     this.ensurePauseOverlay()
@@ -128,6 +139,7 @@ export class PlayUIController extends Component {
   // 逻辑层每次状态变化后只需要把结果喂给 UI 层即可。
   renderState(state: PlayUIState) {
     this.currentState = state
+    this.refreshScoreDisplay()
     // this.refreshStatus()
     // this.refreshPauseButton()
     this.pauseOverlayController?.renderState(this.currentState.isPaused)
@@ -136,6 +148,8 @@ export class PlayUIController extends Component {
   onDestroy() {
     // UI 组件自己负责解绑按钮事件，避免逻辑层还要知道具体节点层级。
     this.getControlContainer().getChildByName('PauseButton')?.off(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
+    Tween.stopAllByTarget(this.scoreTweenState)
+    this.scoreNumberLabel = null
     this.pauseOverlayController = null
   }
 
@@ -345,6 +359,54 @@ export class PlayUIController extends Component {
 
     this.pauseOverlayController = overlay.getComponent(PauseOverlayController) ?? overlay.addComponent(PauseOverlayController)
     this.pauseOverlayController.setup({ hostNode: this.node, pauseHandler: this.pauseHandler })
+  }
+
+  // 分数显示优先复用 Status/Content 下已经配好的 Score/Number 节点，不改 scene 布局。
+  private ensureScoreDisplay() {
+    const statusContent = this.node.getChildByName('Status')?.getChildByName('Content')
+    const scoreNode =
+      statusContent?.getChildByName('Score') ??
+      statusContent?.getChildByName('Source') ??
+      this.node.getChildByName('Score') ??
+      this.node.getChildByName('Source')
+    this.scoreNumberLabel = scoreNode?.getChildByName('Number')?.getComponent(Label) ?? null
+    this.displayedScore = this.currentState.score
+    this.scoreTweenState.value = this.currentState.score
+  }
+
+  // 分数字样改成“数字递增”动画；加分时逐步滚到目标值，减分或清零时直接同步。
+  private refreshScoreDisplay() {
+    if (!this.scoreNumberLabel) {
+      return
+    }
+
+    const nextScore = Math.max(0, Math.floor(this.currentState.score))
+    const currentScore = Math.max(0, Math.floor(this.displayedScore))
+    Tween.stopAllByTarget(this.scoreTweenState)
+
+    if (nextScore <= currentScore) {
+      // 重开或回退时直接落到目标值，避免分数向下滚动造成误解。
+      this.displayedScore = nextScore
+      this.scoreTweenState.value = nextScore
+      this.scoreNumberLabel.string = `${nextScore}`
+      return
+    }
+
+    // 差值越大动画稍微长一点，但整体仍然控制在很短的 UI 反馈范围内。
+    const duration = Math.min(0.36, Math.max(0.08, (nextScore - currentScore) / 900))
+    this.scoreTweenState.value = currentScore
+    tween(this.scoreTweenState)
+      .to(duration, { value: nextScore }, {
+        easing: 'quadOut',
+        onUpdate: target => {
+          const value = Math.min(nextScore, Math.round(target.value))
+          this.displayedScore = value
+          if (this.scoreNumberLabel) {
+            this.scoreNumberLabel.string = `${value}`
+          }
+        }
+      })
+      .start()
   }
 
   // 底部控制栏的视觉样式尽量交给 scene，这里只做异形屏安全区补偿。

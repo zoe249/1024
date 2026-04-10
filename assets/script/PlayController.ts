@@ -26,6 +26,15 @@ type DirectedMergeResult = {
   changed: boolean
 }
 
+// 分数奖励先独立成事件结构，后面要加连锁倍率、活动加成时只需要扩展这里。
+type ScoreRewardEvent = {
+  source: 'merge'
+  amount: number
+  resultValue: number
+  consumedCount: number
+  chainDepth: number
+}
+
 // 控制同屏特效节点上限，避免频繁创建粒子导致卡顿。
 const MAX_ACTIVE_FX = 18
 
@@ -87,6 +96,8 @@ export class PlayController extends Component {
   private isResolving = false
   // 暂停标记，暂停时 update 不再推动棋子下落。
   private isPaused = false
+  // 奖励分数和棋盘总和分开累计，方便后续扩展更多得分来源。
+  private bonusScore = 0
   // UI 渲染组件，专门负责棋盘绘制、状态栏、控制栏和暂停遮罩。
   private uiController: PlayUIController | null = null
   // 拖尾生成计时器，用来控制特效频率。
@@ -203,6 +214,8 @@ export class PlayController extends Component {
     this.board = Array.from({ length: this.boardheight }, () =>
       Array.from({ length: this.boardwidth }, () => null)
     )
+    // 重开或首次进入时，奖励分数要和棋盘一起清零。
+    this.bonusScore = 0
     this.currentColumn = Math.floor(this.boardwidth / 2)
   }
   // 生成下一颗棋子并放到 spawn 区
@@ -271,6 +284,7 @@ export class PlayController extends Component {
 
   // 反复执行“重力下落 -> 全盘合并”，直到棋盘稳定为止。
   private async settleBoard(preferredAnchor: PieceController | null) {
+    let chainDepth = 1
     while (true) {
       const moved = await this.applyGravityAllColumns()
       const groups = this.findMergeGroups(preferredAnchor)
@@ -282,7 +296,8 @@ export class PlayController extends Component {
         continue
       }
 
-      await this.playMergeGroups(groups)
+      await this.playMergeGroups(groups, chainDepth)
+      chainDepth += 1
       preferredAnchor = null
     }
   }
@@ -291,12 +306,14 @@ export class PlayController extends Component {
   private async resolveLandingChain(anchor: PieceController): Promise<DirectedMergeResult> {
     let currentAnchor: PieceController | null = anchor
     let changed = false
+    let chainDepth = 1
 
     while (currentAnchor) {
-      const mergeResult = await this.mergeLandingComponent(currentAnchor)
+      const mergeResult = await this.mergeLandingComponent(currentAnchor, chainDepth)
       if (mergeResult.anchor) {
         currentAnchor = mergeResult.anchor
         changed = true
+        chainDepth += 1
         continue
       }
 
@@ -426,29 +443,37 @@ export class PlayController extends Component {
     })
   }
   // 并发播放当前批次的所有合并动画，等全部完成后再进入下一轮结算。
-  private async playMergeGroups(groups: MergeGroup[]) {
+  private async playMergeGroups(groups: MergeGroup[], chainDepth: number) {
     const animations: Promise<void>[] = []
+    const rewards: ScoreRewardEvent[] = []
+    const consumedGroups: PieceController[][] = []
 
     for (const group of groups) {
       const anchorPosition = this.getCellPosition(group.anchorPos.row, group.anchorPos.column)
       const consumed = group.members.filter(piece => piece !== group.anchor)
       const nextValue = group.value * Math.pow(2, consumed.length)
+      // 奖励分在合并动画开始前就结算，让总分数字可以连续滚动，不会等动画播完再跳第二次。
+      rewards.push(this.buildMergeReward(nextValue, consumed.length, chainDepth))
+      consumedGroups.push(consumed)
+      animations.push(this.animateMergeGroup(group.anchor, anchorPosition, consumed, nextValue))
+    }
 
+    this.applyScoreRewards(rewards)
+    await Promise.all(animations)
+
+    // 动画播完后再真正从棋盘数据里移除被吞掉的棋子，保证结算前后的棋盘总和一致。
+    for (const consumed of consumedGroups) {
       for (const piece of consumed) {
         const piecePos = this.findPiece(piece)
         if (piecePos) {
           this.board[piecePos.row][piecePos.column] = null
         }
       }
-
-      animations.push(this.animateMergeGroup(group.anchor, anchorPosition, consumed, nextValue))
     }
-
-    await Promise.all(animations)
   }
 
   // 只检查落地点所在的连通块，并把其中可合并的成员全部吸附到新的锚点上。
-  private async mergeLandingComponent(anchorPiece: PieceController): Promise<DirectedMergeResult> {
+  private async mergeLandingComponent(anchorPiece: PieceController, chainDepth: number): Promise<DirectedMergeResult> {
     const anchorPos = this.findPiece(anchorPiece)
     if (!anchorPos) {
       return { anchor: null, changed: false }
@@ -483,15 +508,25 @@ export class PlayController extends Component {
       }
 
       consumed.push(piece)
-      this.board[pos.row][pos.column] = null
     }
 
+    const nextValue = mergeAnchor.getValue() * Math.pow(2, consumed.length)
+    // 落地连锁的奖励分同样提前结算，避免分数先停住再补播一次消除加分。
+    this.applyScoreRewards([this.buildMergeReward(nextValue, consumed.length, chainDepth)])
     await this.animateDirectedMerge(
       mergeAnchor,
       this.getCellPosition(mergeAnchorPos.row, mergeAnchorPos.column),
       consumed,
-      mergeAnchor.getValue() * Math.pow(2, consumed.length)
+      nextValue
     )
+
+    // 动画结束后再清理被合并掉的棋子引用，后续重力和二次结算才能拿到稳定棋盘。
+    for (const piece of consumed) {
+      const piecePos = this.findPiece(piece)
+      if (piecePos) {
+        this.board[piecePos.row][piecePos.column] = null
+      }
+    }
     await this.applyGravityColumns([...affectedColumns])
     return { anchor: mergeAnchor, changed: true }
   }
@@ -972,12 +1007,61 @@ export class PlayController extends Component {
 
   // 逻辑层只暴露一份纯数据状态给 UI 层，保证职责边界清晰。
   private buildUiState(): PlayUIState {
+    const boardScore = this.getBoardScore()
     return {
       currentValue: this.currentPiece?.getValue() ?? null,
+      score: boardScore + this.bonusScore,
       isGameOver: this.isGameOver,
       isPaused: this.isPaused,
       isResolving: this.isResolving
     }
+  }
+
+  // 当前分数定义为棋盘内所有已落地棋子的数字总和，不包含仍在下落中的当前棋子。
+  private getBoardScore() {
+    let score = 0
+    for (const row of this.board) {
+      for (const piece of row) {
+        if (!piece) {
+          continue
+        }
+        score += piece.getValue()
+      }
+    }
+
+    return score
+  }
+
+  // 当前版本的奖励分规则集中放在这里，后面扩展倍率或不同来源时不需要到处改调用点。
+  private buildMergeReward(nextValue: number, consumedCount: number, chainDepth: number): ScoreRewardEvent {
+    const amount = this.calculateMergeRewardAmount(nextValue, consumedCount, chainDepth)
+    return {
+      source: 'merge',
+      amount,
+      resultValue: nextValue,
+      consumedCount,
+      chainDepth
+    }
+  }
+
+  // 合并奖励分按“结果值 x 消除倍率”计算；消除越多，倍率越高。
+  private calculateMergeRewardAmount(nextValue: number, consumedCount: number, chainDepth: number) {
+    const clearMultiplier = Math.max(1, consumedCount)
+    // 连锁深度先单独保留入口，当前版本不叠加倍率，后续活动或模式扩展时直接在这里继续乘即可。
+    const chainMultiplier = 1 + Math.max(0, chainDepth - 1) * 0
+    return Math.floor(nextValue * clearMultiplier * chainMultiplier)
+  }
+
+  // 奖励分统一走这个入口累计，方便后续增加日志、上报或临时活动加成。
+  private applyScoreRewards(rewards: ScoreRewardEvent[]) {
+    if (rewards.length === 0) {
+      return
+    }
+
+    for (const reward of rewards) {
+      this.bonusScore += reward.amount
+    }
+    this.refreshUiState()
   }
 
   // UI 层按钮点击后只通过这个入口切换暂停，真正的状态变化仍由逻辑层维护。
@@ -1025,5 +1109,3 @@ export class PlayController extends Component {
     this.spawnPiece()
   }
 }
-
-
