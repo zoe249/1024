@@ -2814,7 +2814,7 @@
       "a": 255
     },
     "_spriteFrame": {
-      "__uuid__": "f6623d18-4260-4ea1-bee7-a708fe3e5cfa@f9941",
+      "__uuid__": "ca2c64ed-30e4-4bc5-8519-dee8744d9c3d@f9941",
       "__expectedType__": "cc.SpriteFrame"
     },
     "_type": 0,
@@ -5219,6 +5219,14 @@
     "basePieceController": {
       "__uuid__": "b917f987-1be4-44ee-9e0c-44255523fe3e",
       "__expectedType__": "cc.Prefab"
+    },
+    "hammerSkillSpriteFrame": {
+      "__uuid__": "a7c0480a-a4dd-46dc-ab94-4c0df29d1bd8@f9941",
+      "__expectedType__": "cc.SpriteFrame"
+    },
+    "bombSkillSpriteFrame": {
+      "__uuid__": "c2bd34f2-a783-4855-8af8-fa07fe942dc1@f9941",
+      "__expectedType__": "cc.SpriteFrame"
     },
     "spacing": 10,
     "x": -244,

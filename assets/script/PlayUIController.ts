@@ -5,12 +5,15 @@
   EventTouch,
   Graphics,
   Label,
+  LabelOutline,
   Node,
   screen,
   Sprite,
   tween,
   Tween,
+  UIOpacity,
   UITransform,
+  Vec3,
   sys
 } from 'cc'
 import { PauseOverlayController } from './PauseOverlayController'
@@ -24,6 +27,7 @@ export type PlayUIState = {
   isGameOver: boolean
   isPaused: boolean
   isResolving: boolean
+  activeSkill: 'bomb' | 'hammer' | 'swap' | null
 }
 
 // 只读取胶囊布局会用到的字段，避免在没有微信类型声明时丢失类型约束。
@@ -77,6 +81,12 @@ export class PlayUIController extends Component {
   private spacing = 10
   // 由逻辑层注入的暂停切换回调，按钮点击后只通知逻辑，不直接改游戏状态。
   private pauseHandler: (() => void) | null = null
+  // 第一个技能按钮只通知逻辑层进入炸弹技能，不在 UI 层直接操作棋盘。
+  private bombSkillHandler: (() => void) | null = null
+  // 第二个技能按钮只通知逻辑层进入锤子技能，不在 UI 层直接操作棋盘。
+  private hammerSkillHandler: (() => void) | null = null
+  // 第三个技能按钮只通知逻辑层进入交换技能，不在 UI 层直接改棋盘状态。
+  private swapSkillHandler: (() => void) | null = null
   // 控制栏在 scene 中配置的基础高度，只记录一次，后续只叠加安全区补偿。
   private controlBarBaseHeight = 0
   // Status/Content 的原始局部坐标需要缓存下来，避免非微信平台也被运行时布局覆盖。
@@ -89,7 +99,8 @@ export class PlayUIController extends Component {
     score: 0,
     isGameOver: false,
     isPaused: false,
-    isResolving: false
+    isResolving: false,
+    activeSkill: null
   }
   // 顶部状态栏文字。
   // private statusLabel: Label | null = null
@@ -103,6 +114,18 @@ export class PlayUIController extends Component {
   private readonly scoreTweenState = { value: 0 }
   // 暂停弹窗相关逻辑全部拆到独立组件，这里只保留组件引用和调用入口。
   private pauseOverlayController: PauseOverlayController | null = null
+  // 缓存第一个技能节点，和其他技能共用选中态与取消提示。
+  private bombSkillNode: Node | null = null
+  // 缓存第三个技能节点，便于刷新选中态和销毁时解绑事件。
+  private swapSkillNode: Node | null = null
+  // 缓存第二个技能节点，和第三技能共用同一套技能态表现。
+  private hammerSkillNode: Node | null = null
+  // 技能施放提示由运行时生成，避免为了一个提示再要求手动维护 scene 节点。
+  private skillHintNode: Node | null = null
+  // 提示透明度单独缓存，方便做进入、闪烁和退出动画。
+  private skillHintOpacity: UIOpacity | null = null
+  // 记录提示当前是否显示，避免每帧刷新状态时重复重启动画。
+  private isSkillHintVisible = false
 
   // 由逻辑层在启动时调用，把棋盘尺寸和交互回调交给 UI 层管理。
   setup(options: {
@@ -111,21 +134,30 @@ export class PlayUIController extends Component {
     pieceSize: number
     spacing: number
     onPauseTap: () => void
+    onBombSkillTap: () => void
+    onHammerSkillTap: () => void
+    onSwapSkillTap: () => void
   }) {
     this.boardwidth = options.boardwidth
     this.boardheight = options.boardheight
     this.pieceSize = options.pieceSize
     this.spacing = options.spacing
     this.pauseHandler = options.onPauseTap
+    this.bombSkillHandler = options.onBombSkillTap
+    this.hammerSkillHandler = options.onHammerSkillTap
+    this.swapSkillHandler = options.onSwapSkillTap
 
     this.fitBackgroundToScreen()
     this.ensureBoardDecorations()
     this.ensureScoreDisplay()
+    this.ensureSkillButtons()
+    this.ensureSkillHint()
     // this.ensureStatusLabel()
     // this.ensurePauseButton()
     this.ensurePauseOverlay()
     this.configureControlBar()
     this.configureStatusBar()
+    this.updateSkillHintLayout()
     this.renderState(this.currentState)
   }
 
@@ -133,6 +165,7 @@ export class PlayUIController extends Component {
   syncLayout() {
     this.configureControlBar()
     this.configureStatusBar()
+    this.updateSkillHintLayout()
     this.pauseOverlayController?.syncLayout()
   }
 
@@ -140,6 +173,7 @@ export class PlayUIController extends Component {
   renderState(state: PlayUIState) {
     this.currentState = state
     this.refreshScoreDisplay()
+    this.refreshSkillButtonState()
     // this.refreshStatus()
     // this.refreshPauseButton()
     this.pauseOverlayController?.renderState(this.currentState.isPaused)
@@ -148,8 +182,31 @@ export class PlayUIController extends Component {
   onDestroy() {
     // UI 组件自己负责解绑按钮事件，避免逻辑层还要知道具体节点层级。
     this.getControlContainer().getChildByName('PauseButton')?.off(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
+    this.bombSkillNode?.off(Node.EventType.TOUCH_END, this.onBombSkillButtonTap, this)
+    this.hammerSkillNode?.off(Node.EventType.TOUCH_END, this.onHammerSkillButtonTap, this)
+    this.swapSkillNode?.off(Node.EventType.TOUCH_END, this.onSwapSkillButtonTap, this)
     Tween.stopAllByTarget(this.scoreTweenState)
+    if (this.skillHintNode) {
+      Tween.stopAllByTarget(this.skillHintNode)
+    }
+    if (this.skillHintOpacity) {
+      Tween.stopAllByTarget(this.skillHintOpacity)
+    }
+    if (this.bombSkillNode) {
+      Tween.stopAllByTarget(this.bombSkillNode)
+    }
+    if (this.hammerSkillNode) {
+      Tween.stopAllByTarget(this.hammerSkillNode)
+    }
+    if (this.swapSkillNode) {
+      Tween.stopAllByTarget(this.swapSkillNode)
+    }
     this.scoreNumberLabel = null
+    this.bombSkillNode = null
+    this.hammerSkillNode = null
+    this.swapSkillNode = null
+    this.skillHintNode = null
+    this.skillHintOpacity = null
     this.pauseOverlayController = null
   }
 
@@ -575,6 +632,186 @@ export class PlayUIController extends Component {
   private onPauseButtonTap(event: EventTouch) {
     event.propagationStopped = true
     this.pauseHandler?.()
+  }
+
+  // 技能按钮节点来自 scene 层级，UI 层只负责绑定点击事件和表现选中状态。
+  private ensureSkillButtons() {
+    const skillsContainer = this.getSkillsContainer()
+    this.bombSkillNode = skillsContainer?.getChildByName('Skill1') ?? null
+    this.hammerSkillNode = skillsContainer?.getChildByName('Skill2') ?? null
+    this.swapSkillNode = skillsContainer?.getChildByName('Skill3') ?? null
+    if (this.bombSkillNode) {
+      this.bombSkillNode.off(Node.EventType.TOUCH_END, this.onBombSkillButtonTap, this)
+      this.bombSkillNode.on(Node.EventType.TOUCH_END, this.onBombSkillButtonTap, this)
+    }
+    if (this.hammerSkillNode) {
+      this.hammerSkillNode.off(Node.EventType.TOUCH_END, this.onHammerSkillButtonTap, this)
+      this.hammerSkillNode.on(Node.EventType.TOUCH_END, this.onHammerSkillButtonTap, this)
+    }
+    if (!this.swapSkillNode) {
+      return
+    }
+
+    this.swapSkillNode.off(Node.EventType.TOUCH_END, this.onSwapSkillButtonTap, this)
+    this.swapSkillNode.on(Node.EventType.TOUCH_END, this.onSwapSkillButtonTap, this)
+  }
+
+  // 技能模式提示放在技能栏上方，明确告诉玩家可以拖动交换，也可以再次点击取消。
+  private ensureSkillHint() {
+    let hintNode = this.node.getChildByName('SkillModeHint')
+    if (!hintNode) {
+      hintNode = new Node('SkillModeHint')
+      hintNode.setParent(this.node)
+      hintNode.addComponent(UITransform).setContentSize(520, 48)
+    }
+
+    hintNode.active = false
+    hintNode.setScale(Vec3.ONE)
+    this.skillHintNode = hintNode
+    this.skillHintOpacity = hintNode.getComponent(UIOpacity) ?? hintNode.addComponent(UIOpacity)
+    this.skillHintOpacity.opacity = 0
+
+    const label = hintNode.getComponent(Label) ?? hintNode.addComponent(Label)
+    label.string = '拖动相邻棋子交换，再点技能取消'
+    label.fontSize = 25
+    label.lineHeight = 32
+    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    label.verticalAlign = Label.VerticalAlign.CENTER
+    label.color = new Color(255, 246, 210, 255)
+    // 给提示文字加深色描边，保证在棋盘、背景和技能栏上方都能清楚识别。
+    const outline = hintNode.getComponent(LabelOutline) ?? hintNode.addComponent(LabelOutline)
+    outline.color = new Color(64, 38, 8, 255)
+    outline.width = 3
+  }
+
+  // 第一个技能当前定义为炸弹技能，点击后进入点选爆炸中心模式。
+  private onBombSkillButtonTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.bombSkillHandler?.()
+  }
+
+  // 第二个技能当前定义为锤子技能，点击后进入点选敲碎模式。
+  private onHammerSkillButtonTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.hammerSkillHandler?.()
+  }
+
+  // 第三个技能当前定义为交换技能，点击后只把意图交给 PlayController 处理。
+  private onSwapSkillButtonTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.swapSkillHandler?.()
+  }
+
+  // 交换技能激活时给按钮一个轻量反馈，避免玩家不知道已经进入拖拽选棋状态。
+  private refreshSkillButtonState() {
+    const isBombActive = this.currentState.activeSkill === 'bomb'
+    const isHammerActive = this.currentState.activeSkill === 'hammer'
+    const isSwapActive = this.currentState.activeSkill === 'swap'
+    if (this.bombSkillNode) {
+      Tween.stopAllByTarget(this.bombSkillNode)
+      tween(this.bombSkillNode)
+        .to(0.08, { scale: isBombActive ? new Vec3(1.08, 1.08, 1) : Vec3.ONE }, { easing: 'quadOut' })
+        .start()
+    }
+    if (this.hammerSkillNode) {
+      Tween.stopAllByTarget(this.hammerSkillNode)
+      tween(this.hammerSkillNode)
+        .to(0.08, { scale: isHammerActive ? new Vec3(1.08, 1.08, 1) : Vec3.ONE }, { easing: 'quadOut' })
+        .start()
+    }
+    if (this.swapSkillNode) {
+      Tween.stopAllByTarget(this.swapSkillNode)
+      tween(this.swapSkillNode)
+        .to(0.08, { scale: isSwapActive ? new Vec3(1.08, 1.08, 1) : Vec3.ONE }, { easing: 'quadOut' })
+        .start()
+    }
+    this.refreshSkillHintState(this.currentState.activeSkill)
+  }
+
+  // 技能激活时提示常驻并轻微呼吸，取消或施放结束时淡出。
+  private refreshSkillHintState(activeSkill: PlayUIState['activeSkill']) {
+    const isActive = activeSkill !== null
+    if (!this.skillHintNode || !this.skillHintOpacity) {
+      return
+    }
+    this.refreshSkillHintText(activeSkill)
+    if (this.isSkillHintVisible === isActive) {
+      return
+    }
+
+    this.isSkillHintVisible = isActive
+    Tween.stopAllByTarget(this.skillHintNode)
+    Tween.stopAllByTarget(this.skillHintOpacity)
+
+    if (isActive) {
+      this.updateSkillHintLayout()
+      this.skillHintNode.active = true
+      this.skillHintNode.setScale(new Vec3(0.96, 0.96, 1))
+      this.skillHintOpacity.opacity = 0
+      tween(this.skillHintOpacity).to(0.12, { opacity: 255 }, { easing: 'quadOut' }).start()
+      tween(this.skillHintNode)
+        .sequence(
+          tween().to(0.12, { scale: Vec3.ONE }, { easing: 'backOut' }),
+          tween()
+            .repeatForever(
+              tween()
+                .sequence(
+                  tween().to(0.48, { scale: new Vec3(1.04, 1.04, 1) }, { easing: 'sineInOut' }),
+                  tween().to(0.48, { scale: Vec3.ONE }, { easing: 'sineInOut' })
+                )
+            )
+        )
+        .start()
+      return
+    }
+
+    tween(this.skillHintOpacity)
+      .to(0.1, { opacity: 0 }, { easing: 'quadIn' })
+      .call(() => {
+        if (this.skillHintNode) {
+          this.skillHintNode.active = false
+          this.skillHintNode.setScale(Vec3.ONE)
+        }
+      })
+      .start()
+  }
+
+  // 不同技能使用同一个提示节点，文案随当前激活技能切换。
+  private refreshSkillHintText(activeSkill: PlayUIState['activeSkill']) {
+    if (!this.skillHintNode || !activeSkill) {
+      return
+    }
+
+    const label = this.skillHintNode.getComponent(Label)
+    if (!label) {
+      return
+    }
+
+    label.string = activeSkill === 'bomb'
+      ? '点选中心棋子，炸碎周围棋子'
+      : activeSkill === 'hammer'
+        ? '点选一个棋子敲碎，再点技能取消'
+        : '拖动相邻棋子交换，再点技能取消'
+  }
+
+  // 提示位置跟随技能栏，避免异形屏或 scene 调整后提示跑到错误位置。
+  private updateSkillHintLayout() {
+    if (!this.skillHintNode) {
+      return
+    }
+
+    const skillsContainer = this.getSkillsContainer()
+    if (!skillsContainer) {
+      this.skillHintNode.setPosition(0, -400, 0)
+      return
+    }
+
+    this.skillHintNode.setPosition(skillsContainer.position.x, skillsContainer.position.y + 120, 0)
+  }
+
+  // 技能栏节点历史上有拼写错误，这里同时兼容新旧两个名字。
+  private getSkillsContainer() {
+    return this.node.getChildByName('SkliisController') ?? this.node.getChildByName('SkillsController')
   }
 
   // 优先复用 scene 中已有的 Controller 节点，方便继续在层级管理器里调样式。
