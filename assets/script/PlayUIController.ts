@@ -50,10 +50,16 @@ type WechatWindowInfo = {
 const BOARD_BORDER_WIDTH = 20
 // 棋盘内层圆角与棋子圆角保持一致，保证视觉统一。
 const BOARD_INNER_RADIUS = 8
-// 棋盘边框颜色。
-const BOARD_FRAME_COLOR = new Color(255, 215, 0, 255)
-// 棋盘底色。
-const BOARD_FILL_COLOR = new Color(255, 175, 0, 255)
+// 棋盘外层玻璃阴影色，用很低透明度替代原来的实色边框。
+const BOARD_GLASS_SHADOW_COLOR = new Color(28, 56, 70, 68)
+// 棋盘主体玻璃蒙版色改成浅青蓝灰，保持冷色调但不过度压暗。
+const BOARD_GLASS_TINT_COLOR = new Color(116, 190, 214, 52)
+// 棋盘内区玻璃底色只做浅冷雾化，避免变成厚重实色背景。
+const BOARD_GLASS_INNER_COLOR = new Color(156, 220, 236, 30)
+// 棋盘列的轻量蒙版色，用交替透明块让五列仍然可识别。
+const BOARD_COLUMN_TINT_COLOR = new Color(188, 238, 248, 20)
+// 棋盘列边缘柔光色，让虚线和玻璃面板看起来是一体的。
+const BOARD_COLUMN_EDGE_COLOR = new Color(126, 216, 238, 48)
 // 外层圆角由内层圆角叠加边框厚度得到，确保边框厚度视觉一致。
 const BOARD_OUTER_RADIUS = BOARD_INNER_RADIUS + BOARD_BORDER_WIDTH
 // 列分隔虚线宽度。
@@ -66,8 +72,8 @@ const BOARD_DASH_GAP = 12
 const BOARD_DASH_INSET = 16
 // 虚线圆角半径，让列分隔更柔和。
 const BOARD_DASH_RADIUS = 2
-// 虚线颜色。
-const BOARD_DASH_COLOR = new Color(223, 146, 10, 150)
+// 虚线颜色改成浅冷柔光，配合新的玻璃蒙版而不是原来的实色样式。
+const BOARD_DASH_COLOR = new Color(214, 248, 255, 92)
 
 @ccclass('PlayUIController')
 export class PlayUIController extends Component {
@@ -226,7 +232,7 @@ export class PlayUIController extends Component {
     }
   }
 
-  // 纯代码绘制棋盘边框、底色和列虚线，并同步列节点占位尺寸。
+  // 纯代码绘制玻璃棋盘、列蒙版和列分隔线，并同步列节点占位尺寸。
   private ensureBoardDecorations() {
     const boardNode = this.node.getChildByName('board')
     if (!boardNode) {
@@ -259,8 +265,8 @@ export class PlayUIController extends Component {
     const frameGraphics = boardFrame.getComponent(Graphics) ?? boardFrame.addComponent(Graphics)
     frameGraphics.enabled = true
     frameGraphics.clear()
-    // 先填满外框，再覆盖内层底色，避免边框与底色之间出现缝隙。
-    frameGraphics.fillColor = BOARD_FRAME_COLOR
+    // 外层先铺一层低透明阴影，视觉上保留边界但不再使用厚重实色边框。
+    frameGraphics.fillColor = BOARD_GLASS_SHADOW_COLOR
     frameGraphics.roundRect(
       -innerWidth / 2 - BOARD_BORDER_WIDTH,
       -innerHeight / 2 - BOARD_BORDER_WIDTH,
@@ -269,9 +275,24 @@ export class PlayUIController extends Component {
       BOARD_OUTER_RADIUS
     )
     frameGraphics.fill()
-    frameGraphics.fillColor = BOARD_FILL_COLOR
+
+    // 主体玻璃层略小于阴影层，避免外缘太硬，同时覆盖原来的黄色纯色样式。
+    frameGraphics.fillColor = BOARD_GLASS_TINT_COLOR
+    frameGraphics.roundRect(
+      -innerWidth / 2 - BOARD_BORDER_WIDTH * 0.65,
+      -innerHeight / 2 - BOARD_BORDER_WIDTH * 0.65,
+      innerWidth + BOARD_BORDER_WIDTH * 1.3,
+      innerHeight + BOARD_BORDER_WIDTH * 1.3,
+      BOARD_OUTER_RADIUS
+    )
+    frameGraphics.fill()
+
+    // 内区只保留轻微雾化蒙版，让棋盘仍然有面积感，但不会变成纯色背景。
+    frameGraphics.fillColor = BOARD_GLASS_INNER_COLOR
     frameGraphics.roundRect(-innerWidth / 2, -innerHeight / 2, innerWidth, innerHeight, BOARD_INNER_RADIUS)
     frameGraphics.fill()
+
+    // 不再绘制额外高光条，避免顶部或左侧出现独立白线。
 
     const boardFill = boardNode.getChildByName('BoardFill')
     if (boardFill) {
@@ -315,18 +336,44 @@ export class PlayUIController extends Component {
       dashedLines.setParent(boardNode)
     }
     dashedLines.setPosition(0, 0, 0)
+    // 列样式只作为棋盘背景存在，优先放在 BoardFill 后面、列节点前面，避免覆盖棋子。
+    const columnDecorationIndex = boardFill ? 2 : 1
+    dashedLines.setSiblingIndex(Math.min(columnDecorationIndex, boardNode.children.length - 1))
 
     const dashedTransform = dashedLines.getComponent(UITransform) ?? dashedLines.addComponent(UITransform)
     dashedTransform.setContentSize(innerWidth, innerHeight)
 
     const graphics = dashedLines.getComponent(Graphics) ?? dashedLines.addComponent(Graphics)
     graphics.clear()
-    graphics.fillColor = BOARD_DASH_COLOR
 
     const top = innerHeight / 2 - BOARD_DASH_INSET
     const bottom = -innerHeight / 2 + BOARD_DASH_INSET
+    const columnWidth = innerWidth / this.boardwidth
+    // 使用交替列蒙版表达五等分列，同时透明度很低，不会抢棋子的视觉焦点。
+    for (let column = 0; column < this.boardwidth; column++) {
+      if (column % 2 !== 0) {
+        continue
+      }
+
+      graphics.fillColor = BOARD_COLUMN_TINT_COLOR
+      graphics.roundRect(
+        -innerWidth / 2 + columnWidth * column + 5,
+        bottom,
+        columnWidth - 10,
+        top - bottom,
+        BOARD_INNER_RADIUS
+      )
+      graphics.fill()
+    }
+
     for (let column = 0; column < this.boardwidth - 1; column++) {
       const x = this.getBoardSeparatorX(column)
+      // 每条分隔线先铺一条柔光底，再叠加短虚线，避免虚线像单独贴上去的素材。
+      graphics.fillColor = BOARD_COLUMN_EDGE_COLOR
+      graphics.roundRect(x - BOARD_DASH_WIDTH / 2, bottom, BOARD_DASH_WIDTH, top - bottom, BOARD_DASH_RADIUS)
+      graphics.fill()
+
+      graphics.fillColor = BOARD_DASH_COLOR
       for (let y = bottom; y < top; y += BOARD_DASH_LENGTH + BOARD_DASH_GAP) {
         const segmentEnd = Math.min(y + BOARD_DASH_LENGTH, top)
         graphics.roundRect(
@@ -337,8 +384,8 @@ export class PlayUIController extends Component {
           BOARD_DASH_RADIUS
         )
       }
+      graphics.fill()
     }
-    graphics.fill()
   }
 
   // 确保状态文字节点存在；如果 scene 中没有，就由 UI 层自行补建。
