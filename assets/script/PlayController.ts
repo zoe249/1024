@@ -1,5 +1,6 @@
 ﻿import { _decorator, Color, Component, EventTouch, instantiate, Node, Prefab, Sprite, SpriteFrame, tween, Tween, UITransform, UIOpacity, Vec2, Vec3 } from 'cc'
 import { PieceController } from './PieceController'
+import { AudioClip, AudioSource } from 'cc'
 import { PlayUIController, type PlayUIState } from './PlayUIController'
 
 const { ccclass, property } = _decorator
@@ -74,6 +75,22 @@ export class PlayController extends Component {
   @property({ type: SpriteFrame, tooltip: 'Bomb skill sprite frame' })
   bombSkillSpriteFrame: SpriteFrame | null = null
 
+  // 棋子落地触碰时播放的音效。
+  @property({ type: AudioClip, tooltip: 'Piece collision sound effect' })
+  collisionAudioClip: AudioClip | null = null
+
+  // 棋子落地后直接触发消除时播放的音效。
+  @property({ type: AudioClip, tooltip: 'Landing merge sound effect' })
+  landingMergeAudioClip: AudioClip | null = null
+
+  // 交换后无法形成消除时，回退动画播放的提示音。
+  @property({ type: AudioClip, tooltip: 'Swap rollback sound effect' })
+  swapRollbackAudioClip: AudioClip | null = null
+
+  // 游戏场景循环播放的背景音乐。
+  @property({ type: AudioClip, tooltip: 'Gameplay background music' })
+  gameplayBgmClip: AudioClip | null = null
+
   // 单元格之间的额外间距，步长 = 棋子尺寸 + 间距。
   @property({ tooltip: 'Cell spacing' })
   spacing = 10
@@ -134,9 +151,14 @@ export class PlayController extends Component {
   private trailTimer = 0
   // 当前屏幕上仍未销毁的特效节点集合，便于统一清理。
   private activeFx = new Set<Node>()
+  // 背景音乐使用独立音频源，便于和音效分开调音量。
+  private bgmAudioSource: AudioSource | null = null
+  // 音效统一复用一个音频源播放 one-shot，避免频繁创建组件。
+  private sfxAudioSource: AudioSource | null = null
   // 生命周期入口：先准备棋盘数据，再把界面初始化交给独立的 UI 组件。
   onLoad() {
     this.resetBoard()
+    this.ensureAudioSources()
     this.uiController = this.getComponent(PlayUIController) ?? this.addComponent(PlayUIController)
     // UI 组件只接收绘制所需参数和按钮回调，不参与玩法计算。
     this.uiController.setup({
@@ -155,6 +177,7 @@ export class PlayController extends Component {
   start() {
     // 某些平台会在启动后一帧才拿到稳定的安全区，这里让 UI 组件再补一次布局。
     this.uiController?.syncLayout()
+    this.playBackgroundMusic()
     this.refreshUiState()
     this.spawnPiece()
   }
@@ -385,6 +408,11 @@ export class PlayController extends Component {
     landedPiece.node.setPosition(this.getCellPosition(row, column))
     this.refreshUiState()
 
+    const willMergeOnLanding = this.canPieceMergeNow(landedPiece)
+    if (!willMergeOnLanding) {
+      this.playSoundEffect(this.collisionAudioClip)
+    }
+
     const directedResult = await this.resolveLandingChain(landedPiece)
     await this.settleBoard(directedResult.anchor)
 
@@ -600,6 +628,7 @@ export class PlayController extends Component {
     ])
 
     if (this.findMergeGroups(sourcePiece).length === 0) {
+      this.playSoundEffect(this.swapRollbackAudioClip)
       await this.rollbackSwapSkill(dragState, target)
       this.restoreSwapPieceLayer(dragState)
       this.isResolving = false
@@ -1207,6 +1236,20 @@ export class PlayController extends Component {
 
     return component
   }
+
+  // 落地后先快速预判当前棋子是否会直接形成连通消除，用来决定先播碰撞还是消除音。
+  private canPieceMergeNow(piece: PieceController) {
+    const piecePos = this.findPiece(piece)
+    if (!piecePos) {
+      return false
+    }
+
+    const visited = Array.from({ length: this.boardheight }, () =>
+      Array.from({ length: this.boardwidth }, () => false)
+    )
+    return this.collectComponent(piecePos.row, piecePos.column, visited).length > 1
+  }
+
   // 按规则决定整组保留哪颗棋子作为锚点，其他棋子都会向它聚合并消失。
   private chooseAnchor(component: CellPosition[], preferredAnchor: PieceController | null) {
     if (preferredAnchor) {
@@ -1254,8 +1297,10 @@ export class PlayController extends Component {
     }
 
     this.applyScoreRewards(rewards)
+    if (groups.length > 0) {
+      this.playSoundEffect(this.landingMergeAudioClip)
+    }
     await Promise.all(animations)
-
     // 动画播完后再真正从棋盘数据里移除被吞掉的棋子，保证结算前后的棋盘总和一致。
     for (const consumed of consumedGroups) {
       for (const piece of consumed) {
@@ -1308,13 +1353,13 @@ export class PlayController extends Component {
     const nextValue = mergeAnchor.getValue() * Math.pow(2, consumed.length)
     // 落地连锁的奖励分同样提前结算，避免分数先停住再补播一次消除加分。
     this.applyScoreRewards([this.buildMergeReward(nextValue, consumed.length, chainDepth)])
+    this.playSoundEffect(this.landingMergeAudioClip)
     await this.animateDirectedMerge(
       mergeAnchor,
       this.getCellPosition(mergeAnchorPos.row, mergeAnchorPos.column),
       consumed,
       nextValue
     )
-
     // 动画结束后再清理被合并掉的棋子引用，后续重力和二次结算才能拿到稳定棋盘。
     for (const piece of consumed) {
       const piecePos = this.findPiece(piece)
@@ -1624,6 +1669,48 @@ export class PlayController extends Component {
     sprite.spriteFrame = source.getSpriteFrame()
     sprite.color = source.getBackgroundColor()
     return node
+  }
+
+  // 运行时自动准备一对音频源，避免场景里必须手动摆放 BGM 和 SFX 节点。
+  private ensureAudioSources() {
+    this.bgmAudioSource = this.ensureAudioSourceNode('GameBgmAudioSource')
+    this.sfxAudioSource = this.ensureAudioSourceNode('GameSfxAudioSource')
+  }
+
+  // 音频节点不存在时自动创建；已存在则直接复用，避免反复加组件。
+  private ensureAudioSourceNode(nodeName: string) {
+    let audioNode = this.node.getChildByName(nodeName)
+    if (!audioNode) {
+      audioNode = new Node(nodeName)
+      audioNode.setParent(this.node)
+      audioNode.setPosition(0, 0, 0)
+    }
+
+    return audioNode.getComponent(AudioSource) ?? audioNode.addComponent(AudioSource)
+  }
+
+  // 背景音乐只在进入场景时启动一次，并且保持循环播放。
+  private playBackgroundMusic() {
+    if (!this.bgmAudioSource || !this.gameplayBgmClip) {
+      return
+    }
+
+    this.bgmAudioSource.clip = this.gameplayBgmClip
+    this.bgmAudioSource.loop = true
+    if (this.bgmAudioSource.playing) {
+      return
+    }
+
+    this.bgmAudioSource.play()
+  }
+
+  // 所有短音效都走 one-shot，避免切断当前正在播放的其他反馈音。
+  private playSoundEffect(clip: AudioClip | null) {
+    if (!clip || !this.sfxAudioSource) {
+      return
+    }
+
+    this.sfxAudioSource.playOneShot(clip)
   }
 
   // 限制特效节点总数，避免短时间内创建过多粒子。
