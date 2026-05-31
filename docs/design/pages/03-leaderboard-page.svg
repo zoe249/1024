@@ -1,0 +1,180 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 1280" width="720" height="1280">
+  <defs>
+    <!-- 背景(游戏画面，被遮罩压暗) -->
+    <linearGradient id="gameBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#D8F0E0"/>
+      <stop offset="50%" stop-color="#D0EAF8"/>
+      <stop offset="100%" stop-color="#EAE0F8"/>
+    </linearGradient>
+
+    <!-- 排行榜卡片 -->
+    <linearGradient id="rankCard" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="rgba(248,254,252,0.96)"/>
+      <stop offset="100%" stop-color="rgba(240,250,248,0.90)"/>
+    </linearGradient>
+
+    <!-- 邀请按钮 -->
+    <linearGradient id="inviteBtn" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6DC5FF"/>
+      <stop offset="100%" stop-color="#4AA8FF"/>
+    </linearGradient>
+
+    <!-- 前三名颜色 -->
+    <linearGradient id="goldCrown" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FFE08A"/>
+      <stop offset="100%" stop-color="#FFC840"/>
+    </linearGradient>
+    <linearGradient id="silverCrown" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#D8E8F8"/>
+      <stop offset="100%" stop-color="#A0C8E8"/>
+    </linearGradient>
+    <linearGradient id="bronzeCrown" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#F0D0B0"/>
+      <stop offset="100%" stop-color="#D8A878"/>
+    </linearGradient>
+
+    <!-- 阴影 -->
+    <filter id="cardShadow">
+      <feDropShadow dx="0" dy="8" stdDeviation="24" flood-color="#1C3846" flood-opacity="0.15"/>
+    </filter>
+    <filter id="btnShadow">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#2E6C79" flood-opacity="0.12"/>
+    </filter>
+    <filter id="podiumShadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#000" flood-opacity="0.08"/>
+    </filter>
+    <filter id="rowShadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="3" flood-color="#000" flood-opacity="0.04"/>
+    </filter>
+  </defs>
+
+  <!-- ===== 游戏背景(被遮罩压暗) ===== -->
+  <rect width="720" height="1280" fill="url(#gameBg)"/>
+
+  <!-- 简化棋盘轮廓(背景中) -->
+  <rect x="143" y="130" width="434" height="602" rx="16" fill="rgba(255,255,255,0.3)" stroke="rgba(200,225,235,0.4)" stroke-width="1"/>
+  <g stroke="rgba(180,210,225,0.2)" stroke-width="0.5" fill="none">
+    <line x1="143" y1="210" x2="577" y2="210"/><line x1="143" y1="290" x2="577" y2="290"/>
+    <line x1="143" y1="370" x2="577" y2="370"/><line x1="143" y1="450" x2="577" y2="450"/>
+    <line x1="143" y1="530" x2="577" y2="530"/><line x1="143" y1="610" x2="577" y2="610"/>
+    <line x1="230" y1="130" x2="230" y2="732"/><line x1="317" y1="130" x2="317" y2="732"/>
+    <line x1="404" y1="130" x2="404" y2="732"/><line x1="491" y1="130" x2="491" y2="732"/>
+  </g>
+
+  <!-- 半透明暗色遮罩 -->
+  <rect width="720" height="1280" fill="rgba(30,60,75,0.22)"/>
+
+  <!-- ===== 排行榜卡片 ===== -->
+  <g filter="url(#cardShadow)">
+    <rect x="60" y="120" width="600" height="920" rx="32" fill="url(#rankCard)"/>
+  </g>
+
+  <!-- 关闭按钮 -->
+  <g>
+    <circle cx="618" cy="158" r="22" fill="rgba(46,108,121,0.08)"/>
+    <text x="618" y="165" text-anchor="middle" font-size="20" fill="#8CB8C0">✕</text>
+  </g>
+
+  <!-- 标题 -->
+  <text x="360" y="182" text-anchor="middle" font-family="'PingFang SC','Helvetica Neue',sans-serif" font-size="38" font-weight="800" fill="#2E6C79" letter-spacing="3">好友排行榜</text>
+
+  <!-- 本周合成之星 胶囊 -->
+  <g>
+    <rect x="260" y="200" width="200" height="36" rx="18" fill="rgba(180,225,240,0.35)"/>
+    <text x="360" y="225" text-anchor="middle" font-family="'PingFang SC',sans-serif" font-size="17" fill="#6E9AA1">✦ 本周合成之星 ✦</text>
+  </g>
+
+  <!-- ===== 前三名奖台 ===== -->
+  <!--
+    布局：
+    第1名: 居中，y=340，头像 88px
+    第2名: 左，y=380，头像 68px
+    第3名: 右，y=380，头像 68px
+  -->
+
+  <!-- 第2名(左) -->
+  <g filter="url(#podiumShadow)">
+    <rect x="120" y="400" width="130" height="140" rx="20" fill="rgba(210,230,245,0.6)"/>
+  </g>
+  <circle cx="185" cy="430" r="32" fill="url(#silverCrown)"/>
+  <text x="185" y="438" text-anchor="middle" font-size="28" font-weight="bold" fill="#FFF">2</text>
+  <text x="185" y="482" text-anchor="middle" font-family="'PingFang SC',sans-serif" font-size="17" font-weight="600" fill="#2E6C79">Lily</text>
+  <text x="185" y="508" text-anchor="middle" font-family="'Courier New',monospace" font-size="18" font-weight="bold" fill="#6E9AA1">29,640</text>
+  <line x1="148" y1="522" x2="222" y2="522" stroke="rgba(180,210,225,0.4)" stroke-width="1.5"/>
+
+  <!-- 第1名(中) -->
+  <g filter="url(#podiumShadow)">
+    <rect x="280" y="354" width="160" height="186" rx="24" fill="rgba(255,245,220,0.7)"/>
+  </g>
+  <!-- 皇冠 -->
+  <text x="360" y="382" text-anchor="middle" font-size="22">👑</text>
+  <circle cx="360" cy="418" r="40" fill="url(#goldCrown)"/>
+  <text x="360" y="428" text-anchor="middle" font-size="34" font-weight="bold" fill="#FFF">1</text>
+  <text x="360" y="480" text-anchor="middle" font-family="'PingFang SC',sans-serif" font-size="22" font-weight="700" fill="#2E6C79">Mao</text>
+  <text x="360" y="510" text-anchor="middle" font-family="'Courier New',monospace" font-size="22" font-weight="bold" fill="#FFB659">42,880</text>
+  <!-- 最高分标记 -->
+  <rect x="312" y="520" width="96" height="22" rx="11" fill="rgba(255,184,89,0.2)"/>
+  <text x="360" y="536" text-anchor="middle" font-family="'PingFang SC',sans-serif" font-size="12" fill="#FFB659">🏆 最高分</text>
+
+  <!-- 第3名(右) -->
+  <g filter="url(#podiumShadow)">
+    <rect x="470" y="400" width="130" height="140" rx="20" fill="rgba(245,230,215,0.6)"/>
+  </g>
+  <circle cx="535" cy="430" r="32" fill="url(#bronzeCrown)"/>
+  <text x="535" y="438" text-anchor="middle" font-size="28" font-weight="bold" fill="#FFF">3</text>
+  <text x="535" y="482" text-anchor="middle" font-family="'PingFang SC',sans-serif" font-size="17" font-weight="600" fill="#2E6C79">Kai</text>
+  <text x="535" y="508" text-anchor="middle" font-family="'Courier New',monospace" font-size="18" font-weight="bold" fill="#6E9AA1">24,120</text>
+  <line x1="498" y1="522" x2="572" y2="522" stroke="rgba(180,210,225,0.4)" stroke-width="1.5"/>
+
+  <!-- ===== 排名列表 (4-6名) ===== -->
+
+  <!-- 第4名 -->
+  <g filter="url(#rowShadow)">
+    <rect x="100" y="590" width="520" height="68" rx="18" fill="rgba(255,255,255,0.86)"/>
+  </g>
+  <circle cx="148" cy="624" r="16" fill="#C8E8D8"/>
+  <text x="148" y="630" text-anchor="middle" font-size="14" font-weight="bold" fill="#2E6C79">4</text>
+  <text x="200" y="632" font-family="'PingFang SC',sans-serif" font-size="20" font-weight="600" fill="#2E6C79">Mint</text>
+  <text x="550" y="632" text-anchor="end" font-family="'Courier New',monospace" font-size="20" font-weight="bold" fill="#6E9AA1">18,640</text>
+
+  <!-- 第5名 -->
+  <g filter="url(#rowShadow)">
+    <rect x="100" y="670" width="520" height="68" rx="18" fill="rgba(255,255,255,0.86)"/>
+  </g>
+  <circle cx="148" cy="704" r="16" fill="#D8E8F0"/>
+  <text x="148" y="710" text-anchor="middle" font-size="14" font-weight="bold" fill="#2E6C79">5</text>
+  <text x="200" y="712" font-family="'PingFang SC',sans-serif" font-size="20" font-weight="600" fill="#2E6C79">Berry</text>
+  <text x="550" y="712" text-anchor="end" font-family="'Courier New',monospace" font-size="20" font-weight="bold" fill="#6E9AA1">15,200</text>
+
+  <!-- 第6名 -->
+  <g filter="url(#rowShadow)">
+    <rect x="100" y="750" width="520" height="68" rx="18" fill="rgba(255,255,255,0.86)"/>
+  </g>
+  <circle cx="148" cy="784" r="16" fill="#E8E0F0"/>
+  <text x="148" y="790" text-anchor="middle" font-size="14" font-weight="bold" fill="#2E6C79">6</text>
+  <text x="200" y="792" font-family="'PingFang SC',sans-serif" font-size="20" font-weight="600" fill="#2E6C79">Ocean</text>
+  <text x="550" y="792" text-anchor="end" font-family="'Courier New',monospace" font-size="20" font-weight="bold" fill="#6E9AA1">13,440</text>
+
+  <!-- ===== "我的排名" 高亮行 ===== -->
+  <g filter="url(#rowShadow)">
+    <rect x="100" y="840" width="520" height="68" rx="18" fill="rgba(200,240,230,0.5)" stroke="#5CE0B8" stroke-width="2"/>
+  </g>
+  <circle cx="148" cy="874" r="18" fill="#5CE0B8"/>
+  <text x="148" y="880" text-anchor="middle" font-size="15" font-weight="bold" fill="#FFF">12</text>
+  <text x="200" y="882" font-family="'PingFang SC',sans-serif" font-size="20" font-weight="700" fill="#2E6C79">我</text>
+  <text x="550" y="882" text-anchor="end" font-family="'Courier New',monospace" font-size="20" font-weight="bold" fill="#5CE0B8">6,880</text>
+
+  <!-- ===== 邀请按钮 ===== -->
+  <g filter="url(#btnShadow)">
+    <rect x="150" y="940" width="420" height="68" rx="34" fill="url(#inviteBtn)"/>
+  </g>
+  <text x="360" y="982" text-anchor="middle" font-family="'PingFang SC','Helvetica Neue',sans-serif" font-size="26" font-weight="700" fill="#FFFFFF" letter-spacing="3">邀 请 好 友</text>
+
+  <!-- ===== 设计标注(默认隐藏) ===== -->
+  <g stroke="#FF6B6B" stroke-width="1" opacity="0">
+    <rect x="60" y="120" width="600" height="920" fill="none" stroke-dasharray="8,4"/>
+    <text x="70" y="116" font-size="14" fill="#FF6B6B">Rank Card: 600×920, origin(60,120)</text>
+    <text x="280" y="340" font-size="14" fill="#FF6B6B">Podium area: y=340~540</text>
+    <text x="100" y="580" font-size="14" fill="#FF6B6B">List area: y=590~908</text>
+  </g>
+</svg>

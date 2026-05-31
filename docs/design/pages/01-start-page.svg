@@ -1,0 +1,201 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 1280" width="720" height="1280">
+  <defs>
+    <!-- 背景渐变 -->
+    <linearGradient id="bgGradient" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E8FFF6"/>
+      <stop offset="35%" stop-color="#E0F5FF"/>
+      <stop offset="70%" stop-color="#F5F0FF"/>
+      <stop offset="100%" stop-color="#FFF8ED"/>
+    </linearGradient>
+
+    <!-- 按钮主色渐变 -->
+    <linearGradient id="btnPrimary" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#5CE0B8"/>
+      <stop offset="100%" stop-color="#3CC99A"/>
+    </linearGradient>
+
+    <!-- 按钮次色渐变 -->
+    <linearGradient id="btnSecondary" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6DC5FF"/>
+      <stop offset="100%" stop-color="#4AA8FF"/>
+    </linearGradient>
+
+    <!-- 标题卡片渐变 -->
+    <linearGradient id="cardGradient" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.95)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0.82)"/>
+    </linearGradient>
+
+    <!-- 阴影滤镜 -->
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="12" flood-color="#2E6C79" flood-opacity="0.08"/>
+    </filter>
+
+    <filter id="btnShadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#2E6C79" flood-opacity="0.14"/>
+    </filter>
+
+    <filter id="tileShadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#000" flood-opacity="0.10"/>
+    </filter>
+
+    <!-- 棋子颜色 -->
+    <linearGradient id="tile2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FFA8D8"/>
+      <stop offset="100%" stop-color="#FF89D1"/>
+    </linearGradient>
+    <linearGradient id="tile16" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3EE8E4"/>
+      <stop offset="100%" stop-color="#14E2DE"/>
+    </linearGradient>
+    <linearGradient id="tile64" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#A2F07E"/>
+      <stop offset="100%" stop-color="#89E66C"/>
+    </linearGradient>
+    <linearGradient id="tile1024" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FFC878"/>
+      <stop offset="100%" stop-color="#FFB659"/>
+    </linearGradient>
+
+    <!-- 装饰圆渐变 -->
+    <radialGradient id="sunGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#FFF3A6" stop-opacity="0.9"/>
+      <stop offset="60%" stop-color="#FFF3A6" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#FFF3A6" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="greenBlob" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#B8F0D8" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#B8F0D8" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="blueBlob" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#B8E0FF" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#B8E0FF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- ===== 背景 ===== -->
+  <rect width="720" height="1280" fill="url(#bgGradient)"/>
+
+  <!-- 背景圆点纹理 -->
+  <g fill="#C8E8D8" opacity="0.3">
+    <circle cx="60" cy="80" r="2"/>
+    <circle cx="94" cy="80" r="2"/>
+    <circle cx="128" cy="80" r="2"/>
+    <circle cx="162" cy="80" r="2"/>
+    <circle cx="196" cy="80" r="2"/>
+    <circle cx="60" cy="114" r="2"/>
+    <circle cx="94" cy="114" r="2"/>
+    <circle cx="128" cy="114" r="2"/>
+    <circle cx="162" cy="114" r="2"/>
+    <circle cx="196" cy="114" r="2"/>
+    <circle cx="524" cy="80" r="2"/>
+    <circle cx="558" cy="80" r="2"/>
+    <circle cx="592" cy="80" r="2"/>
+    <circle cx="626" cy="80" r="2"/>
+    <circle cx="660" cy="80" r="2"/>
+    <circle cx="524" cy="114" r="2"/>
+    <circle cx="558" cy="114" r="2"/>
+    <circle cx="592" cy="114" r="2"/>
+    <circle cx="626" cy="114" r="2"/>
+    <circle cx="660" cy="114" r="2"/>
+  </g>
+
+  <!-- 装饰：右上太阳光晕 -->
+  <circle cx="580" cy="160" r="180" fill="url(#sunGlow)"/>
+
+  <!-- 装饰：左下绿色雾团 -->
+  <ellipse cx="80" cy="1100" rx="260" ry="180" fill="url(#greenBlob)"/>
+
+  <!-- 装饰：右下蓝色雾团 -->
+  <ellipse cx="640" cy="1200" rx="200" ry="140" fill="url(#blueBlob)"/>
+
+  <!-- 装饰：顶部小叶片/花瓣 -->
+  <g fill="#ACE0C8" opacity="0.5">
+    <ellipse cx="120" cy="60" rx="18" ry="8" transform="rotate(-20 120 60)"/>
+    <ellipse cx="600" cy="320" rx="14" ry="6" transform="rotate(15 600 320)"/>
+    <ellipse cx="80" cy="500" rx="12" ry="5" transform="rotate(-30 80 500)"/>
+  </g>
+
+  <!-- ===== 标题卡片 ===== -->
+  <g filter="url(#softShadow)">
+    <rect x="180" y="190" width="360" height="170" rx="28" fill="url(#cardGradient)"/>
+  </g>
+
+  <!-- 标题 1024 -->
+  <text x="360" y="280" text-anchor="middle" font-family="'Helvetica Neue', 'PingFang SC', sans-serif" font-size="64" font-weight="800" fill="#2E6C79" letter-spacing="4">1024</text>
+
+  <!-- 副标题 数字花园 -->
+  <text x="360" y="326" text-anchor="middle" font-family="'PingFang SC', 'Helvetica Neue', sans-serif" font-size="24" font-weight="600" fill="#6E9AA1" letter-spacing="6">数 字 花 园</text>
+
+  <!-- ===== 漂浮数字块 ===== -->
+  <!-- 棋子 2 -->
+  <g filter="url(#tileShadow)">
+    <rect x="184" y="480" width="72" height="72" rx="16" fill="url(#tile2)"/>
+    <text x="220" y="528" text-anchor="middle" font-family="'Courier New', monospace" font-size="32" font-weight="bold" fill="#FFFFFF">2</text>
+  </g>
+
+  <!-- 棋子 16 -->
+  <g filter="url(#tileShadow)">
+    <rect x="280" y="452" width="82" height="82" rx="18" fill="url(#tile16)"/>
+    <text x="321" y="503" text-anchor="middle" font-family="'Courier New', monospace" font-size="30" font-weight="bold" fill="#FFFFFF">16</text>
+  </g>
+
+  <!-- 棋子 64 -->
+  <g filter="url(#tileShadow)">
+    <rect x="388" y="470" width="82" height="82" rx="18" fill="url(#tile64)"/>
+    <text x="429" y="521" text-anchor="middle" font-family="'Courier New', monospace" font-size="30" font-weight="bold" fill="#FFFFFF">64</text>
+  </g>
+
+  <!-- 棋子 1024 -->
+  <g filter="url(#tileShadow)">
+    <rect x="490" y="444" width="90" height="90" rx="20" fill="url(#tile1024)"/>
+    <text x="535" y="498" text-anchor="middle" font-family="'Courier New', monospace" font-size="24" font-weight="bold" fill="#FFFFFF">1024</text>
+  </g>
+
+  <!-- 浮动指示线 -->
+  <g stroke="#C8E0D8" stroke-width="1.5" stroke-dasharray="4,4" fill="none">
+    <line x1="220" y1="565" x2="220" y2="585"/>
+    <line x1="321" y1="550" x2="321" y2="570"/>
+    <line x1="429" y1="565" x2="429" y2="585"/>
+    <line x1="535" y1="550" x2="535" y2="570"/>
+  </g>
+
+  <!-- ===== 主按钮：开始游戏 ===== -->
+  <g filter="url(#btnShadow)">
+    <rect x="146" y="730" width="428" height="88" rx="44" fill="url(#btnPrimary)"/>
+  </g>
+  <text x="360" y="782" text-anchor="middle" font-family="'PingFang SC', 'Helvetica Neue', sans-serif" font-size="36" font-weight="700" fill="#FFFFFF" letter-spacing="4">开 始 游 戏</text>
+
+  <!-- ===== 次按钮：排行榜 ===== -->
+  <g filter="url(#btnShadow)">
+    <rect x="190" y="840" width="340" height="66" rx="33" fill="url(#btnSecondary)"/>
+  </g>
+  <text x="360" y="880" text-anchor="middle" font-family="'PingFang SC', 'Helvetica Neue', sans-serif" font-size="28" font-weight="600" fill="#FFFFFF" letter-spacing="3">排 行 榜</text>
+
+  <!-- ===== 底部快捷入口 ===== -->
+  <g>
+    <!-- 音效 -->
+    <circle cx="236" cy="970" r="34" fill="rgba(255,255,255,0.75)"/>
+    <text x="236" y="978" text-anchor="middle" font-size="28" fill="#2E6C79">♪</text>
+
+    <!-- 设置 -->
+    <circle cx="360" cy="970" r="34" fill="rgba(255,255,255,0.75)"/>
+    <text x="360" y="978" text-anchor="middle" font-size="28" fill="#2E6C79">⚙</text>
+
+    <!-- 分享 -->
+    <circle cx="484" cy="970" r="34" fill="rgba(255,255,255,0.75)"/>
+    <text x="484" y="978" text-anchor="middle" font-size="26" fill="#2E6C79">↗</text>
+  </g>
+
+  <!-- ===== 底部提示文字 ===== -->
+  <text x="360" y="1080" text-anchor="middle" font-family="'PingFang SC', 'Helvetica Neue', sans-serif" font-size="20" fill="#8CB8C0" letter-spacing="2">轻触棋盘，选择列并快速下落</text>
+
+  <!-- ===== 设计标注线 ===== -->
+  <g stroke="#FF6B6B" stroke-width="1" opacity="0.0">
+    <!-- 这些辅助线在开发模式下可以打开，帮助确认布局 -->
+    <line x1="0" y1="640" x2="720" y2="640" stroke-dasharray="8,4"/>
+    <text x="10" y="635" font-size="12" fill="#FF6B6B">center Y = 640</text>
+  </g>
+</svg>

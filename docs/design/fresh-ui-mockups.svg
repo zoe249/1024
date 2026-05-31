@@ -1,0 +1,318 @@
+<svg width="2200" height="1180" viewBox="0 0 2200 1180" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="pageBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E9FFF7"/>
+      <stop offset="0.55" stop-color="#DDF8FF"/>
+      <stop offset="1" stop-color="#FFF6D9"/>
+    </linearGradient>
+    <linearGradient id="phoneBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#EFFFF8"/>
+      <stop offset="0.52" stop-color="#DFF7FF"/>
+      <stop offset="1" stop-color="#FFF2C7"/>
+    </linearGradient>
+    <linearGradient id="mintCard" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.92"/>
+      <stop offset="1" stop-color="#CFF8F2" stop-opacity="0.72"/>
+    </linearGradient>
+    <linearGradient id="greenBtn" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#B7F66E"/>
+      <stop offset="1" stop-color="#48D7A4"/>
+    </linearGradient>
+    <linearGradient id="blueBtn" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7DE7FF"/>
+      <stop offset="1" stop-color="#4AA8FF"/>
+    </linearGradient>
+    <linearGradient id="yellowBtn" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFE684"/>
+      <stop offset="1" stop-color="#FFBC58"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#5CA7B8" flood-opacity="0.22"/>
+    </filter>
+    <filter id="tinyShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#5CA7B8" flood-opacity="0.18"/>
+    </filter>
+    <pattern id="dotPattern" width="42" height="42" patternUnits="userSpaceOnUse">
+      <circle cx="6" cy="8" r="3" fill="#B9E8DF" opacity="0.34"/>
+      <circle cx="32" cy="28" r="2" fill="#FFC9A8" opacity="0.34"/>
+    </pattern>
+    <style>
+      .board-title { font: 800 34px "Eazy Chat", "Arial Rounded MT Bold", sans-serif; fill: #226071; letter-spacing: 1px; }
+      .page-title { font: 800 24px "Eazy Chat", "Arial Rounded MT Bold", sans-serif; fill: #2E6C79; }
+      .label { font: 700 18px "Eazy Chat", "Arial Rounded MT Bold", sans-serif; fill: #497984; }
+      .small { font: 600 13px "Eazy Chat", "Arial Rounded MT Bold", sans-serif; fill: #6E9AA1; }
+      .number { font: 900 26px "Courier New", monospace; fill: #FFFFFF; }
+      .score { font: 900 30px "Courier New", monospace; fill: #2E6C79; }
+      .button-text { font: 900 24px "Eazy Chat", "Arial Rounded MT Bold", sans-serif; fill: #FFFFFF; letter-spacing: 1px; }
+      .rank-num { font: 900 20px "Courier New", monospace; fill: #66B69D; }
+      .rank-name { font: 800 18px "Eazy Chat", "Arial Rounded MT Bold", sans-serif; fill: #365F68; }
+      .hint { font: 700 15px "Eazy Chat", "Arial Rounded MT Bold", sans-serif; fill: #5C8C94; }
+    </style>
+  </defs>
+
+  <rect width="2200" height="1180" fill="#F6FBF7"/>
+  <rect width="2200" height="1180" fill="url(#dotPattern)" opacity="0.55"/>
+  <text x="70" y="70" class="board-title">1024 小清新 UI 设计稿</text>
+  <text x="70" y="104" class="hint">视觉方向：清晨薄荷花园 / 轻玻璃棋盘 / 糖果数字块 / 适配 720×1280 竖屏逻辑尺寸</text>
+
+  <!-- Start Page -->
+  <g transform="translate(70 150)">
+    <rect x="0" y="0" width="360" height="780" rx="40" fill="#1F5261" opacity="0.16"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="url(#phoneBg)" filter="url(#softShadow)"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="url(#dotPattern)" opacity="0.5"/>
+    <circle cx="282" cy="92" r="56" fill="#FFF3A6" opacity="0.9"/>
+    <circle cx="80" cy="128" r="48" fill="#B7F66E" opacity="0.35"/>
+    <path d="M38 648 C92 610 132 638 180 610 C236 578 286 606 330 570 L330 772 L38 772 Z" fill="#BFEFDB" opacity="0.75"/>
+    <path d="M8 656 C74 612 120 642 184 604 C240 570 292 604 352 554 L352 772 L8 772 Z" fill="#95DEC9" opacity="0.35"/>
+
+    <g transform="translate(60 94)">
+      <rect x="0" y="0" width="240" height="112" rx="30" fill="#FFFFFF" opacity="0.82" filter="url(#tinyShadow)"/>
+      <text x="120" y="48" text-anchor="middle" font-family="Courier New, monospace" font-size="44" font-weight="900" fill="#2E6C79">1024</text>
+      <text x="120" y="82" text-anchor="middle" class="label">数字花园</text>
+    </g>
+
+    <g transform="translate(82 246)" filter="url(#tinyShadow)">
+      <rect x="0" y="0" width="58" height="58" rx="12" fill="#FF89D1"/>
+      <rect x="66" y="-18" width="58" height="58" rx="12" fill="#14E2DE"/>
+      <rect x="132" y="0" width="58" height="58" rx="12" fill="#89E66C"/>
+      <rect x="198" y="-18" width="58" height="58" rx="12" fill="#FFB659"/>
+      <text x="29" y="39" text-anchor="middle" class="number" font-size="24">2</text>
+      <text x="95" y="21" text-anchor="middle" class="number" font-size="24">16</text>
+      <text x="161" y="39" text-anchor="middle" class="number" font-size="24">64</text>
+      <text x="227" y="21" text-anchor="middle" class="number" font-size="21">1024</text>
+    </g>
+
+    <g transform="translate(56 382)">
+      <rect x="0" y="0" width="248" height="70" rx="30" fill="url(#greenBtn)" filter="url(#tinyShadow)"/>
+      <text x="124" y="44" text-anchor="middle" class="button-text">开始游戏</text>
+    </g>
+    <g transform="translate(74 470)">
+      <rect x="0" y="0" width="212" height="56" rx="24" fill="url(#blueBtn)" filter="url(#tinyShadow)"/>
+      <text x="106" y="36" text-anchor="middle" class="button-text" font-size="19">排行榜</text>
+    </g>
+    <g transform="translate(110 552)">
+      <circle cx="28" cy="28" r="28" fill="#FFFFFF" opacity="0.82" filter="url(#tinyShadow)"/>
+      <circle cx="88" cy="28" r="28" fill="#FFFFFF" opacity="0.82" filter="url(#tinyShadow)"/>
+      <circle cx="148" cy="28" r="28" fill="#FFFFFF" opacity="0.82" filter="url(#tinyShadow)"/>
+      <text x="28" y="35" text-anchor="middle" class="label">音</text>
+      <text x="88" y="35" text-anchor="middle" class="label">设</text>
+      <text x="148" y="35" text-anchor="middle" class="label">分</text>
+    </g>
+    <text x="180" y="724" text-anchor="middle" class="small">轻触棋盘，选择列并快速下落</text>
+    <text x="180" y="820" text-anchor="middle" class="page-title">游戏开始页</text>
+  </g>
+
+  <!-- Game Page -->
+  <g transform="translate(495 150)">
+    <rect x="0" y="0" width="360" height="780" rx="40" fill="#1F5261" opacity="0.16"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="url(#phoneBg)" filter="url(#softShadow)"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="url(#dotPattern)" opacity="0.42"/>
+
+    <g transform="translate(28 34)">
+      <rect x="0" y="0" width="304" height="88" rx="26" fill="url(#mintCard)" filter="url(#tinyShadow)"/>
+      <text x="28" y="32" class="small">当前</text>
+      <rect x="18" y="38" width="42" height="42" rx="10" fill="#14E2DE"/>
+      <text x="39" y="67" text-anchor="middle" class="number" font-size="20">16</text>
+      <text x="126" y="34" class="small">分数</text>
+      <text x="126" y="68" class="score">01280</text>
+      <circle cx="272" cy="44" r="25" fill="#FFFFFF" opacity="0.92"/>
+      <text x="272" y="52" text-anchor="middle" class="label">设</text>
+    </g>
+
+    <g transform="translate(34 148)">
+      <rect x="0" y="0" width="292" height="472" rx="24" fill="#245C67" opacity="0.10"/>
+      <rect x="10" y="10" width="272" height="452" rx="18" fill="#FFFFFF" opacity="0.36"/>
+      <rect x="22" y="24" width="248" height="424" rx="14" fill="#BAF1F5" opacity="0.34"/>
+      <g stroke="#E6FEFF" stroke-width="2" stroke-dasharray="8 7" opacity="0.82">
+        <line x1="72" y1="30" x2="72" y2="442"/>
+        <line x1="121" y1="30" x2="121" y2="442"/>
+        <line x1="171" y1="30" x2="171" y2="442"/>
+        <line x1="220" y1="30" x2="220" y2="442"/>
+      </g>
+      <g filter="url(#tinyShadow)">
+        <rect x="27" y="377" width="42" height="42" rx="9" fill="#FF89D1"/>
+        <rect x="76" y="377" width="42" height="42" rx="9" fill="#7C55FA"/>
+        <rect x="125" y="377" width="42" height="42" rx="9" fill="#14E2DE"/>
+        <rect x="174" y="377" width="42" height="42" rx="9" fill="#62CCFE"/>
+        <rect x="223" y="377" width="42" height="42" rx="9" fill="#89E66C"/>
+        <rect x="76" y="328" width="42" height="42" rx="9" fill="#FF89D1"/>
+        <rect x="125" y="328" width="42" height="42" rx="9" fill="#14E2DE"/>
+        <rect x="174" y="328" width="42" height="42" rx="9" fill="#F87275"/>
+        <rect x="125" y="154" width="42" height="42" rx="9" fill="#FFB659"/>
+      </g>
+      <text x="48" y="405" text-anchor="middle" class="number" font-size="18">2</text>
+      <text x="97" y="405" text-anchor="middle" class="number" font-size="18">4</text>
+      <text x="146" y="405" text-anchor="middle" class="number" font-size="18">16</text>
+      <text x="195" y="405" text-anchor="middle" class="number" font-size="18">32</text>
+      <text x="244" y="405" text-anchor="middle" class="number" font-size="18">64</text>
+      <text x="97" y="356" text-anchor="middle" class="number" font-size="18">2</text>
+      <text x="146" y="356" text-anchor="middle" class="number" font-size="18">16</text>
+      <text x="195" y="356" text-anchor="middle" class="number" font-size="18">128</text>
+      <text x="146" y="181" text-anchor="middle" class="number" font-size="16">1024</text>
+      <path d="M146 216 L137 238 L155 238 Z" fill="#5CC9AE" opacity="0.85"/>
+    </g>
+
+    <g transform="translate(26 652)">
+      <rect x="0" y="0" width="308" height="84" rx="30" fill="#FFFFFF" opacity="0.78" filter="url(#tinyShadow)"/>
+      <g transform="translate(25 11)">
+        <circle cx="31" cy="31" r="31" fill="#EFFFF8"/>
+        <text x="31" y="38" text-anchor="middle" class="label">炸</text>
+        <text x="31" y="75" text-anchor="middle" class="small">x2</text>
+      </g>
+      <g transform="translate(123 11)">
+        <circle cx="31" cy="31" r="31" fill="#EFFFF8"/>
+        <text x="31" y="38" text-anchor="middle" class="label">锤</text>
+        <text x="31" y="75" text-anchor="middle" class="small">x3</text>
+      </g>
+      <g transform="translate(221 11)">
+        <circle cx="31" cy="31" r="31" fill="#EFFFF8"/>
+        <text x="31" y="38" text-anchor="middle" class="label">换</text>
+        <text x="31" y="75" text-anchor="middle" class="small">x1</text>
+      </g>
+    </g>
+    <text x="180" y="820" text-anchor="middle" class="page-title">游戏页</text>
+  </g>
+
+  <!-- Ranking Page -->
+  <g transform="translate(920 150)">
+    <rect x="0" y="0" width="360" height="780" rx="40" fill="#1F5261" opacity="0.16"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="url(#phoneBg)" filter="url(#softShadow)"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="url(#dotPattern)" opacity="0.45"/>
+    <g transform="translate(34 56)">
+      <rect x="0" y="0" width="292" height="650" rx="32" fill="url(#mintCard)" filter="url(#softShadow)"/>
+      <circle cx="258" cy="34" r="22" fill="#FFFFFF" opacity="0.9"/>
+      <text x="258" y="42" text-anchor="middle" class="label">×</text>
+      <text x="146" y="62" text-anchor="middle" class="page-title">好友排行榜</text>
+      <rect x="72" y="84" width="148" height="34" rx="17" fill="#EFFFF8"/>
+      <text x="146" y="107" text-anchor="middle" class="small">本周合成之星</text>
+
+      <g transform="translate(42 146)">
+        <rect x="76" y="0" width="56" height="56" rx="18" fill="#FFE684"/>
+        <circle cx="104" cy="-10" r="20" fill="#FFD06B"/>
+        <text x="104" y="37" text-anchor="middle" class="rank-num">1</text>
+        <text x="104" y="86" text-anchor="middle" class="rank-name">Mao</text>
+        <text x="104" y="112" text-anchor="middle" class="score" font-size="22">42880</text>
+        <rect x="0" y="28" width="48" height="48" rx="16" fill="#DFF7FF"/>
+        <text x="24" y="60" text-anchor="middle" class="rank-num">2</text>
+        <text x="24" y="100" text-anchor="middle" class="small">Lily</text>
+        <rect x="160" y="28" width="48" height="48" rx="16" fill="#FFE8D8"/>
+        <text x="184" y="60" text-anchor="middle" class="rank-num">3</text>
+        <text x="184" y="100" text-anchor="middle" class="small">Kai</text>
+      </g>
+
+      <g transform="translate(24 304)">
+        <rect x="0" y="0" width="244" height="58" rx="20" fill="#FFFFFF" opacity="0.76"/>
+        <text x="22" y="37" class="rank-num">4</text>
+        <circle cx="62" cy="29" r="18" fill="#BFEFDB"/>
+        <text x="92" y="36" class="rank-name">Mint</text>
+        <text x="222" y="36" text-anchor="end" class="rank-num">18640</text>
+      </g>
+      <g transform="translate(24 376)">
+        <rect x="0" y="0" width="244" height="58" rx="20" fill="#FFFFFF" opacity="0.58"/>
+        <text x="22" y="37" class="rank-num">5</text>
+        <circle cx="62" cy="29" r="18" fill="#FFDCD4"/>
+        <text x="92" y="36" class="rank-name">Berry</text>
+        <text x="222" y="36" text-anchor="end" class="rank-num">15200</text>
+      </g>
+      <g transform="translate(24 448)">
+        <rect x="0" y="0" width="244" height="58" rx="20" fill="#FFFFFF" opacity="0.58"/>
+        <text x="22" y="37" class="rank-num">6</text>
+        <circle cx="62" cy="29" r="18" fill="#D7E9FF"/>
+        <text x="92" y="36" class="rank-name">Ocean</text>
+        <text x="222" y="36" text-anchor="end" class="rank-num">13440</text>
+      </g>
+
+      <g transform="translate(36 552)">
+        <rect x="0" y="0" width="220" height="56" rx="24" fill="url(#blueBtn)" filter="url(#tinyShadow)"/>
+        <text x="110" y="36" text-anchor="middle" class="button-text" font-size="19">邀请好友</text>
+      </g>
+    </g>
+    <text x="180" y="820" text-anchor="middle" class="page-title">排行榜页</text>
+  </g>
+
+  <!-- Pause / Settings Page -->
+  <g transform="translate(1345 150)">
+    <rect x="0" y="0" width="360" height="780" rx="40" fill="#1F5261" opacity="0.16"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="url(#phoneBg)" filter="url(#softShadow)"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="#143E4B" opacity="0.18"/>
+    <g transform="translate(42 140)">
+      <rect x="0" y="0" width="276" height="500" rx="36" fill="#FFFFFF" opacity="0.93" filter="url(#softShadow)"/>
+      <text x="138" y="62" text-anchor="middle" class="page-title">游戏设置</text>
+      <circle cx="238" cy="38" r="22" fill="#EFFFF8"/>
+      <text x="238" y="46" text-anchor="middle" class="label">×</text>
+      <g transform="translate(30 110)">
+        <text x="0" y="0" class="label">背景音乐</text>
+        <rect x="0" y="22" width="216" height="16" rx="8" fill="#DDF1F0"/>
+        <rect x="0" y="22" width="148" height="16" rx="8" fill="#62D8B6"/>
+        <circle cx="148" cy="30" r="18" fill="#FFFFFF" stroke="#62D8B6" stroke-width="5"/>
+      </g>
+      <g transform="translate(30 186)">
+        <text x="0" y="0" class="label">音效反馈</text>
+        <rect x="0" y="22" width="216" height="16" rx="8" fill="#DDF1F0"/>
+        <rect x="0" y="22" width="184" height="16" rx="8" fill="#7DE7FF"/>
+        <circle cx="184" cy="30" r="18" fill="#FFFFFF" stroke="#7DE7FF" stroke-width="5"/>
+      </g>
+      <g transform="translate(28 278)">
+        <rect x="0" y="0" width="64" height="64" rx="22" fill="#FFF3A6"/>
+        <text x="32" y="41" text-anchor="middle" class="label">重</text>
+        <rect x="76" y="0" width="64" height="64" rx="22" fill="#DFF7FF"/>
+        <text x="108" y="41" text-anchor="middle" class="label">榜</text>
+        <rect x="152" y="0" width="64" height="64" rx="22" fill="#FFE8D8"/>
+        <text x="184" y="41" text-anchor="middle" class="label">享</text>
+      </g>
+      <g transform="translate(38 392)">
+        <rect x="0" y="0" width="200" height="60" rx="26" fill="url(#greenBtn)" filter="url(#tinyShadow)"/>
+        <text x="100" y="39" text-anchor="middle" class="button-text" font-size="20">继续游戏</text>
+      </g>
+    </g>
+    <text x="180" y="820" text-anchor="middle" class="page-title">暂停设置页</text>
+  </g>
+
+  <!-- Result Page -->
+  <g transform="translate(1770 150)">
+    <rect x="0" y="0" width="360" height="780" rx="40" fill="#1F5261" opacity="0.16"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="url(#phoneBg)" filter="url(#softShadow)"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="#143E4B" opacity="0.12"/>
+    <circle cx="70" cy="98" r="42" fill="#B7F66E" opacity="0.35"/>
+    <circle cx="300" cy="150" r="52" fill="#FFF3A6" opacity="0.65"/>
+    <g transform="translate(44 118)">
+      <rect x="0" y="0" width="272" height="540" rx="38" fill="#FFFFFF" opacity="0.92" filter="url(#softShadow)"/>
+      <text x="136" y="64" text-anchor="middle" class="page-title">本局结算</text>
+      <g transform="translate(83 96)">
+        <rect x="0" y="0" width="106" height="106" rx="24" fill="#FFB659" filter="url(#tinyShadow)"/>
+        <text x="53" y="65" text-anchor="middle" class="number" font-size="28">1024</text>
+      </g>
+      <text x="136" y="248" text-anchor="middle" class="small">最高合成数字</text>
+      <text x="136" y="294" text-anchor="middle" class="score" font-size="40">42880</text>
+      <text x="136" y="326" text-anchor="middle" class="small">比 86% 好友更会种数字</text>
+      <g transform="translate(42 372)">
+        <rect x="0" y="0" width="188" height="58" rx="25" fill="url(#greenBtn)" filter="url(#tinyShadow)"/>
+        <text x="94" y="37" text-anchor="middle" class="button-text" font-size="19">再来一局</text>
+      </g>
+      <g transform="translate(42 446)">
+        <rect x="0" y="0" width="188" height="52" rx="23" fill="url(#yellowBtn)" filter="url(#tinyShadow)"/>
+        <text x="94" y="34" text-anchor="middle" class="button-text" font-size="18">分享成绩</text>
+      </g>
+    </g>
+    <text x="180" y="820" text-anchor="middle" class="page-title">结算页</text>
+  </g>
+
+  <!-- Design Tokens -->
+  <g transform="translate(70 1030)">
+    <text x="0" y="0" class="page-title">设计 Token</text>
+    <g transform="translate(0 30)">
+      <rect x="0" y="0" width="44" height="44" rx="12" fill="#EFFFF8"/>
+      <text x="58" y="28" class="small">背景浅薄荷 #EFFFF8</text>
+      <rect x="250" y="0" width="44" height="44" rx="12" fill="#DFF7FF"/>
+      <text x="308" y="28" class="small">浅水蓝 #DFF7FF</text>
+      <rect x="486" y="0" width="44" height="44" rx="12" fill="#FFF3A6"/>
+      <text x="544" y="28" class="small">阳光黄 #FFF3A6</text>
+      <rect x="722" y="0" width="44" height="44" rx="12" fill="#48D7A4"/>
+      <text x="780" y="28" class="small">按钮绿 #48D7A4</text>
+      <rect x="958" y="0" width="44" height="44" rx="12" fill="#2E6C79"/>
+      <text x="1016" y="28" class="small">主文字 #2E6C79</text>
+      <rect x="1194" y="0" width="44" height="44" rx="12" fill="#FF89D1"/>
+      <text x="1252" y="28" class="small">数字块保留现有高饱和色</text>
+    </g>
+  </g>
+</svg>

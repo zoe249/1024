@@ -87,6 +87,10 @@ export class PlayUIController extends Component {
   private spacing = 10
   // 由逻辑层注入的暂停切换回调，按钮点击后只通知逻辑，不直接改游戏状态。
   private pauseHandler: (() => void) | null = null
+  // 返回首页按钮只把意图通知逻辑层，UI 层不直接清空棋盘。
+  private returnHomeHandler: (() => void) | null = null
+  // 分享按钮只把意图通知逻辑层，由逻辑层适配微信或 Web 分享能力。
+  private shareHandler: (() => void) | null = null
   // 第一个技能按钮只通知逻辑层进入炸弹技能，不在 UI 层直接操作棋盘。
   private bombSkillHandler: (() => void) | null = null
   // 第二个技能按钮只通知逻辑层进入锤子技能，不在 UI 层直接操作棋盘。
@@ -140,6 +144,8 @@ export class PlayUIController extends Component {
     pieceSize: number
     spacing: number
     onPauseTap: () => void
+    onReturnHomeTap: () => void
+    onShareTap: () => void
     onBombSkillTap: () => void
     onHammerSkillTap: () => void
     onSwapSkillTap: () => void
@@ -149,6 +155,8 @@ export class PlayUIController extends Component {
     this.pieceSize = options.pieceSize
     this.spacing = options.spacing
     this.pauseHandler = options.onPauseTap
+    this.returnHomeHandler = options.onReturnHomeTap
+    this.shareHandler = options.onShareTap
     this.bombSkillHandler = options.onBombSkillTap
     this.hammerSkillHandler = options.onHammerSkillTap
     this.swapSkillHandler = options.onSwapSkillTap
@@ -462,7 +470,12 @@ export class PlayUIController extends Component {
     }
 
     this.pauseOverlayController = overlay.getComponent(PauseOverlayController) ?? overlay.addComponent(PauseOverlayController)
-    this.pauseOverlayController.setup({ hostNode: this.node, pauseHandler: this.pauseHandler })
+    this.pauseOverlayController.setup({
+      hostNode: this.node,
+      pauseHandler: this.pauseHandler,
+      homeHandler: this.returnHomeHandler,
+      shareHandler: this.shareHandler
+    })
   }
 
   // 分数显示优先复用 Status/Content 下已经配好的 Score/Number 节点，不改 scene 布局。

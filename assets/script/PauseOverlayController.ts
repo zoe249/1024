@@ -4,8 +4,11 @@
   Color,
   Component,
   EventTouch,
+  Graphics,
+  Label,
   Node,
   Sprite,
+  SpriteFrame,
   tween,
   Tween,
   UITransform,
@@ -26,6 +29,7 @@ const PAUSE_PANEL_HIDDEN_GAP = 32
 const AUDIO_MUSIC_VOLUME_KEY = 'play.audio.musicVolume'
 // 音效音量本地存储键。
 const AUDIO_SOUND_EFFECT_KEY = 'play.audio.soundEffectVolume'
+type PauseActionKind = 'home' | 'share'
 
 @ccclass('PauseOverlayController')
 export class PauseOverlayController extends Component {
@@ -71,22 +75,42 @@ export class PauseOverlayController extends Component {
   private isPaused = false
   // 由逻辑层注入的暂停切换回调，按钮点击后只通知逻辑，不直接改游戏状态。
   private pauseHandler: (() => void) | null = null
+  // 返回首页只通知逻辑层清理当前对局并展示首页。
+  private homeHandler: (() => void) | null = null
+  // 分享按钮只通知逻辑层调用平台分享能力，弹窗层不直接依赖平台 API。
+  private shareHandler: (() => void) | null = null
+  // 返回首页按钮节点，缓存后便于销毁时解绑事件。
+  private homeButtonNode: Node | null = null
+  // 分享按钮节点，缓存后便于销毁时解绑事件。
+  private shareButtonNode: Node | null = null
   // 关闭弹窗的按钮
   @property({ type: Node, tooltip: '关闭按钮节点' })
   private closeButtonNode: Node | null = null
+  // 分享按钮优先使用已有图片资源，未绑定时会退回代码绘制图标。
+  @property({ type: SpriteFrame, tooltip: '分享按钮图片' })
+  private shareButtonSpriteFrame: SpriteFrame | null = null
 
   // 由外部 UI 组件在启动时调用，把 play 根节点传进来，方便暂停层复用已有资源。
-  setup(options: { hostNode: Node; pauseHandler: (() => void) | null }) {
+  setup(options: {
+    hostNode: Node
+    pauseHandler: (() => void) | null
+    homeHandler: (() => void) | null
+    shareHandler: (() => void) | null
+  }) {
     this.hostNode = options.hostNode
     this.pauseHandler = options.pauseHandler
+    this.homeHandler = options.homeHandler
+    this.shareHandler = options.shareHandler
     this.ensureOverlayStructure()
     this.ensurePauseOverlayMaskSprite()
     this.bindPauseOverlayMask()
     this.ensureAudioControls()
+    this.ensureActionButtons()
     this.refreshPauseOverlay()
 
     // 绑定关闭按钮事件，点击后调用 pauseHandler 继续游戏
-    this.closeButtonNode?.on(Node.EventType.TOUCH_END, this.pauseHandler, this)
+    this.closeButtonNode?.off(Node.EventType.TOUCH_END, this.onCloseButtonTap, this)
+    this.closeButtonNode?.on(Node.EventType.TOUCH_END, this.onCloseButtonTap, this)
   }
 
   // 某些平台安全区和尺寸会在首帧后稳定，这里补一次遮罩和滑块布局收口。
@@ -113,6 +137,9 @@ export class PauseOverlayController extends Component {
       [this.soundEffectControl, this.soundEffectSlider, this.soundEffectController],
       this.onSoundEffectControlTouch
     )
+    this.closeButtonNode?.off(Node.EventType.TOUCH_END, this.onCloseButtonTap, this)
+    this.homeButtonNode?.off(Node.EventType.TOUCH_END, this.onHomeButtonTap, this)
+    this.shareButtonNode?.off(Node.EventType.TOUCH_END, this.onShareButtonTap, this)
   }
 
   // PauseOverlay 节点优先复用 scene 中现成的 Mask 和 Panel，缺失时再补最小结构。
@@ -154,6 +181,21 @@ export class PauseOverlayController extends Component {
   // 蒙版层只负责拦截触摸，防止暂停时点穿到底层棋盘和控制栏。
   private swallowOverlayTouch(event: EventTouch) {
     event.propagationStopped = true
+  }
+
+  private onCloseButtonTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.pauseHandler?.()
+  }
+
+  private onHomeButtonTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.homeHandler?.()
+  }
+
+  private onShareButtonTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.shareHandler?.()
   }
 
   // 给蒙版补上统一的拦截事件绑定，避免重复绑定导致回调执行多次。
@@ -221,6 +263,132 @@ export class PauseOverlayController extends Component {
     this.bindAudioControlEvents()
     this.refreshAudioControls()
     this.applyAudioSettings()
+  }
+
+  // 暂停弹窗底部新增动作区：返回首页和分享都通过回调交给逻辑层处理。
+  private ensureActionButtons() {
+    const panel = this.pauseOverlayPanel
+    if (!panel) {
+      return
+    }
+
+    const legacySaveButton = panel.getChildByName('Save')
+    if (legacySaveButton) {
+      // 旧的“保存”按钮没有对应功能，先隐藏给新动作区让位。
+      legacySaveButton.active = false
+    }
+
+    this.homeButtonNode = this.ensureActionButton(panel, 'HomeButton', '返回首页', -108, -182, 'home')
+    this.shareButtonNode = this.ensureActionButton(panel, 'ShareButton', '分享', 108, -182, 'share')
+
+    this.homeButtonNode.off(Node.EventType.TOUCH_END, this.onHomeButtonTap, this)
+    this.homeButtonNode.on(Node.EventType.TOUCH_END, this.onHomeButtonTap, this)
+    this.shareButtonNode.off(Node.EventType.TOUCH_END, this.onShareButtonTap, this)
+    this.shareButtonNode.on(Node.EventType.TOUCH_END, this.onShareButtonTap, this)
+  }
+
+  // 动作按钮使用统一底卡和文字，图标允许用图片或代码绘制，保证资源未绑定时也可用。
+  private ensureActionButton(parent: Node, name: string, labelText: string, x: number, y: number, kind: PauseActionKind) {
+    let button = parent.getChildByName(name)
+    if (!button) {
+      button = new Node(name)
+      button.setParent(parent)
+      button.addComponent(UITransform).setContentSize(152, 158)
+
+      const card = new Node('Card')
+      card.setParent(button)
+      card.setPosition(0, 8, 0)
+      card.addComponent(UITransform).setContentSize(128, 128)
+      const cardGraphics = card.addComponent(Graphics)
+      cardGraphics.fillColor = new Color(255, 255, 255, 238)
+      cardGraphics.roundRect(-64, -64, 128, 128, 32)
+      cardGraphics.fill()
+      cardGraphics.lineWidth = 3
+      cardGraphics.strokeColor = new Color(205, 237, 240, 180)
+      cardGraphics.roundRect(-62, -62, 124, 124, 30)
+      cardGraphics.stroke()
+
+      this.ensureActionIcon(button, kind)
+
+      const labelNode = new Node('Label')
+      labelNode.setParent(button)
+      labelNode.setPosition(0, -72, 0)
+      labelNode.addComponent(UITransform).setContentSize(152, 36)
+      const label = labelNode.addComponent(Label)
+      label.fontSize = 24
+      label.lineHeight = 30
+      label.isBold = true
+      label.horizontalAlign = Label.HorizontalAlign.CENTER
+      label.verticalAlign = Label.VerticalAlign.CENTER
+      label.color = new Color(74, 132, 142, 255)
+    }
+
+    button.setPosition(x, y, 0)
+    const label = button.getChildByName('Label')?.getComponent(Label)
+    if (label) {
+      label.string = labelText
+    }
+    return button
+  }
+
+  private ensureActionIcon(parent: Node, kind: PauseActionKind) {
+    const icon = new Node('Icon')
+    icon.setParent(parent)
+    icon.setPosition(0, 10, 0)
+    icon.addComponent(UITransform).setContentSize(88, 88)
+
+    if (kind === 'share' && this.shareButtonSpriteFrame) {
+      const sprite = icon.addComponent(Sprite)
+      sprite.spriteFrame = this.shareButtonSpriteFrame
+      sprite.sizeMode = Sprite.SizeMode.CUSTOM
+      return
+    }
+
+    const graphics = icon.addComponent(Graphics)
+    if (kind === 'home') {
+      this.drawHomeIcon(graphics)
+      return
+    }
+
+    this.drawShareFallbackIcon(graphics)
+  }
+
+  // 返回首页没有现成贴图时用简单房子图标，避免用“重开”图标造成语义偏差。
+  private drawHomeIcon(graphics: Graphics) {
+    graphics.fillColor = new Color(73, 215, 164, 255)
+    graphics.circle(0, 0, 42)
+    graphics.fill()
+    graphics.fillColor = new Color(255, 255, 255, 255)
+    graphics.moveTo(0, 28)
+    graphics.lineTo(-34, 2)
+    graphics.lineTo(-24, 2)
+    graphics.lineTo(-24, -28)
+    graphics.lineTo(24, -28)
+    graphics.lineTo(24, 2)
+    graphics.lineTo(34, 2)
+    graphics.lineTo(0, 28)
+    graphics.fill()
+    graphics.fillColor = new Color(73, 215, 164, 255)
+    graphics.roundRect(-7, -28, 14, 22, 3)
+    graphics.fill()
+  }
+
+  private drawShareFallbackIcon(graphics: Graphics) {
+    graphics.fillColor = new Color(255, 95, 147, 255)
+    graphics.circle(0, 0, 42)
+    graphics.fill()
+    graphics.lineWidth = 8
+    graphics.strokeColor = new Color(255, 255, 255, 255)
+    graphics.moveTo(-20, 0)
+    graphics.lineTo(20, 22)
+    graphics.moveTo(-20, 0)
+    graphics.lineTo(20, -22)
+    graphics.stroke()
+    graphics.fillColor = new Color(255, 255, 255, 255)
+    graphics.circle(-24, 0, 11)
+    graphics.circle(24, 24, 11)
+    graphics.circle(24, -24, 11)
+    graphics.fill()
   }
 
   // 读取本地保存的背景音乐和音效音量，保证玩家下次进入游戏时保持上次设置。

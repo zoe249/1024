@@ -5141,6 +5141,10 @@
     "closeButtonNode": {
       "__id__": 120
     },
+    "shareButtonSpriteFrame": {
+      "__uuid__": "eb3ce2ed-4faf-43d3-a45d-a2eb869d1ecc@f9941",
+      "__expectedType__": "cc.SpriteFrame"
+    },
     "_id": "8a5cTDZzFNeKZEbpdpbGHq"
   },
   {
@@ -5241,7 +5245,7 @@
       "__expectedType__": "cc.AudioClip"
     },
     "gameplayBgmClip": {
-      "__uuid__": "18307514-1b8f-40a8-b362-b9721521f678",
+      "__uuid__": "79b837f4-ccda-48cf-88cd-6e56cf1d6f29",
       "__expectedType__": "cc.AudioClip"
     },
     "spacing": 10,

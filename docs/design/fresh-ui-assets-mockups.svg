@@ -1,0 +1,292 @@
+<svg width="2200" height="1180" viewBox="0 0 2200 1180" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="deskBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F7FFF9"/>
+      <stop offset="0.58" stop-color="#E6FAFF"/>
+      <stop offset="1" stop-color="#FFF5D9"/>
+    </linearGradient>
+    <linearGradient id="glassPanel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.94"/>
+      <stop offset="1" stop-color="#D7FAF5" stop-opacity="0.78"/>
+    </linearGradient>
+    <linearGradient id="greenBtn" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#B7F66E"/>
+      <stop offset="1" stop-color="#47D5A2"/>
+    </linearGradient>
+    <linearGradient id="blueBtn" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#80E8FF"/>
+      <stop offset="1" stop-color="#4AA8FF"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#4E9DAE" flood-opacity="0.24"/>
+    </filter>
+    <filter id="buttonShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="7" stdDeviation="8" flood-color="#4E9DAE" flood-opacity="0.18"/>
+    </filter>
+    <pattern id="softDots" width="48" height="48" patternUnits="userSpaceOnUse">
+      <circle cx="8" cy="10" r="3" fill="#A7EBD9" opacity="0.35"/>
+      <circle cx="37" cy="31" r="2.5" fill="#FFC8A5" opacity="0.35"/>
+    </pattern>
+    <clipPath id="phoneClipA"><rect x="8" y="8" width="344" height="764" rx="34"/></clipPath>
+    <clipPath id="phoneClipB"><rect x="8" y="8" width="344" height="764" rx="34"/></clipPath>
+    <clipPath id="phoneClipC"><rect x="8" y="8" width="344" height="764" rx="34"/></clipPath>
+    <clipPath id="phoneClipD"><rect x="8" y="8" width="344" height="764" rx="34"/></clipPath>
+    <clipPath id="phoneClipE"><rect x="8" y="8" width="344" height="764" rx="34"/></clipPath>
+    <style>
+      .title { font: 800 34px "Eazy Chat", "Arial Rounded MT Bold", sans-serif; fill: #246272; letter-spacing: 1px; }
+      .sub { font: 700 16px "Eazy Chat", "Arial Rounded MT Bold", sans-serif; fill: #6C98A0; }
+      .pageTitle { font: 800 24px "Eazy Chat", "Arial Rounded MT Bold", sans-serif; fill: #2E6C79; }
+      .buttonText { font: 900 24px "Eazy Chat", "Arial Rounded MT Bold", sans-serif; fill: #FFFFFF; letter-spacing: 1px; }
+      .label { font: 800 18px "Eazy Chat", "Arial Rounded MT Bold", sans-serif; fill: #3F737D; }
+      .small { font: 700 13px "Eazy Chat", "Arial Rounded MT Bold", sans-serif; fill: #6E9AA1; }
+      .number { font: 900 24px "Courier New", monospace; fill: #FFFFFF; }
+      .score { font: 900 30px "Courier New", monospace; fill: #2E6C79; }
+      .assetTag { font: 600 12px "Courier New", monospace; fill: #6D9AA2; }
+      .rankName { font: 800 17px "Eazy Chat", "Arial Rounded MT Bold", sans-serif; fill: #365F68; }
+    </style>
+  </defs>
+
+  <rect width="2200" height="1180" fill="url(#deskBg)"/>
+  <rect width="2200" height="1180" fill="url(#softDots)" opacity="0.75"/>
+  <text x="70" y="70" class="title">1024 小清新 UI 设计稿 - 现有素材复用版</text>
+  <text x="70" y="104" class="sub">直接引用 assets/images 下的背景、按钮、弹窗、顶部状态栏和技能资源，便于后续在 Cocos 中按图还原。</text>
+
+  <!-- Start page with existing assets -->
+  <g transform="translate(70 150)">
+    <rect x="0" y="0" width="360" height="780" rx="40" fill="#1F5261" opacity="0.16"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="#EDFFF8" filter="url(#softShadow)"/>
+    <image href="../../assets/images/World/World_3_s.png" x="8" y="8" width="344" height="764" preserveAspectRatio="xMidYMid slice" clip-path="url(#phoneClipA)" opacity="0.92"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="#EFFFF8" opacity="0.28"/>
+    <rect x="36" y="72" width="288" height="172" rx="38" fill="#FFFFFF" opacity="0.82" filter="url(#buttonShadow)"/>
+    <text x="180" y="142" text-anchor="middle" font-family="Courier New, monospace" font-size="54" font-weight="900" fill="#2E6C79">1024</text>
+    <text x="180" y="184" text-anchor="middle" class="label">数字花园</text>
+    <text x="180" y="216" text-anchor="middle" class="small">轻触开始，种出更大的数字</text>
+
+    <g transform="translate(82 282)" filter="url(#buttonShadow)">
+      <rect x="0" y="0" width="58" height="58" rx="12" fill="#FF89D1"/>
+      <rect x="66" y="-18" width="58" height="58" rx="12" fill="#14E2DE"/>
+      <rect x="132" y="0" width="58" height="58" rx="12" fill="#89E66C"/>
+      <rect x="198" y="-18" width="58" height="58" rx="12" fill="#FFB659"/>
+      <text x="29" y="39" text-anchor="middle" class="number" font-size="24">2</text>
+      <text x="95" y="21" text-anchor="middle" class="number" font-size="24">16</text>
+      <text x="161" y="39" text-anchor="middle" class="number" font-size="24">64</text>
+      <text x="227" y="21" text-anchor="middle" class="number" font-size="20">1024</text>
+    </g>
+
+    <g transform="translate(52 406)">
+      <image href="../../assets/images/Buttons/LG_Green_Btn.png" x="0" y="0" width="256" height="98" preserveAspectRatio="none" filter="url(#buttonShadow)"/>
+      <text x="128" y="60" text-anchor="middle" class="buttonText">开始游戏</text>
+    </g>
+    <g transform="translate(72 502)">
+      <image href="../../assets/images/Buttons/LG_Blue_Btn.png" x="0" y="0" width="216" height="82" preserveAspectRatio="none" filter="url(#buttonShadow)"/>
+      <text x="108" y="51" text-anchor="middle" class="buttonText" font-size="20">排行榜</text>
+    </g>
+    <g transform="translate(86 610)">
+      <image href="../../assets/images/Modal/RankBtn.png" x="0" y="0" width="56" height="58"/>
+      <image href="../../assets/images/Buttons/SettingsBtn.png" x="70" y="0" width="56" height="58"/>
+      <image href="../../assets/images/Modal/ShareBtn.png" x="140" y="0" width="56" height="58"/>
+      <text x="28" y="78" text-anchor="middle" class="small">榜</text>
+      <text x="98" y="78" text-anchor="middle" class="small">设</text>
+      <text x="168" y="78" text-anchor="middle" class="small">享</text>
+    </g>
+    <text x="180" y="820" text-anchor="middle" class="pageTitle">开始页：World + 大按钮 + 快捷图标</text>
+  </g>
+
+  <!-- Game page with existing assets -->
+  <g transform="translate(495 150)">
+    <rect x="0" y="0" width="360" height="780" rx="40" fill="#1F5261" opacity="0.16"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="#EDFFF8" filter="url(#softShadow)"/>
+    <image href="../../assets/images/World/World_3_s.png" x="8" y="8" width="344" height="764" preserveAspectRatio="xMidYMid slice" clip-path="url(#phoneClipB)" opacity="0.82"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="#EFFFF8" opacity="0.24"/>
+
+    <g transform="translate(7 14)">
+      <image href="../../assets/images/Status/TopPanel.png" x="0" y="0" width="346" height="86" preserveAspectRatio="none" opacity="0.95"/>
+      <text x="44" y="34" class="small">当前</text>
+      <rect x="40" y="42" width="36" height="36" rx="9" fill="#14E2DE"/>
+      <text x="58" y="67" text-anchor="middle" class="number" font-size="17">16</text>
+      <text x="128" y="34" class="small">分数</text>
+      <text x="128" y="68" class="score" font-size="27">01280</text>
+      <image href="../../assets/images/Buttons/SettingsBtn.png" x="272" y="26" width="48" height="49"/>
+    </g>
+
+    <g transform="translate(34 128)">
+      <rect x="0" y="0" width="292" height="486" rx="26" fill="#FFFFFF" opacity="0.38" filter="url(#buttonShadow)"/>
+      <rect x="14" y="16" width="264" height="454" rx="18" fill="#AEEFF3" opacity="0.42"/>
+      <g stroke="#E6FEFF" stroke-width="2" stroke-dasharray="8 7" opacity="0.88">
+        <line x1="72" y1="30" x2="72" y2="456"/>
+        <line x1="121" y1="30" x2="121" y2="456"/>
+        <line x1="171" y1="30" x2="171" y2="456"/>
+        <line x1="220" y1="30" x2="220" y2="456"/>
+      </g>
+      <g filter="url(#buttonShadow)">
+        <rect x="27" y="391" width="42" height="42" rx="9" fill="#FF89D1"/>
+        <rect x="76" y="391" width="42" height="42" rx="9" fill="#7C55FA"/>
+        <rect x="125" y="391" width="42" height="42" rx="9" fill="#14E2DE"/>
+        <rect x="174" y="391" width="42" height="42" rx="9" fill="#62CCFE"/>
+        <rect x="223" y="391" width="42" height="42" rx="9" fill="#89E66C"/>
+        <rect x="76" y="342" width="42" height="42" rx="9" fill="#FF89D1"/>
+        <rect x="125" y="342" width="42" height="42" rx="9" fill="#14E2DE"/>
+        <rect x="174" y="342" width="42" height="42" rx="9" fill="#F87275"/>
+        <rect x="125" y="158" width="42" height="42" rx="9" fill="#FFB659"/>
+      </g>
+      <text x="48" y="419" text-anchor="middle" class="number" font-size="18">2</text>
+      <text x="97" y="419" text-anchor="middle" class="number" font-size="18">4</text>
+      <text x="146" y="419" text-anchor="middle" class="number" font-size="18">16</text>
+      <text x="195" y="419" text-anchor="middle" class="number" font-size="18">32</text>
+      <text x="244" y="419" text-anchor="middle" class="number" font-size="18">64</text>
+      <text x="97" y="370" text-anchor="middle" class="number" font-size="18">2</text>
+      <text x="146" y="370" text-anchor="middle" class="number" font-size="18">16</text>
+      <text x="195" y="370" text-anchor="middle" class="number" font-size="18">128</text>
+      <text x="146" y="185" text-anchor="middle" class="number" font-size="16">1024</text>
+    </g>
+
+    <g transform="translate(4 636)">
+      <image href="../../assets/images/Skills/BottomPanel.png" x="0" y="0" width="352" height="90" preserveAspectRatio="none" opacity="0.96"/>
+      <image href="../../assets/images/Skills/BombBtn.png" x="45" y="6" width="72" height="74"/>
+      <image href="../../assets/images/Skills/HammerBtn.png" x="144" y="6" width="72" height="74"/>
+      <image href="../../assets/images/Skills/V_RocketBtn.png" x="243" y="6" width="72" height="74"/>
+      <image href="../../assets/images/Skills/AmountBG.png" x="91" y="44" width="30" height="30"/>
+      <image href="../../assets/images/Skills/AmountBG.png" x="190" y="44" width="30" height="30"/>
+      <image href="../../assets/images/Skills/AmountBG.png" x="289" y="44" width="30" height="30"/>
+      <text x="106" y="66" text-anchor="middle" class="number" font-size="14">2</text>
+      <text x="205" y="66" text-anchor="middle" class="number" font-size="14">3</text>
+      <text x="304" y="66" text-anchor="middle" class="number" font-size="14">1</text>
+    </g>
+    <text x="180" y="820" text-anchor="middle" class="pageTitle">游戏页：TopPanel + BottomPanel + 技能按钮</text>
+  </g>
+
+  <!-- Ranking page with Popup asset -->
+  <g transform="translate(920 150)">
+    <rect x="0" y="0" width="360" height="780" rx="40" fill="#1F5261" opacity="0.16"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="#EDFFF8" filter="url(#softShadow)"/>
+    <image href="../../assets/images/World/World_3_s.png" x="8" y="8" width="344" height="764" preserveAspectRatio="xMidYMid slice" clip-path="url(#phoneClipC)" opacity="0.74"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="#123A44" opacity="0.10"/>
+    <g transform="translate(34 56)">
+      <image href="../../assets/images/Modal/Popup.png" x="-14" y="-26" width="320" height="658" preserveAspectRatio="none" opacity="0.96" filter="url(#softShadow)"/>
+      <text x="146" y="54" text-anchor="middle" class="pageTitle">好友排行榜</text>
+      <image href="../../assets/images/Buttons/CloseBtn.png" x="244" y="22" width="40" height="42"/>
+      <rect x="72" y="78" width="148" height="34" rx="17" fill="#EFFFF8"/>
+      <text x="146" y="101" text-anchor="middle" class="small">本周合成之星</text>
+
+      <g transform="translate(42 138)">
+        <rect x="76" y="0" width="56" height="56" rx="18" fill="#FFE684"/>
+        <image href="../../assets/images/Modal/RankBtn.png" x="75" y="-6" width="58" height="60" opacity="0.88"/>
+        <text x="104" y="80" text-anchor="middle" class="rankName">Mao</text>
+        <text x="104" y="110" text-anchor="middle" class="score" font-size="22">42880</text>
+        <rect x="0" y="28" width="48" height="48" rx="16" fill="#DFF7FF"/>
+        <text x="24" y="59" text-anchor="middle" class="score" font-size="22">2</text>
+        <text x="24" y="100" text-anchor="middle" class="small">Lily</text>
+        <rect x="160" y="28" width="48" height="48" rx="16" fill="#FFE8D8"/>
+        <text x="184" y="59" text-anchor="middle" class="score" font-size="22">3</text>
+        <text x="184" y="100" text-anchor="middle" class="small">Kai</text>
+      </g>
+
+      <g transform="translate(24 300)">
+        <rect x="0" y="0" width="244" height="56" rx="20" fill="#FFFFFF" opacity="0.78"/>
+        <text x="22" y="36" class="score" font-size="20">4</text>
+        <circle cx="62" cy="28" r="18" fill="#BFEFDB"/>
+        <text x="92" y="35" class="rankName">Mint</text>
+        <text x="222" y="35" text-anchor="end" class="score" font-size="20">18640</text>
+      </g>
+      <g transform="translate(24 368)">
+        <rect x="0" y="0" width="244" height="56" rx="20" fill="#FFFFFF" opacity="0.62"/>
+        <text x="22" y="36" class="score" font-size="20">5</text>
+        <circle cx="62" cy="28" r="18" fill="#FFDCD4"/>
+        <text x="92" y="35" class="rankName">Berry</text>
+        <text x="222" y="35" text-anchor="end" class="score" font-size="20">15200</text>
+      </g>
+      <g transform="translate(24 436)">
+        <rect x="0" y="0" width="244" height="56" rx="20" fill="#FFFFFF" opacity="0.62"/>
+        <text x="22" y="36" class="score" font-size="20">6</text>
+        <circle cx="62" cy="28" r="18" fill="#D7E9FF"/>
+        <text x="92" y="35" class="rankName">Ocean</text>
+        <text x="222" y="35" text-anchor="end" class="score" font-size="20">13440</text>
+      </g>
+      <g transform="translate(38 540)">
+        <image href="../../assets/images/Buttons/LG_Blue_Btn.png" x="0" y="0" width="216" height="82" preserveAspectRatio="none"/>
+        <text x="108" y="51" text-anchor="middle" class="buttonText" font-size="20">邀请好友</text>
+      </g>
+    </g>
+    <text x="180" y="820" text-anchor="middle" class="pageTitle">排行榜：Popup + CloseBtn + RankBtn</text>
+  </g>
+
+  <!-- Pause settings with Modal assets -->
+  <g transform="translate(1345 150)">
+    <rect x="0" y="0" width="360" height="780" rx="40" fill="#1F5261" opacity="0.16"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="#EDFFF8" filter="url(#softShadow)"/>
+    <image href="../../assets/images/World/World_3_s.png" x="8" y="8" width="344" height="764" preserveAspectRatio="xMidYMid slice" clip-path="url(#phoneClipD)" opacity="0.72"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="#143E4B" opacity="0.20"/>
+    <g transform="translate(42 132)">
+      <image href="../../assets/images/Modal/Popup.png" x="-18" y="-28" width="312" height="542" preserveAspectRatio="none" opacity="0.98" filter="url(#softShadow)"/>
+      <text x="138" y="58" text-anchor="middle" class="pageTitle">游戏设置</text>
+      <image href="../../assets/images/Buttons/CloseBtn.png" x="226" y="20" width="42" height="44"/>
+
+      <g transform="translate(26 110)">
+        <image href="../../assets/images/Modal/MusicIcon.png" x="0" y="-18" width="34" height="34"/>
+        <text x="48" y="8" class="label">背景音乐</text>
+        <image href="../../assets/images/Modal/SliderBase.png" x="0" y="28" width="224" height="18" preserveAspectRatio="none"/>
+        <image href="../../assets/images/Modal/Fill.png" x="0" y="28" width="152" height="18" preserveAspectRatio="none"/>
+        <image href="../../assets/images/Modal/Handler.png" x="138" y="10" width="40" height="44"/>
+      </g>
+      <g transform="translate(26 196)">
+        <image href="../../assets/images/Modal/SoundIcon.png" x="0" y="-18" width="34" height="34"/>
+        <text x="48" y="8" class="label">音效反馈</text>
+        <image href="../../assets/images/Modal/SliderBase.png" x="0" y="28" width="224" height="18" preserveAspectRatio="none"/>
+        <image href="../../assets/images/Modal/Fill.png" x="0" y="28" width="184" height="18" preserveAspectRatio="none"/>
+        <image href="../../assets/images/Modal/Handler.png" x="170" y="10" width="40" height="44"/>
+      </g>
+
+      <g transform="translate(36 298)">
+        <image href="../../assets/images/Modal/RepeatBtn.png" x="0" y="0" width="58" height="60"/>
+        <image href="../../assets/images/Modal/RankBtn.png" x="76" y="0" width="58" height="60"/>
+        <image href="../../assets/images/Modal/ShareBtn.png" x="152" y="0" width="58" height="60"/>
+        <text x="29" y="78" text-anchor="middle" class="small">重开</text>
+        <text x="105" y="78" text-anchor="middle" class="small">排行</text>
+        <text x="181" y="78" text-anchor="middle" class="small">分享</text>
+      </g>
+
+      <g transform="translate(36 408)">
+        <image href="../../assets/images/Buttons/LG_Green_Btn.png" x="0" y="0" width="204" height="78" preserveAspectRatio="none"/>
+        <text x="102" y="49" text-anchor="middle" class="buttonText" font-size="20">继续游戏</text>
+      </g>
+    </g>
+    <text x="180" y="820" text-anchor="middle" class="pageTitle">暂停设置：Popup + Slider + Icon</text>
+  </g>
+
+  <!-- Result page with existing modal/button assets -->
+  <g transform="translate(1770 150)">
+    <rect x="0" y="0" width="360" height="780" rx="40" fill="#1F5261" opacity="0.16"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="#EDFFF8" filter="url(#softShadow)"/>
+    <image href="../../assets/images/World/World_3_s.png" x="8" y="8" width="344" height="764" preserveAspectRatio="xMidYMid slice" clip-path="url(#phoneClipE)" opacity="0.78"/>
+    <rect x="8" y="8" width="344" height="764" rx="34" fill="#143E4B" opacity="0.14"/>
+    <g transform="translate(44 104)">
+      <image href="../../assets/images/Modal/Popup.png" x="-18" y="-28" width="308" height="574" preserveAspectRatio="none" opacity="0.98" filter="url(#softShadow)"/>
+      <text x="136" y="58" text-anchor="middle" class="pageTitle">本局结算</text>
+      <g transform="translate(83 98)" filter="url(#buttonShadow)">
+        <rect x="0" y="0" width="106" height="106" rx="24" fill="#FFB659"/>
+        <text x="53" y="65" text-anchor="middle" class="number" font-size="28">1024</text>
+      </g>
+      <text x="136" y="248" text-anchor="middle" class="small">最高合成数字</text>
+      <text x="136" y="294" text-anchor="middle" class="score" font-size="40">42880</text>
+      <text x="136" y="326" text-anchor="middle" class="small">比 86% 好友更会种数字</text>
+      <g transform="translate(34 366)">
+        <image href="../../assets/images/Buttons/LG_Green_Btn.png" x="0" y="0" width="204" height="78" preserveAspectRatio="none"/>
+        <text x="102" y="49" text-anchor="middle" class="buttonText" font-size="20">再来一局</text>
+      </g>
+      <g transform="translate(44 452)">
+        <image href="../../assets/images/Modal/ShareBtn.png" x="0" y="0" width="56" height="58"/>
+        <image href="../../assets/images/Modal/RankBtn.png" x="76" y="0" width="56" height="58"/>
+        <image href="../../assets/images/Modal/RepeatBtn.png" x="152" y="0" width="56" height="58"/>
+      </g>
+    </g>
+    <text x="180" y="820" text-anchor="middle" class="pageTitle">结算页：Popup + Share/Rank/Repeat</text>
+  </g>
+
+  <!-- Resource map -->
+  <g transform="translate(70 1020)">
+    <text x="0" y="0" class="pageTitle">本稿使用的现有图片资源</text>
+    <text x="0" y="34" class="assetTag">World/World_3_s.png  Buttons/LG_Green_Btn.png  Buttons/LG_Blue_Btn.png  Buttons/SettingsBtn.png  Buttons/CloseBtn.png</text>
+    <text x="0" y="60" class="assetTag">Status/TopPanel.png  Skills/BottomPanel.png  Skills/BombBtn.png  Skills/HammerBtn.png  Skills/V_RocketBtn.png  Skills/AmountBG.png</text>
+    <text x="0" y="86" class="assetTag">Modal/Popup.png  Modal/RankBtn.png  Modal/ShareBtn.png  Modal/RepeatBtn.png  Modal/MusicIcon.png  Modal/SoundIcon.png  Modal/SliderBase.png  Modal/Fill.png  Modal/Handler.png</text>
+  </g>
+</svg>

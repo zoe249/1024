@@ -197,6 +197,7 @@
           "base",
           "custom-pipeline",
           "gfx-webgl",
+          "gfx-webgl2",
           "graphics",
           "intersection-2d",
           "tween",

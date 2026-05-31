@@ -2,6 +2,7 @@
 import { PieceController } from './PieceController'
 import { AudioClip, AudioSource } from 'cc'
 import { PlayUIController, type PlayUIState } from './PlayUIController'
+import { StartPageController } from './StartPageController'
 
 const { ccclass, property } = _decorator
 
@@ -87,6 +88,10 @@ export class PlayController extends Component {
   @property({ type: AudioClip, tooltip: 'Swap rollback sound effect' })
   swapRollbackAudioClip: AudioClip | null = null
 
+  // 首页背景音乐预留资源位；未绑定专属音频时首页保持静音，不复用玩法 BGM。
+  @property({ type: AudioClip, tooltip: 'Start page background music' })
+  startPageBgmClip: AudioClip | null = null
+
   // 游戏场景循环播放的背景音乐。
   @property({ type: AudioClip, tooltip: 'Gameplay background music' })
   gameplayBgmClip: AudioClip | null = null
@@ -147,6 +152,10 @@ export class PlayController extends Component {
   private bonusScore = 0
   // UI 渲染组件，专门负责棋盘绘制、状态栏、控制栏和暂停遮罩。
   private uiController: PlayUIController | null = null
+  // 首页单独交给启动页组件管理，避免把展示逻辑散落在玩法代码里。
+  private startPageController: StartPageController | null = null
+  // 首次进入场景时先停在开始页，点击开始后才真正进入对局。
+  private hasStartedSession = false
   // 拖尾生成计时器，用来控制特效频率。
   private trailTimer = 0
   // 当前屏幕上仍未销毁的特效节点集合，便于统一清理。
@@ -167,9 +176,15 @@ export class PlayController extends Component {
       pieceSize: this.pieceSize,
       spacing: this.spacing,
       onPauseTap: () => this.togglePauseFromUi(),
+      onReturnHomeTap: () => this.returnToStartPageFromPause(),
+      onShareTap: () => this.shareGameFromPause(),
       onBombSkillTap: () => this.toggleBombSkillFromUi(),
       onHammerSkillTap: () => this.toggleHammerSkillFromUi(),
       onSwapSkillTap: () => this.toggleSwapSkillFromUi()
+    })
+    this.startPageController = this.getComponent(StartPageController) ?? this.addComponent(StartPageController)
+    this.startPageController.setup({
+      onStartTap: () => this.startSessionFromStartPage()
     })
     this.bindInput()
   }
@@ -177,9 +192,9 @@ export class PlayController extends Component {
   start() {
     // 某些平台会在启动后一帧才拿到稳定的安全区，这里让 UI 组件再补一次布局。
     this.uiController?.syncLayout()
-    this.playBackgroundMusic()
+    this.startPageController?.syncLayout()
+    this.playStartPageBackgroundMusic()
     this.refreshUiState()
-    this.spawnPiece()
   }
 
   onDestroy() {
@@ -188,10 +203,15 @@ export class PlayController extends Component {
     this.node.off(Node.EventType.TOUCH_END, this.handleTouchEnd, this)
     this.node.off(Node.EventType.TOUCH_CANCEL, this.handleTouchCancel, this)
     this.uiController = null
+    this.startPageController = null
   }
 
   // 每帧更新当前下落棋子的目标位置，并在接近落点时触发落地结算。
   update(dt: number) {
+    if (!this.hasStartedSession) {
+      return
+    }
+
     if (this.isSwapSkillActive) {
       // 技能态下不推进下落，只更新交换预览的惯性跟随。
       this.updateSwapDragMotion(dt)
@@ -251,6 +271,10 @@ export class PlayController extends Component {
       return
     }
 
+    if (!this.hasStartedSession) {
+      return
+    }
+
     if (this.isSwapSkillActive) {
       this.handleSwapSkillTouchStart(event)
       return
@@ -284,6 +308,10 @@ export class PlayController extends Component {
 
   // 技能拖拽期间移动被选中的棋子，普通模式下不处理移动事件。
   private handleTouchMove(event: EventTouch) {
+    if (!this.hasStartedSession) {
+      return
+    }
+
     if (!this.isSwapSkillActive) {
       return
     }
@@ -293,6 +321,10 @@ export class PlayController extends Component {
 
   // 触摸抬起时结束本次按住状态；当前逻辑中只需要停止继续加速即可。
   private handleTouchEnd(event: EventTouch) {
+    if (!this.hasStartedSession) {
+      return
+    }
+
     if (this.isSwapSkillActive) {
       void this.handleSwapSkillTouchEnd(event)
       return
@@ -308,6 +340,10 @@ export class PlayController extends Component {
 
   // 触摸被系统取消时不能执行技能交换，只恢复拖拽棋子，避免切后台等场景误触发。
   private handleTouchCancel() {
+    if (!this.hasStartedSession) {
+      return
+    }
+
     if (this.isSwapSkillActive && this.swapDragState) {
       void this.restoreSwapDraggedPiece(this.swapDragState)
     }
@@ -357,6 +393,21 @@ export class PlayController extends Component {
     this.bonusScore = 0
     this.currentColumn = Math.floor(this.boardwidth / 2)
   }
+
+  // 清理棋盘中已经实例化的棋子节点，返回首页和重新开始都复用这套收口逻辑。
+  private clearBoardPieces() {
+    for (let row = 0; row < this.boardheight; row++) {
+      for (let column = 0; column < this.boardwidth; column++) {
+        this.board[row][column]?.node.destroy()
+      }
+    }
+
+    if (this.currentPiece) {
+      this.currentPiece.node.destroy()
+      this.currentPiece = null
+    }
+  }
+
   // 生成下一颗棋子并放到 spawn 区
   private spawnPiece() {
     if (this.isBoardFull() || !this.basePieceController) {
@@ -1689,13 +1740,36 @@ export class PlayController extends Component {
     return audioNode.getComponent(AudioSource) ?? audioNode.addComponent(AudioSource)
   }
 
-  // 背景音乐只在进入场景时启动一次，并且保持循环播放。
-  private playBackgroundMusic() {
-    if (!this.bgmAudioSource || !this.gameplayBgmClip) {
+  // 首页音乐使用独立入口，当前没有绑定资源时不会播放任何背景音乐。
+  private playStartPageBackgroundMusic() {
+    this.playLoopBackgroundMusic(this.startPageBgmClip)
+  }
+
+  // 玩法音乐只在点击开始进入对局后播放，避免首页误播游戏内 BGM。
+  private playGameplayBackgroundMusic() {
+    this.playLoopBackgroundMusic(this.gameplayBgmClip)
+  }
+
+  // 循环背景音乐统一走这里，切换曲目时先停止旧音频再播放新音频。
+  private playLoopBackgroundMusic(clip: AudioClip | null) {
+    if (!this.bgmAudioSource) {
       return
     }
 
-    this.bgmAudioSource.clip = this.gameplayBgmClip
+    if (!clip) {
+      // 首页未配置专属 BGM 时，需要停止玩法 BGM，避免返回首页后继续播放游戏音乐。
+      if (this.bgmAudioSource.playing) {
+        this.bgmAudioSource.stop()
+      }
+      this.bgmAudioSource.clip = null
+      return
+    }
+
+    if (this.bgmAudioSource.playing && this.bgmAudioSource.clip !== clip) {
+      this.bgmAudioSource.stop()
+    }
+
+    this.bgmAudioSource.clip = clip
     this.bgmAudioSource.loop = true
     if (this.bgmAudioSource.playing) {
       return
@@ -1920,6 +1994,21 @@ export class PlayController extends Component {
     this.uiController?.renderState(this.buildUiState())
   }
 
+  // 首页点击开始后再生成第一颗棋子，让开始页和首局开场自然衔接。
+  private startSessionFromStartPage() {
+    if (this.hasStartedSession) {
+      return
+    }
+
+    this.hasStartedSession = true
+    this.playGameplayBackgroundMusic()
+    this.startPageController?.hide(() => {
+      if (!this.currentPiece && !this.isGameOver) {
+        this.spawnPiece()
+      }
+    })
+  }
+
   // 逻辑层只暴露一份纯数据状态给 UI 层，保证职责边界清晰。
   private buildUiState(): PlayUIState {
     const boardScore = this.getBoardScore()
@@ -1982,6 +2071,10 @@ export class PlayController extends Component {
 
   // UI 层按钮点击后只通过这个入口切换暂停，真正的状态变化仍由逻辑层维护。
   private togglePauseFromUi() {
+    if (!this.hasStartedSession) {
+      return
+    }
+
     if (this.isResolving || this.isGameOver) {
       return
     }
@@ -1998,8 +2091,67 @@ export class PlayController extends Component {
     this.refreshUiState()
   }
 
+  // 暂停弹窗点击返回首页时，清理当前对局但不生成新棋子，交回开始页接管。
+  private returnToStartPageFromPause() {
+    if (!this.hasStartedSession) {
+      return
+    }
+
+    this.clearBoardPieces()
+    this.clearTransientFx()
+    this.hasStartedSession = false
+    this.isGameOver = false
+    this.isFastDropping = false
+    this.isResolving = false
+    this.isPaused = false
+    this.isSwapSkillActive = false
+    this.isHammerSkillActive = false
+    this.isBombSkillActive = false
+    this.swapDragState = null
+    this.resetBoard()
+    this.playStartPageBackgroundMusic()
+    this.refreshUiState()
+    this.startPageController?.syncLayout()
+    this.startPageController?.show()
+  }
+
+  // 分享入口只负责适配平台能力；没有平台 API 时保持静默降级，避免打断暂停弹窗。
+  private shareGameFromPause() {
+    const score = this.getBoardScore() + this.bonusScore
+    const title = `我在 1024 数字花园合成了 ${score} 分，来挑战一下吧`
+    const wxApi = (globalThis as {
+      wx?: {
+        shareAppMessage?: (options: { title: string; query?: string }) => void
+      }
+    }).wx
+
+    if (typeof wxApi?.shareAppMessage === 'function') {
+      wxApi.shareAppMessage({
+        title,
+        query: 'from=pause_share'
+      })
+      return
+    }
+
+    const webNavigator = (globalThis as {
+      navigator?: {
+        share?: (data: { title: string; text: string }) => Promise<void>
+      }
+    }).navigator
+    if (typeof webNavigator?.share === 'function') {
+      void webNavigator.share({ title: '1024 数字花园', text: title }).catch(() => undefined)
+      return
+    }
+
+    console.info('当前平台暂未接入分享能力', title)
+  }
+
   // UI 层第三技能按钮通过这个入口切换交换技能，技能态只冻结下落，不打开暂停弹窗。
   private toggleSwapSkillFromUi() {
+    if (!this.hasStartedSession) {
+      return
+    }
+
     if (this.isResolving || this.isGameOver || this.isPaused || !this.currentPiece || this.isHammerSkillActive || this.isBombSkillActive) {
       return
     }
@@ -2017,6 +2169,10 @@ export class PlayController extends Component {
 
   // UI 层第二技能按钮通过这个入口切换锤子技能，技能态只等待点选棋子。
   private toggleHammerSkillFromUi() {
+    if (!this.hasStartedSession) {
+      return
+    }
+
     if (this.isResolving || this.isGameOver || this.isPaused || !this.currentPiece || this.isSwapSkillActive || this.isBombSkillActive) {
       return
     }
@@ -2034,6 +2190,10 @@ export class PlayController extends Component {
 
   // UI 层第一个技能按钮通过这个入口切换炸弹技能，等待玩家点选爆炸中心。
   private toggleBombSkillFromUi() {
+    if (!this.hasStartedSession) {
+      return
+    }
+
     if (this.isResolving || this.isGameOver || this.isPaused || !this.currentPiece || this.isSwapSkillActive || this.isHammerSkillActive) {
       return
     }
@@ -2077,17 +2237,7 @@ export class PlayController extends Component {
       return
     }
 
-    for (let row = 0; row < this.boardheight; row++) {
-      for (let column = 0; column < this.boardwidth; column++) {
-        this.board[row][column]?.node.destroy()
-      }
-    }
-
-    if (this.currentPiece) {
-      this.currentPiece.node.destroy()
-      this.currentPiece = null
-    }
-
+    this.clearBoardPieces()
     this.clearTransientFx()
     this.isGameOver = false
     this.isFastDropping = false

@@ -1,0 +1,293 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 1280" width="720" height="1280">
+  <defs>
+    <!-- 游戏背景渐变 -->
+    <linearGradient id="gameBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E8FFF6"/>
+      <stop offset="50%" stop-color="#E0F5FF"/>
+      <stop offset="100%" stop-color="#F5F0FF"/>
+    </linearGradient>
+
+    <!-- 状态栏卡片 -->
+    <linearGradient id="statusCard" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.92)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0.78)"/>
+    </linearGradient>
+
+    <!-- 棋盘玻璃边框 -->
+    <linearGradient id="boardFrame" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.55)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0.25)"/>
+    </linearGradient>
+
+    <!-- 棋盘内区 -->
+    <linearGradient id="boardInner" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="rgba(180,225,240,0.18)"/>
+      <stop offset="100%" stop-color="rgba(170,220,235,0.12)"/>
+    </linearGradient>
+
+    <!-- 技能栏背景 -->
+    <linearGradient id="skillBar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.85)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0.65)"/>
+    </linearGradient>
+
+    <!-- 阴影 -->
+    <filter id="softShadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="10" flood-color="#2E6C79" flood-opacity="0.06"/>
+    </filter>
+    <filter id="boardShadow">
+      <feDropShadow dx="0" dy="4" stdDeviation="16" flood-color="#1C3846" flood-opacity="0.10"/>
+    </filter>
+    <filter id="pieceShadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.12"/>
+    </filter>
+    <filter id="btnGlow">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#2E6C79" flood-opacity="0.10"/>
+    </filter>
+
+    <!-- 棋子渐变色 -->
+    <linearGradient id="pc2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#FFB0DD"/><stop offset="100%" stop-color="#FF89D1"/></linearGradient>
+    <linearGradient id="pc4" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#9B7FFF"/><stop offset="100%" stop-color="#7C55FA"/></linearGradient>
+    <linearGradient id="pc8" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#BB7FE0"/><stop offset="100%" stop-color="#A55FD4"/></linearGradient>
+    <linearGradient id="pc16" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#3EE8E4"/><stop offset="100%" stop-color="#14E2DE"/></linearGradient>
+    <linearGradient id="pc32" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#7DD8FF"/><stop offset="100%" stop-color="#62CCFE"/></linearGradient>
+    <linearGradient id="pc64" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#A2F07E"/><stop offset="100%" stop-color="#89E66C"/></linearGradient>
+    <linearGradient id="pc128" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#FF9088"/><stop offset="100%" stop-color="#F87275"/></linearGradient>
+    <linearGradient id="pc256" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#B8877A"/><stop offset="100%" stop-color="#A46F62"/></linearGradient>
+    <linearGradient id="pc512" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#A0A8B2"/><stop offset="100%" stop-color="#8D949C"/></linearGradient>
+    <linearGradient id="pc1024" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#FFC878"/><stop offset="100%" stop-color="#FFB659"/></linearGradient>
+
+    <!-- 当前棋子发光 -->
+    <filter id="currentGlow">
+      <feDropShadow dx="0" dy="-2" stdDeviation="8" flood-color="#FFF3A6" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+
+  <!-- ===== 背景 ===== -->
+  <rect width="720" height="1280" fill="url(#gameBg)"/>
+
+  <!-- 背景淡色圆点 -->
+  <g fill="#C8E0D8" opacity="0.25">
+    <circle cx="40" cy="100" r="1.5"/><circle cx="74" cy="100" r="1.5"/>
+    <circle cx="108" cy="100" r="1.5"/><circle cx="142" cy="100" r="1.5"/>
+    <circle cx="580" cy="120" r="1.5"/><circle cx="614" cy="120" r="1.5"/>
+    <circle cx="648" cy="120" r="1.5"/><circle cx="682" cy="120" r="1.5"/>
+  </g>
+
+  <!-- ===== 顶部状态栏 ===== -->
+  <g filter="url(#softShadow)">
+    <rect x="30" y="40" width="660" height="80" rx="24" fill="url(#statusCard)"/>
+  </g>
+
+  <!-- 当前下落数字 -->
+  <text x="80" y="75" font-family="'PingFang SC', sans-serif" font-size="18" fill="#8CB8C0">当前</text>
+  <text x="80" y="106" font-family="'Courier New', monospace" font-size="34" font-weight="bold" fill="#2E6C79">32</text>
+
+  <!-- 分数（中间） -->
+  <text x="360" y="68" text-anchor="middle" font-family="'PingFang SC', sans-serif" font-size="18" fill="#8CB8C0">分数</text>
+  <text x="360" y="106" text-anchor="middle" font-family="'Courier New', monospace" font-size="34" font-weight="bold" fill="#2E6C79">12,480</text>
+
+  <!-- 暂停按钮（右侧） -->
+  <g filter="url(#btnGlow)">
+    <rect x="578" y="50" width="90" height="60" rx="18" fill="rgba(46,108,121,0.08)"/>
+  </g>
+  <text x="623" y="88" text-anchor="middle" font-size="26" fill="#2E6C79">⏸</text>
+
+  <!-- ===== 棋盘区域 ===== -->
+  <!-- 棋盘尺寸：5列x7行，每格 98px，间距 8px，内边距 16px -->
+  <!-- 总宽 = 5*98 + 4*8 + 16*2 = 490+32+32 = 554 -->
+  <!-- 总高 = 7*98 + 6*8 + 16*2 = 686+48+32 = 766 -->
+  <!-- 棋盘左上角: x=83, y=200 -->
+
+  <!-- 棋盘外层阴影框 -->
+  <g filter="url(#boardShadow)">
+    <rect x="63" y="180" width="594" height="800" rx="24" fill="url(#boardFrame)"/>
+  </g>
+
+  <!-- 棋盘内层玻璃区 -->
+  <rect x="83" y="200" width="554" height="760" rx="14" fill="url(#boardInner)"/>
+
+  <!-- 列分隔虚线 -->
+  <g stroke="rgba(180,225,240,0.55)" stroke-width="1.5" stroke-dasharray="8,6" fill="none">
+    <line x1="197" y1="216" x2="197" y2="944"/>
+    <line x1="309" y1="216" x2="309" y2="944"/>
+    <line x1="421" y1="216" x2="421" y2="944"/>
+    <line x1="533" y1="216" x2="533" y2="944"/>
+  </g>
+
+  <!-- 交替列浅色蒙版 -->
+  <rect x="83" y="200" width="112" height="760" fill="rgba(200,240,248,0.06)"/>
+  <rect x="307" y="200" width="112" height="760" fill="rgba(200,240,248,0.06)"/>
+  <rect x="531" y="200" width="106" height="760" fill="rgba(200,240,248,0.06)"/>
+
+  <!-- 网格线(浅) -->
+  <g stroke="rgba(180,225,240,0.2)" stroke-width="0.5" fill="none">
+    <!-- 横线 -->
+    <line x1="83" y1="298" x2="637" y2="298"/><line x1="83" y1="396" x2="637" y2="396"/>
+    <line x1="83" y1="494" x2="637" y2="494"/><line x1="83" y1="592" x2="637" y2="592"/>
+    <line x1="83" y1="690" x2="637" y2="690"/><line x1="83" y1="788" x2="637" y2="788"/>
+    <line x1="83" y1="886" x2="637" y2="886"/>
+  </g>
+
+  <!-- ===== 已落地的棋子 ===== -->
+  <!-- 注意：row 0=最底行(y=904), row 6=最顶行(y=256) -->
+  <!-- 每格 98px, 间距 8px, 步长 106px -->
+  <!-- 单元格中心 x: 83+16+49=148 (col0), 148+106=254 (col1), 360 (col2), 466 (col3), 572 (col4) -->
+  <!-- 单元格中心 y: 200+16+49=265 (row6), 371 (row5), 477 (row4), 583 (row3), 689 (row2), 795 (row1), 901 (row0) -->
+
+  <!-- row0: 2, 4, _, _, 8 -->
+  <g filter="url(#pieceShadow)">
+    <rect x="117" y="870" width="62" height="62" rx="12" fill="url(#pc2)"/>
+    <text x="148" y="908" text-anchor="middle" font-family="'Courier New',monospace" font-size="24" font-weight="bold" fill="#FFF">2</text>
+  </g>
+  <g filter="url(#pieceShadow)">
+    <rect x="223" y="870" width="62" height="62" rx="12" fill="url(#pc4)"/>
+    <text x="254" y="908" text-anchor="middle" font-family="'Courier New',monospace" font-size="24" font-weight="bold" fill="#FFF">4</text>
+  </g>
+  <!-- col3 row0: 空 -->
+  <!-- col4 row0 -->
+  <g filter="url(#pieceShadow)">
+    <rect x="541" y="870" width="62" height="62" rx="12" fill="url(#pc8)"/>
+    <text x="572" y="908" text-anchor="middle" font-family="'Courier New',monospace" font-size="24" font-weight="bold" fill="#FFF">8</text>
+  </g>
+
+  <!-- row1: 16, _, _, 2, 4 -->
+  <g filter="url(#pieceShadow)">
+    <rect x="117" y="764" width="62" height="62" rx="12" fill="url(#pc16)"/>
+    <text x="148" y="802" text-anchor="middle" font-family="'Courier New',monospace" font-size="22" font-weight="bold" fill="#FFF">16</text>
+  </g>
+  <g filter="url(#pieceShadow)">
+    <rect x="435" y="764" width="62" height="62" rx="12" fill="url(#pc2)"/>
+    <text x="466" y="802" text-anchor="middle" font-family="'Courier New',monospace" font-size="24" font-weight="bold" fill="#FFF">2</text>
+  </g>
+  <g filter="url(#pieceShadow)">
+    <rect x="541" y="764" width="62" height="62" rx="12" fill="url(#pc4)"/>
+    <text x="572" y="802" text-anchor="middle" font-family="'Courier New',monospace" font-size="24" font-weight="bold" fill="#FFF">4</text>
+  </g>
+
+  <!-- row2: 64, 8, _, 32, 2 -->
+  <g filter="url(#pieceShadow)">
+    <rect x="117" y="658" width="62" height="62" rx="12" fill="url(#pc64)"/>
+    <text x="148" y="696" text-anchor="middle" font-family="'Courier New',monospace" font-size="22" font-weight="bold" fill="#FFF">64</text>
+  </g>
+  <g filter="url(#pieceShadow)">
+    <rect x="223" y="658" width="62" height="62" rx="12" fill="url(#pc8)"/>
+    <text x="254" y="696" text-anchor="middle" font-family="'Courier New',monospace" font-size="24" font-weight="bold" fill="#FFF">8</text>
+  </g>
+  <g filter="url(#pieceShadow)">
+    <rect x="435" y="658" width="62" height="62" rx="12" fill="url(#pc32)"/>
+    <text x="466" y="696" text-anchor="middle" font-family="'Courier New',monospace" font-size="22" font-weight="bold" fill="#FFF">32</text>
+  </g>
+  <g filter="url(#pieceShadow)">
+    <rect x="541" y="658" width="62" height="62" rx="12" fill="url(#pc2)"/>
+    <text x="572" y="696" text-anchor="middle" font-family="'Courier New',monospace" font-size="24" font-weight="bold" fill="#FFF">2</text>
+  </g>
+
+  <!-- row3: _, 64, 16, _, 128 -->
+  <g filter="url(#pieceShadow)">
+    <rect x="223" y="552" width="62" height="62" rx="12" fill="url(#pc64)"/>
+    <text x="254" y="590" text-anchor="middle" font-family="'Courier New',monospace" font-size="22" font-weight="bold" fill="#FFF">64</text>
+  </g>
+  <g filter="url(#pieceShadow)">
+    <rect x="329" y="552" width="62" height="62" rx="12" fill="url(#pc16)"/>
+    <text x="360" y="590" text-anchor="middle" font-family="'Courier New',monospace" font-size="22" font-weight="bold" fill="#FFF">16</text>
+  </g>
+  <g filter="url(#pieceShadow)">
+    <rect x="541" y="552" width="62" height="62" rx="12" fill="url(#pc128)"/>
+    <text x="572" y="590" text-anchor="middle" font-family="'Courier New',monospace" font-size="18" font-weight="bold" fill="#FFF">128</text>
+  </g>
+
+  <!-- row4: _, _, _, 8, 2 -->
+  <g filter="url(#pieceShadow)">
+    <rect x="435" y="446" width="62" height="62" rx="12" fill="url(#pc8)"/>
+    <text x="466" y="484" text-anchor="middle" font-family="'Courier New',monospace" font-size="24" font-weight="bold" fill="#FFF">8</text>
+  </g>
+  <g filter="url(#pieceShadow)">
+    <rect x="541" y="446" width="62" height="62" rx="12" fill="url(#pc2)"/>
+    <text x="572" y="484" text-anchor="middle" font-family="'Courier New',monospace" font-size="24" font-weight="bold" fill="#FFF">2</text>
+  </g>
+
+  <!-- row5: 4, 2, _, 16, _ -->
+  <g filter="url(#pieceShadow)">
+    <rect x="117" y="340" width="62" height="62" rx="12" fill="url(#pc4)"/>
+    <text x="148" y="378" text-anchor="middle" font-family="'Courier New',monospace" font-size="24" font-weight="bold" fill="#FFF">4</text>
+  </g>
+  <g filter="url(#pieceShadow)">
+    <rect x="223" y="340" width="62" height="62" rx="12" fill="url(#pc2)"/>
+    <text x="254" y="378" text-anchor="middle" font-family="'Courier New',monospace" font-size="24" font-weight="bold" fill="#FFF">2</text>
+  </g>
+  <g filter="url(#pieceShadow)">
+    <rect x="435" y="340" width="62" height="62" rx="12" fill="url(#pc16)"/>
+    <text x="466" y="378" text-anchor="middle" font-family="'Courier New',monospace" font-size="22" font-weight="bold" fill="#FFF">16</text>
+  </g>
+
+  <!-- row6: _, _, 32, _, _ -->
+  <g filter="url(#pieceShadow)">
+    <rect x="329" y="234" width="62" height="62" rx="12" fill="url(#pc32)"/>
+    <text x="360" y="272" text-anchor="middle" font-family="'Courier New',monospace" font-size="22" font-weight="bold" fill="#FFF">32</text>
+  </g>
+
+  <!-- ===== 当前下落棋子（顶部上方，第3列,col2） ===== -->
+  <g filter="url(#currentGlow)">
+    <rect x="317" y="140" width="74" height="74" rx="14" fill="url(#pc32)"/>
+    <text x="354" y="185" text-anchor="middle" font-family="'Courier New',monospace" font-size="28" font-weight="bold" fill="#FFF">32</text>
+  </g>
+
+  <!-- 下落箭头指示 -->
+  <g stroke="#FFB659" stroke-width="2" opacity="0.7">
+    <line x1="354" y1="218" x2="354" y2="240"/>
+    <polyline points="346,232 354,244 362,232" fill="none"/>
+  </g>
+
+  <!-- ===== 底部技能栏 ===== -->
+  <g filter="url(#softShadow)">
+    <rect x="40" y="1030" width="640" height="108" rx="28" fill="url(#skillBar)"/>
+  </g>
+
+  <!-- 技能1：炸弹 -->
+  <g filter="url(#btnGlow)">
+    <rect x="72" y="1050" width="78" height="68" rx="20" fill="rgba(255,137,120,0.12)"/>
+  </g>
+  <text x="111" y="1092" text-anchor="middle" font-size="34" fill="#F87275">💣</text>
+  <text x="111" y="1148" text-anchor="middle" font-family="'PingFang SC',sans-serif" font-size="14" fill="#8CB8C0">炸弹</text>
+
+  <!-- 技能2：锤子 -->
+  <g filter="url(#btnGlow)">
+    <rect x="178" y="1050" width="78" height="68" rx="20" fill="rgba(100,160,220,0.12)"/>
+  </g>
+  <text x="217" y="1092" text-anchor="middle" font-size="34" fill="#62A8E0">🔨</text>
+  <text x="217" y="1148" text-anchor="middle" font-family="'PingFang SC',sans-serif" font-size="14" fill="#8CB8C0">锤子</text>
+
+  <!-- 技能3：交换 -->
+  <g filter="url(#btnGlow)">
+    <rect x="284" y="1050" width="78" height="68" rx="20" fill="rgba(120,200,140,0.12)"/>
+  </g>
+  <text x="323" y="1092" text-anchor="middle" font-size="34" fill="#5EBA80">🔄</text>
+  <text x="323" y="1148" text-anchor="middle" font-family="'PingFang SC',sans-serif" font-size="14" fill="#8CB8C0">交换</text>
+
+  <!-- 更多按钮 -->
+  <g filter="url(#btnGlow)">
+    <rect x="494" y="1050" width="88" height="68" rx="20" fill="rgba(46,108,121,0.08)"/>
+  </g>
+  <text x="538" y="1092" text-anchor="middle" font-size="30" fill="#8CB8C0">⋯</text>
+
+  <!-- 数量角标 -->
+  <circle cx="156" cy="1052" r="12" fill="#FF8968"/>
+  <text x="156" y="1057" text-anchor="middle" font-size="12" font-weight="bold" fill="#FFF">3</text>
+
+  <circle cx="262" cy="1052" r="12" fill="#62A8E0"/>
+  <text x="262" y="1057" text-anchor="middle" font-size="12" font-weight="bold" fill="#FFF">2</text>
+
+  <circle cx="368" cy="1052" r="12" fill="#5EBA80"/>
+  <text x="368" y="1057" text-anchor="middle" font-size="12" font-weight="bold" fill="#FFF">1</text>
+
+  <!-- ===== 底部安全区提示 ===== -->
+  <rect x="0" y="1230" width="720" height="50" rx="0" fill="rgba(255,255,255,0.3)"/>
+  <text x="360" y="1260" text-anchor="middle" font-family="'PingFang SC',sans-serif" font-size="14" fill="#B0C8D0">安全区 · Safe Area</text>
+
+  <!-- ===== 设计标注(默认隐藏，开发时可打开) ===== -->
+  <g stroke="#FF6B6B" stroke-width="1" opacity="0">
+    <rect x="83" y="200" width="554" height="760" fill="none" stroke-dasharray="8,4"/>
+    <text x="90" y="196" font-size="14" fill="#FF6B6B">Board: 554×760, origin(83,200)</text>
+  </g>
+</svg>
