@@ -5145,6 +5145,14 @@
       "__uuid__": "eb3ce2ed-4faf-43d3-a45d-a2eb869d1ecc@f9941",
       "__expectedType__": "cc.SpriteFrame"
     },
+    "homeButtonSpriteFrame": {
+      "__uuid__": "99f00a8a-e444-4d70-92d7-5ad2862f209e@f9941",
+      "__expectedType__": "cc.SpriteFrame"
+    },
+    "rankButtonSpriteFrame": {
+      "__uuid__": "257d8ff8-2e1d-4501-b342-50f2a17068cb@f9941",
+      "__expectedType__": "cc.SpriteFrame"
+    },
     "_id": "8a5cTDZzFNeKZEbpdpbGHq"
   },
   {

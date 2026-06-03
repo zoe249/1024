@@ -9,6 +9,7 @@
   Node,
   screen,
   Sprite,
+  SpriteFrame,
   tween,
   Tween,
   UIOpacity,
@@ -28,6 +29,11 @@ export type PlayUIState = {
   isPaused: boolean
   isResolving: boolean
   activeSkill: 'bomb' | 'hammer' | 'swap' | null
+  skillCounts: {
+    bomb: number
+    hammer: number
+    swap: number
+  }
 }
 
 // 只读取胶囊布局会用到的字段，避免在没有微信类型声明时丢失类型约束。
@@ -89,8 +95,8 @@ export class PlayUIController extends Component {
   private pauseHandler: (() => void) | null = null
   // 返回首页按钮只把意图通知逻辑层，UI 层不直接清空棋盘。
   private returnHomeHandler: (() => void) | null = null
-  // 分享按钮只把意图通知逻辑层，由逻辑层适配微信或 Web 分享能力。
-  private shareHandler: (() => void) | null = null
+  // 排行榜按钮只把意图通知逻辑层，UI 层不直接关心榜单来源。
+  private rankHandler: (() => void) | null = null
   // 第一个技能按钮只通知逻辑层进入炸弹技能，不在 UI 层直接操作棋盘。
   private bombSkillHandler: (() => void) | null = null
   // 第二个技能按钮只通知逻辑层进入锤子技能，不在 UI 层直接操作棋盘。
@@ -110,7 +116,12 @@ export class PlayUIController extends Component {
     isGameOver: false,
     isPaused: false,
     isResolving: false,
-    activeSkill: null
+    activeSkill: null,
+    skillCounts: {
+      bomb: 1,
+      hammer: 1,
+      swap: 1
+    }
   }
   // 顶部状态栏文字。
   // private statusLabel: Label | null = null
@@ -130,6 +141,12 @@ export class PlayUIController extends Component {
   private swapSkillNode: Node | null = null
   // 缓存第二个技能节点，和第三技能共用同一套技能态表现。
   private hammerSkillNode: Node | null = null
+  // 三个技能数量文本由 UI 层统一缓存，场景里缺失时运行时自动补齐。
+  private skillCountLabels: Record<'bomb' | 'hammer' | 'swap', Label | null> = {
+    bomb: null,
+    hammer: null,
+    swap: null
+  }
   // 技能施放提示由运行时生成，避免为了一个提示再要求手动维护 scene 节点。
   private skillHintNode: Node | null = null
   // 提示透明度单独缓存，方便做进入、闪烁和退出动画。
@@ -145,7 +162,7 @@ export class PlayUIController extends Component {
     spacing: number
     onPauseTap: () => void
     onReturnHomeTap: () => void
-    onShareTap: () => void
+    onRankTap: () => void
     onBombSkillTap: () => void
     onHammerSkillTap: () => void
     onSwapSkillTap: () => void
@@ -156,7 +173,7 @@ export class PlayUIController extends Component {
     this.spacing = options.spacing
     this.pauseHandler = options.onPauseTap
     this.returnHomeHandler = options.onReturnHomeTap
-    this.shareHandler = options.onShareTap
+    this.rankHandler = options.onRankTap
     this.bombSkillHandler = options.onBombSkillTap
     this.hammerSkillHandler = options.onHammerSkillTap
     this.swapSkillHandler = options.onSwapSkillTap
@@ -219,6 +236,9 @@ export class PlayUIController extends Component {
     this.bombSkillNode = null
     this.hammerSkillNode = null
     this.swapSkillNode = null
+    this.skillCountLabels.bomb = null
+    this.skillCountLabels.hammer = null
+    this.skillCountLabels.swap = null
     this.skillHintNode = null
     this.skillHintOpacity = null
     this.pauseOverlayController = null
@@ -474,7 +494,7 @@ export class PlayUIController extends Component {
       hostNode: this.node,
       pauseHandler: this.pauseHandler,
       homeHandler: this.returnHomeHandler,
-      shareHandler: this.shareHandler
+      rankHandler: this.rankHandler
     })
   }
 
@@ -703,10 +723,12 @@ export class PlayUIController extends Component {
     if (this.bombSkillNode) {
       this.bombSkillNode.off(Node.EventType.TOUCH_END, this.onBombSkillButtonTap, this)
       this.bombSkillNode.on(Node.EventType.TOUCH_END, this.onBombSkillButtonTap, this)
+      this.skillCountLabels.bomb = this.ensureSkillCountLabel(this.bombSkillNode)
     }
     if (this.hammerSkillNode) {
       this.hammerSkillNode.off(Node.EventType.TOUCH_END, this.onHammerSkillButtonTap, this)
       this.hammerSkillNode.on(Node.EventType.TOUCH_END, this.onHammerSkillButtonTap, this)
+      this.skillCountLabels.hammer = this.ensureSkillCountLabel(this.hammerSkillNode)
     }
     if (!this.swapSkillNode) {
       return
@@ -714,6 +736,98 @@ export class PlayUIController extends Component {
 
     this.swapSkillNode.off(Node.EventType.TOUCH_END, this.onSwapSkillButtonTap, this)
     this.swapSkillNode.on(Node.EventType.TOUCH_END, this.onSwapSkillButtonTap, this)
+    this.skillCountLabels.swap = this.ensureSkillCountLabel(this.swapSkillNode)
+  }
+
+  // 每个技能按钮统一维护 MoreBtn、AmountBG、Count 三层；运行时缺失的层会复用其他技能上的同名图片补齐。
+  private ensureSkillCountLabel(skillNode: Node) {
+    const badgePosition = this.getSkillBadgePosition(skillNode)
+    const amountBgNode = this.ensureSkillBadgeSpriteNode(
+      skillNode,
+      'AmountBG',
+      this.findSkillBadgeSpriteFrame('AmountBG'),
+      badgePosition
+    )
+    const moreButtonNode = this.ensureSkillBadgeSpriteNode(
+      skillNode,
+      'MoreBtn',
+      this.findSkillBadgeSpriteFrame('MoreBtn'),
+      badgePosition
+    )
+    let countNode = skillNode.getChildByName('Count')
+    if (!countNode) {
+      countNode = new Node('Count')
+      countNode.setParent(skillNode)
+    }
+
+    countNode.setPosition(badgePosition.x, badgePosition.y, badgePosition.z)
+    countNode.active = true
+    // 三层角标都放在技能主图标上方：有次数显示底色+数字，无次数显示加号。
+    amountBgNode.setSiblingIndex(skillNode.children.length - 1)
+    moreButtonNode.setSiblingIndex(skillNode.children.length - 1)
+    countNode.setSiblingIndex(skillNode.children.length - 1)
+
+    const transform = countNode.getComponent(UITransform) ?? countNode.addComponent(UITransform)
+    transform.setContentSize(44, 44)
+
+    const label = countNode.getComponent(Label) ?? countNode.addComponent(Label)
+    label.fontSize = 22
+    label.lineHeight = 26
+    label.isBold = true
+    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    label.verticalAlign = Label.VerticalAlign.CENTER
+    label.color = new Color(255, 255, 255, 255)
+
+    const outline = countNode.getComponent(LabelOutline) ?? countNode.addComponent(LabelOutline)
+    outline.color = new Color(58, 91, 111, 210)
+    outline.width = 2
+    return label
+  }
+
+  // 新旧场景的角标位置不完全一致，优先读取已有节点坐标，没有时才使用默认左下角。
+  private getSkillBadgePosition(skillNode: Node) {
+    const badgeNode = skillNode.getChildByName('AmountBG') ?? skillNode.getChildByName('MoreBtn')
+    if (badgeNode) {
+      return new Vec3(badgeNode.position.x, badgeNode.position.y, badgeNode.position.z)
+    }
+    return new Vec3(-48, -39, 0)
+  }
+
+  // 从任意一个已经配置好的技能节点上取同名图片，避免在代码里硬编码资源 uuid。
+  private findSkillBadgeSpriteFrame(nodeName: 'AmountBG' | 'MoreBtn'): SpriteFrame | null {
+    const skillNodes = [this.bombSkillNode, this.hammerSkillNode, this.swapSkillNode]
+    for (const skillNode of skillNodes) {
+      const spriteFrame = skillNode?.getChildByName(nodeName)?.getComponent(Sprite)?.spriteFrame ?? null
+      if (spriteFrame) {
+        return spriteFrame
+      }
+    }
+    return null
+  }
+
+  // 补齐角标图片层时只复制视觉层，不把次数逻辑塞进节点，保证 UI 仍然由 PlayUIState 驱动。
+  private ensureSkillBadgeSpriteNode(
+    skillNode: Node,
+    nodeName: 'AmountBG' | 'MoreBtn',
+    spriteFrame: SpriteFrame | null,
+    position: Vec3
+  ) {
+    let badgeNode = skillNode.getChildByName(nodeName)
+    if (!badgeNode) {
+      badgeNode = new Node(nodeName)
+      badgeNode.setParent(skillNode)
+    }
+
+    badgeNode.setPosition(position.x, position.y, position.z)
+    const transform = badgeNode.getComponent(UITransform) ?? badgeNode.addComponent(UITransform)
+    transform.setContentSize(40, 40)
+
+    const sprite = badgeNode.getComponent(Sprite) ?? badgeNode.addComponent(Sprite)
+    if (spriteFrame) {
+      sprite.spriteFrame = spriteFrame
+    }
+    sprite.sizeMode = Sprite.SizeMode.CUSTOM
+    return badgeNode
   }
 
   // 技能模式提示放在技能栏上方，明确告诉玩家可以拖动交换，也可以再次点击取消。
@@ -785,7 +899,44 @@ export class PlayUIController extends Component {
         .to(0.08, { scale: isSwapActive ? new Vec3(1.08, 1.08, 1) : Vec3.ONE }, { easing: 'quadOut' })
         .start()
     }
+    this.refreshSkillCountDisplay()
     this.refreshSkillHintState(this.currentState.activeSkill)
+  }
+
+  // 数量大于 0 时显示 AmountBG+Count；数量为 0 时只显示 MoreBtn，引导玩家补充技能。
+  private refreshSkillCountDisplay() {
+    this.refreshSingleSkillCount('bomb', this.bombSkillNode)
+    this.refreshSingleSkillCount('hammer', this.hammerSkillNode)
+    this.refreshSingleSkillCount('swap', this.swapSkillNode)
+  }
+
+  private refreshSingleSkillCount(skill: 'bomb' | 'hammer' | 'swap', skillNode: Node | null) {
+    const count = Math.max(0, Math.floor(this.currentState.skillCounts[skill]))
+    const label = this.skillCountLabels[skill]
+    if (label) {
+      label.string = `${count}`
+    }
+
+    if (!skillNode) {
+      return
+    }
+    const hasCount = count > 0
+    const amountBgNode = skillNode.getChildByName('AmountBG')
+    const countNode = skillNode.getChildByName('Count')
+    const moreButtonNode = skillNode.getChildByName('MoreBtn')
+
+    if (amountBgNode) {
+      amountBgNode.active = hasCount
+    }
+    if (countNode) {
+      countNode.active = hasCount
+    }
+    if (moreButtonNode) {
+      moreButtonNode.active = !hasCount
+    }
+
+    const opacity = skillNode.getComponent(UIOpacity) ?? skillNode.addComponent(UIOpacity)
+    opacity.opacity = 255
   }
 
   // 技能激活时提示常驻并轻微呼吸，取消或施放结束时淡出。

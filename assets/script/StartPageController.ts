@@ -36,6 +36,9 @@ const LIGHT_TEXT = new Color(255, 255, 255, 255)
 const SUBTEXT_COLOR = new Color(105, 153, 164, 255)
 const YELLOW_COLOR = new Color(246, 231, 153, 205)
 const GREEN_CIRCLE = new Color(176, 223, 150, 158)
+// 首页排行榜需要轻雾化遮罩，暂停中复用排行榜时则保持透明，避免覆盖原有深色暂停蒙版。
+const RANK_MASK_HOME_COLOR = new Color(234, 246, 250, 212)
+const RANK_MASK_PAUSE_COLOR = new Color(0, 0, 0, 0)
 
 const RANKING_DATA: RankEntry[] = [
   { rank: 1, name: 'Mao', score: 42880, color: new Color(255, 209, 105, 255) },
@@ -68,6 +71,8 @@ export class StartPageController extends Component {
   private tipLabel: Label | null = null
   private tipOpacity: UIOpacity | null = null
   private currentTipIndex = -1
+  // 暂停页打开排行榜时只借用榜单弹窗，不显示首页背景和首页卡片。
+  private isRankOnlyMode = false
   private pageDecorNodes: Node[] = []
 
   setup(options: StartPageOptions) {
@@ -135,6 +140,39 @@ export class StartPageController extends Component {
     if (this.pageCardNode) {
       tween(this.pageCardNode).to(0.16, { scale: new Vec3(0.97, 0.97, 1) }).start()
     }
+  }
+
+  // 外部页面可以复用首页排行榜弹窗；rankOnly 为 true 时只显示榜单，不恢复首页主体。
+  showRankModal(rankOnly = false, event?: EventTouch) {
+    if (event) {
+      event.propagationStopped = true
+    }
+    if (!this.rankMaskNode || !this.rankPanelNode) {
+      return
+    }
+
+    this.isRankOnlyMode = rankOnly
+    if (rankOnly && this.rootNode) {
+      this.rootNode.active = true
+      this.rootNode.setSiblingIndex(this.node.children.length - 1)
+      const rootOpacity = this.rootNode.getComponent(UIOpacity) ?? this.rootNode.addComponent(UIOpacity)
+      rootOpacity.opacity = 255
+      const background = this.rootNode.getChildByName('Background')
+      if (background) {
+        background.active = false
+      }
+      if (this.pageCardNode) {
+        this.pageCardNode.active = false
+      }
+    }
+    this.refreshRankMaskStyle()
+
+    const opacity = this.rankMaskNode.getComponent(UIOpacity) ?? this.rankMaskNode.addComponent(UIOpacity)
+    opacity.opacity = 0
+    this.rankMaskNode.active = true
+    this.rankPanelNode.setScale(new Vec3(0.94, 0.94, 1))
+    tween(opacity).to(0.14, { opacity: 255 }).start()
+    tween(this.rankPanelNode).to(0.18, { scale: Vec3.ONE }, { easing: 'backOut' }).start()
   }
 
   onDestroy() {
@@ -547,20 +585,20 @@ export class StartPageController extends Component {
     this.bindSwallowTouch(panel)
     this.rankPanelNode = panel
 
-    const close = this.createCircleButton(panel, 'CloseButton', '×', 180, 320, 42)
+    const close = this.createCircleButton(panel, 'CloseButton', '×', 184, 322, 40)
     close.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
       event.propagationStopped = true
       this.hideRankModal()
     })
 
-    const title = this.createLabel(panel, 'Title', '好友排行榜', 42, TEAL_COLOR, new Vec3(0, 260, 0))
+    const title = this.createLabel(panel, 'Title', '好友排行榜', 40, TEAL_COLOR, new Vec3(0, 282, 0))
     title.isBold = true
-    const badge = this.createCapsule(panel, 'Badge', '本周合成之星', 0, 198, 188, 40, new Color(242, 252, 255, 255), SUBTEXT_COLOR)
+    const badge = this.createCapsule(panel, 'Badge', '本周合成之星', 0, 230, 188, 38, new Color(242, 252, 255, 255), SUBTEXT_COLOR)
     badge.fontSize = 18
 
     this.buildPodium(panel)
     this.buildRankList(panel)
-    const invite = this.createPrimaryButton(panel, 'InviteBtn', '邀请好友', BLUE_COLOR, -286)
+    const invite = this.createPrimaryButton(panel, 'InviteBtn', '邀请好友', BLUE_COLOR, -318)
     invite.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
       event.propagationStopped = true
       this.showToast('邀请功能待小游戏能力接入')
@@ -571,17 +609,18 @@ export class StartPageController extends Component {
 
   private buildPodium(parent: Node) {
     const top3 = RANKING_DATA.slice(0, 3)
+    // 前三名整体上移并缩小头像块，给下方列表和按钮留出明确间距。
     const positions = [
-      { x: 0, y: 120, size: 96 },
-      { x: -120, y: 78, size: 72 },
-      { x: 120, y: 78, size: 72 }
+      { x: 0, y: 142, size: 86 },
+      { x: -126, y: 108, size: 66 },
+      { x: 126, y: 108, size: 66 }
     ]
 
     top3.forEach((entry, index) => {
       const holder = new Node(`Top${entry.rank}`)
       holder.setParent(parent)
       holder.setPosition(positions[index].x, positions[index].y, 0)
-      holder.addComponent(UITransform).setContentSize(130, 160)
+      holder.addComponent(UITransform).setContentSize(118, 136)
       const bubble = holder.addComponent(Graphics)
       const size = positions[index].size
       bubble.fillColor = entry.color
@@ -589,15 +628,15 @@ export class StartPageController extends Component {
       bubble.fill()
       if (entry.rank === 1) {
         bubble.fillColor = new Color(255, 209, 105, 255)
-        bubble.circle(0, size / 2 + 24, 24)
+        bubble.circle(0, size / 2 + 20, 21)
         bubble.fill()
       }
 
-      const rankLabel = this.createLabel(holder, 'Rank', `${entry.rank}`, 26, TEAL_COLOR, new Vec3(0, 20, 0))
+      const rankLabel = this.createLabel(holder, 'Rank', `${entry.rank}`, 24, TEAL_COLOR, new Vec3(0, 20, 0))
       rankLabel.isBold = true
-      const nameLabel = this.createLabel(holder, 'Name', entry.name, 24, TEAL_COLOR, new Vec3(0, -42, 0))
+      const nameLabel = this.createLabel(holder, 'Name', entry.name, 21, TEAL_COLOR, new Vec3(0, -38, 0))
       nameLabel.isBold = true
-      const scoreLabel = this.createLabel(holder, 'Score', `${entry.score}`, index === 0 ? 42 : 28, TEAL_COLOR, new Vec3(0, -78, 0))
+      const scoreLabel = this.createLabel(holder, 'Score', `${entry.score}`, index === 0 ? 34 : 24, TEAL_COLOR, new Vec3(0, -68, 0))
       scoreLabel.isBold = true
     })
   }
@@ -607,22 +646,26 @@ export class StartPageController extends Component {
     entries.forEach((entry, index) => {
       const row = new Node(`Row${entry.rank}`)
       row.setParent(parent)
-      row.setPosition(0, -38 - index * 92, 0)
-      row.addComponent(UITransform).setContentSize(360, 70)
+      // 列表行改成更紧凑的卡片，并和底部按钮拉开距离，避免小屏下互相遮挡。
+      row.setPosition(0, -38 - index * 74, 0)
+      row.addComponent(UITransform).setContentSize(374, 58)
       const graphics = row.addComponent(Graphics)
       graphics.fillColor = new Color(255, 255, 255, 218)
-      graphics.roundRect(-180, -35, 360, 70, 24)
+      graphics.roundRect(-187, -29, 374, 58, 22)
       graphics.fill()
       graphics.fillColor = entry.color
-      graphics.circle(-122, 0, 18)
+      graphics.circle(-118, 0, 16)
       graphics.fill()
 
-      const rankLabel = this.createLabel(row, 'Rank', `${entry.rank}`, 24, SUBTEXT_COLOR, new Vec3(-158, 0, 0))
+      const rankLabel = this.createLabel(row, 'Rank', `${entry.rank}`, 22, SUBTEXT_COLOR, new Vec3(-162, 0, 0))
       rankLabel.isBold = true
-      const nameLabel = this.createLabel(row, 'Name', entry.name, 22, TEAL_COLOR, new Vec3(-34, 0, 0))
+      rankLabel.node.getComponent(UITransform)?.setContentSize(44, 44)
+      const nameLabel = this.createLabel(row, 'Name', entry.name, 21, TEAL_COLOR, new Vec3(-40, 0, 0))
       nameLabel.isBold = true
-      const scoreLabel = this.createLabel(row, 'Score', `${entry.score}`, 22, new Color(89, 188, 163, 255), new Vec3(112, 0, 0))
+      nameLabel.node.getComponent(UITransform)?.setContentSize(150, 44)
+      const scoreLabel = this.createLabel(row, 'Score', `${entry.score}`, 21, new Color(89, 188, 163, 255), new Vec3(126, 0, 0))
       scoreLabel.isBold = true
+      scoreLabel.node.getComponent(UITransform)?.setContentSize(116, 44)
     })
   }
 
@@ -655,10 +698,7 @@ export class StartPageController extends Component {
     }
 
     maskTransform.setContentSize(width, height)
-    maskGraphics.clear()
-    maskGraphics.fillColor = new Color(234, 246, 250, 212)
-    maskGraphics.rect(-width / 2, -height / 2, width, height)
-    maskGraphics.fill()
+    this.refreshRankMaskStyle()
 
     panelTransform.setContentSize(Math.min(470, width - 90), Math.min(760, height - 180))
     panelGraphics.clear()
@@ -668,6 +708,22 @@ export class StartPageController extends Component {
     panelGraphics.fillColor = new Color(242, 253, 255, 248)
     panelGraphics.roundRect(-panelTransform.width / 2, -panelTransform.height / 2, panelTransform.width, panelTransform.height, 28)
     panelGraphics.fill()
+  }
+
+  // 排行榜遮罩根据打开来源切换颜色：首页为浅雾化，暂停页为透明，保留原暂停暗色遮罩。
+  private refreshRankMaskStyle() {
+    const maskTransform = this.rankMaskNode?.getComponent(UITransform)
+    const maskGraphics = this.rankMaskNode?.getComponent(Graphics)
+    if (!maskTransform || !maskGraphics) {
+      return
+    }
+
+    const width = maskTransform.width
+    const height = maskTransform.height
+    maskGraphics.clear()
+    maskGraphics.fillColor = this.isRankOnlyMode ? RANK_MASK_PAUSE_COLOR : RANK_MASK_HOME_COLOR
+    maskGraphics.rect(-width / 2, -height / 2, width, height)
+    maskGraphics.fill()
   }
 
   private createCircleDecoration(parent: Node, name: string, radius: number, color: Color, alphaScale: number) {
@@ -749,17 +805,7 @@ export class StartPageController extends Component {
   }
 
   private handleRankTap(event: EventTouch) {
-    event.propagationStopped = true
-    if (!this.rankMaskNode || !this.rankPanelNode) {
-      return
-    }
-
-    const opacity = this.rankMaskNode.getComponent(UIOpacity) ?? this.rankMaskNode.addComponent(UIOpacity)
-    opacity.opacity = 0
-    this.rankMaskNode.active = true
-    this.rankPanelNode.setScale(new Vec3(0.94, 0.94, 1))
-    tween(opacity).to(0.14, { opacity: 255 }).start()
-    tween(this.rankPanelNode).to(0.18, { scale: Vec3.ONE }, { easing: 'backOut' }).start()
+    this.showRankModal(false, event)
   }
 
   private hideRankModal(event?: EventTouch) {
@@ -777,6 +823,20 @@ export class StartPageController extends Component {
       .call(() => {
         if (this.rankMaskNode) {
           this.rankMaskNode.active = false
+        }
+        if (this.isRankOnlyMode) {
+          // 暂停页借用排行榜后，关闭榜单时要把首页根节点重新隐藏，露出原来的暂停遮罩。
+          this.isRankOnlyMode = false
+          if (this.rootNode) {
+            const background = this.rootNode.getChildByName('Background')
+            if (background) {
+              background.active = true
+            }
+            if (this.pageCardNode) {
+              this.pageCardNode.active = true
+            }
+            this.rootNode.active = false
+          }
         }
       })
       .start()

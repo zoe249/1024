@@ -51,8 +51,12 @@ type ScoreRewardEvent = {
   chainDepth: number
 }
 
+type SkillKind = 'bomb' | 'hammer' | 'swap'
+
 // 控制同屏特效节点上限，避免频繁创建粒子导致卡顿。
 const MAX_ACTIVE_FX = 18
+// 每局开始时三个技能都给 1 次，后续奖励或商店扩展可以从这里统一调整初始值。
+const INITIAL_SKILL_COUNT = 1
 
 @ccclass('PlayController')
 export class PlayController extends Component {
@@ -148,6 +152,12 @@ export class PlayController extends Component {
   private isBombSkillActive = false
   // 当前正在被拖拽的棋子信息，释放后用于判断是否可以交换。
   private swapDragState: SwapDragState | null = null
+  // 本局技能库存：炸弹、锤子和交换每局默认各 1 次，施放成功后扣减。
+  private skillCounts: Record<SkillKind, number> = {
+    bomb: INITIAL_SKILL_COUNT,
+    hammer: INITIAL_SKILL_COUNT,
+    swap: INITIAL_SKILL_COUNT
+  }
   // 奖励分数和棋盘总和分开累计，方便后续扩展更多得分来源。
   private bonusScore = 0
   // UI 渲染组件，专门负责棋盘绘制、状态栏、控制栏和暂停遮罩。
@@ -177,7 +187,7 @@ export class PlayController extends Component {
       spacing: this.spacing,
       onPauseTap: () => this.togglePauseFromUi(),
       onReturnHomeTap: () => this.returnToStartPageFromPause(),
-      onShareTap: () => this.shareGameFromPause(),
+      onRankTap: () => this.showRankFromPause(),
       onBombSkillTap: () => this.toggleBombSkillFromUi(),
       onHammerSkillTap: () => this.toggleHammerSkillFromUi(),
       onSwapSkillTap: () => this.toggleSwapSkillFromUi()
@@ -392,6 +402,24 @@ export class PlayController extends Component {
     // 重开或首次进入时，奖励分数要和棋盘一起清零。
     this.bonusScore = 0
     this.currentColumn = Math.floor(this.boardwidth / 2)
+  }
+
+  // 每局开始时统一重置技能库存，保证炸弹、锤子、交换都从 1 次开始。
+  private resetSkillCounts() {
+    this.skillCounts = {
+      bomb: INITIAL_SKILL_COUNT,
+      hammer: INITIAL_SKILL_COUNT,
+      swap: INITIAL_SKILL_COUNT
+    }
+  }
+
+  // 技能只有在真正施放成功后才扣次数，取消技能或无效目标不会消耗库存。
+  private consumeSkill(skill: SkillKind) {
+    this.skillCounts[skill] = Math.max(0, this.skillCounts[skill] - 1)
+  }
+
+  private hasSkillCount(skill: SkillKind) {
+    return this.skillCounts[skill] > 0
   }
 
   // 清理棋盘中已经实例化的棋子节点，返回首页和重新开始都复用这套收口逻辑。
@@ -687,6 +715,7 @@ export class PlayController extends Component {
       return
     }
 
+    this.consumeSkill('swap')
     await this.settleBoard(sourcePiece)
     this.restoreSwapPieceLayer(dragState)
     this.isResolving = false
@@ -813,6 +842,7 @@ export class PlayController extends Component {
   private async executeHammerSkill(target: CellPosition, piece: PieceController) {
     this.isResolving = true
     this.board[target.row][target.column] = null
+    this.consumeSkill('hammer')
     this.refreshUiState()
 
     await this.animateHammerBreak(piece)
@@ -860,6 +890,7 @@ export class PlayController extends Component {
     }
 
     this.isResolving = true
+    this.consumeSkill('bomb')
     const centerPosition = this.getCellPosition(center.row, center.column)
     await this.playBombCast(centerPosition)
 
@@ -2001,6 +2032,8 @@ export class PlayController extends Component {
     }
 
     this.hasStartedSession = true
+    this.resetSkillCounts()
+    this.refreshUiState()
     this.playGameplayBackgroundMusic()
     this.startPageController?.hide(() => {
       if (!this.currentPiece && !this.isGameOver) {
@@ -2018,7 +2051,12 @@ export class PlayController extends Component {
       isGameOver: this.isGameOver,
       isPaused: this.isPaused,
       isResolving: this.isResolving,
-      activeSkill: this.isBombSkillActive ? 'bomb' : this.isHammerSkillActive ? 'hammer' : this.isSwapSkillActive ? 'swap' : null
+      activeSkill: this.isBombSkillActive ? 'bomb' : this.isHammerSkillActive ? 'hammer' : this.isSwapSkillActive ? 'swap' : null,
+      skillCounts: {
+        bomb: this.skillCounts.bomb,
+        hammer: this.skillCounts.hammer,
+        swap: this.skillCounts.swap
+      }
     }
   }
 
@@ -2109,10 +2147,16 @@ export class PlayController extends Component {
     this.isBombSkillActive = false
     this.swapDragState = null
     this.resetBoard()
+    this.resetSkillCounts()
     this.playStartPageBackgroundMusic()
     this.refreshUiState()
     this.startPageController?.syncLayout()
     this.startPageController?.show()
+  }
+
+  // 暂停遮罩右下角的排行榜按钮复用首页排行榜弹窗，只显示榜单本身，不恢复首页卡片。
+  private showRankFromPause() {
+    this.startPageController?.showRankModal(true)
   }
 
   // 分享入口只负责适配平台能力；没有平台 API 时保持静默降级，避免打断暂停弹窗。
@@ -2161,6 +2205,10 @@ export class PlayController extends Component {
       return
     }
 
+    if (!this.hasSkillCount('swap')) {
+      return
+    }
+
     this.isFastDropping = false
     this.trailTimer = 0
     this.isSwapSkillActive = true
@@ -2182,6 +2230,10 @@ export class PlayController extends Component {
       return
     }
 
+    if (!this.hasSkillCount('hammer')) {
+      return
+    }
+
     this.isFastDropping = false
     this.trailTimer = 0
     this.isHammerSkillActive = true
@@ -2200,6 +2252,10 @@ export class PlayController extends Component {
 
     if (this.isBombSkillActive) {
       void this.cancelActiveSkillMode()
+      return
+    }
+
+    if (!this.hasSkillCount('bomb')) {
       return
     }
 
@@ -2248,6 +2304,7 @@ export class PlayController extends Component {
     this.isBombSkillActive = false
     this.swapDragState = null
     this.resetBoard()
+    this.resetSkillCounts()
     this.spawnPiece()
   }
 }
