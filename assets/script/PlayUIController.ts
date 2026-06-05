@@ -80,6 +80,17 @@ const BOARD_DASH_INSET = 16
 const BOARD_DASH_RADIUS = 2
 // 虚线颜色改成浅冷柔光，配合新的玻璃蒙版而不是原来的实色样式。
 const BOARD_DASH_COLOR = new Color(214, 248, 255, 92)
+// 技能次数角标的默认位置参考左侧第一个技能的 MoreBtn，也就是无次数时视觉正确的加号位置。
+const SKILL_BADGE_FALLBACK_X = -45.529
+const SKILL_BADGE_FALLBACK_Y = -40.613
+// 角标底图和加号图在 scene 中都是 40x40；只有找不到参考节点时才使用这个默认尺寸。
+const SKILL_BADGE_FALLBACK_SIZE = 40
+// AmountBG 是数字背后的底盘，不需要和加号一样大；按 40x40 参考尺寸收成约 24x24。
+const SKILL_AMOUNT_BG_WIDTH_SCALE = 0.6
+const SKILL_AMOUNT_BG_HEIGHT_SCALE = 0.6
+// 数字层按 scene 里 Count 小图的视觉尺寸收口，避免有次数时数字显得过大。
+const SKILL_COUNT_WIDTH = 10
+const SKILL_COUNT_HEIGHT = 20
 
 @ccclass('PlayUIController')
 export class PlayUIController extends Component {
@@ -742,17 +753,20 @@ export class PlayUIController extends Component {
   // 每个技能按钮统一维护 MoreBtn、AmountBG、Count 三层；运行时缺失的层会复用其他技能上的同名图片补齐。
   private ensureSkillCountLabel(skillNode: Node) {
     const badgePosition = this.getSkillBadgePosition(skillNode)
+    const badgeSizeReference = this.getSkillBadgeSizeReferenceNode(skillNode)
     const amountBgNode = this.ensureSkillBadgeSpriteNode(
       skillNode,
       'AmountBG',
       this.findSkillBadgeSpriteFrame('AmountBG'),
-      badgePosition
+      badgePosition,
+      badgeSizeReference
     )
     const moreButtonNode = this.ensureSkillBadgeSpriteNode(
       skillNode,
       'MoreBtn',
       this.findSkillBadgeSpriteFrame('MoreBtn'),
-      badgePosition
+      badgePosition,
+      skillNode.getChildByName('MoreBtn') ?? badgeSizeReference
     )
     let countNode = skillNode.getChildByName('Count')
     if (!countNode) {
@@ -767,12 +781,18 @@ export class PlayUIController extends Component {
     moreButtonNode.setSiblingIndex(skillNode.children.length - 1)
     countNode.setSiblingIndex(skillNode.children.length - 1)
 
+    const countSprite = countNode.getComponent(Sprite)
+    if (countSprite) {
+      // Count 历史上是图片节点，这里改由 Label 负责显示数量，避免旧图片被拉伸错位。
+      countSprite.enabled = false
+    }
+
     const transform = countNode.getComponent(UITransform) ?? countNode.addComponent(UITransform)
-    transform.setContentSize(44, 44)
+    transform.setContentSize(SKILL_COUNT_WIDTH, SKILL_COUNT_HEIGHT)
 
     const label = countNode.getComponent(Label) ?? countNode.addComponent(Label)
-    label.fontSize = 22
-    label.lineHeight = 26
+    label.fontSize = 13
+    label.lineHeight = 18
     label.isBold = true
     label.horizontalAlign = Label.HorizontalAlign.CENTER
     label.verticalAlign = Label.VerticalAlign.CENTER
@@ -780,26 +800,45 @@ export class PlayUIController extends Component {
 
     const outline = countNode.getComponent(LabelOutline) ?? countNode.addComponent(LabelOutline)
     outline.color = new Color(58, 91, 111, 210)
-    outline.width = 2
+    outline.width = 1
     return label
   }
 
-  // 新旧场景的角标位置不完全一致，优先读取已有节点坐标，没有时才使用默认左下角。
+  // 新旧场景的角标位置不完全一致，有次数时优先贴着当前技能无次数加号的位置。
   private getSkillBadgePosition(skillNode: Node) {
-    const badgeNode = skillNode.getChildByName('AmountBG') ?? skillNode.getChildByName('MoreBtn')
+    const badgeNode =
+      skillNode.getChildByName('MoreBtn') ??
+      this.findSkillBadgeNode('MoreBtn') ??
+      this.findSkillBadgeNode('AmountBG') ??
+      skillNode.getChildByName('AmountBG')
     if (badgeNode) {
       return new Vec3(badgeNode.position.x, badgeNode.position.y, badgeNode.position.z)
     }
-    return new Vec3(-48, -39, 0)
+    return new Vec3(SKILL_BADGE_FALLBACK_X, SKILL_BADGE_FALLBACK_Y, 0)
   }
 
   // 从任意一个已经配置好的技能节点上取同名图片，避免在代码里硬编码资源 uuid。
   private findSkillBadgeSpriteFrame(nodeName: 'AmountBG' | 'MoreBtn'): SpriteFrame | null {
+    return this.findSkillBadgeNode(nodeName)?.getComponent(Sprite)?.spriteFrame ?? null
+  }
+
+  // 有次数的底图尺寸优先跟随当前技能的加号，保证 0 次和 1 次切换时不会忽大忽小。
+  private getSkillBadgeSizeReferenceNode(skillNode: Node) {
+    return this.getPrimarySkillMoreButtonNode() ?? skillNode.getChildByName('MoreBtn') ?? this.findSkillBadgeNode('MoreBtn') ?? null
+  }
+
+  // 左侧第一个技能的加号是确认过的正确大小，只作为尺寸参考，不强行覆盖其它技能的位置。
+  private getPrimarySkillMoreButtonNode() {
+    return this.bombSkillNode?.getChildByName('MoreBtn') ?? null
+  }
+
+  // 查找现有角标节点时三个技能共用同一顺序，保证位置、尺寸、图片都来自同一套参考。
+  private findSkillBadgeNode(nodeName: 'AmountBG' | 'MoreBtn', ignoredNode: Node | null = null) {
     const skillNodes = [this.bombSkillNode, this.hammerSkillNode, this.swapSkillNode]
     for (const skillNode of skillNodes) {
-      const spriteFrame = skillNode?.getChildByName(nodeName)?.getComponent(Sprite)?.spriteFrame ?? null
-      if (spriteFrame) {
-        return spriteFrame
+      const badgeNode = skillNode?.getChildByName(nodeName) ?? null
+      if (badgeNode && badgeNode !== ignoredNode) {
+        return badgeNode
       }
     }
     return null
@@ -810,7 +849,8 @@ export class PlayUIController extends Component {
     skillNode: Node,
     nodeName: 'AmountBG' | 'MoreBtn',
     spriteFrame: SpriteFrame | null,
-    position: Vec3
+    position: Vec3,
+    sizeReferenceNode: Node | null = null
   ) {
     let badgeNode = skillNode.getChildByName(nodeName)
     if (!badgeNode) {
@@ -820,7 +860,17 @@ export class PlayUIController extends Component {
 
     badgeNode.setPosition(position.x, position.y, position.z)
     const transform = badgeNode.getComponent(UITransform) ?? badgeNode.addComponent(UITransform)
-    transform.setContentSize(40, 40)
+    const referenceTransform =
+      sizeReferenceNode?.getComponent(UITransform) ??
+      this.findSkillBadgeNode(nodeName, badgeNode)?.getComponent(UITransform) ??
+      null
+    const referenceWidth = referenceTransform?.width ?? SKILL_BADGE_FALLBACK_SIZE
+    const referenceHeight = referenceTransform?.height ?? SKILL_BADGE_FALLBACK_SIZE
+    transform.setContentSize(
+      nodeName === 'AmountBG' ? referenceWidth * SKILL_AMOUNT_BG_WIDTH_SCALE : referenceWidth,
+      nodeName === 'AmountBG' ? referenceHeight * SKILL_AMOUNT_BG_HEIGHT_SCALE : referenceHeight
+    )
+    badgeNode.setScale(Vec3.ONE)
 
     const sprite = badgeNode.getComponent(Sprite) ?? badgeNode.addComponent(Sprite)
     if (spriteFrame) {

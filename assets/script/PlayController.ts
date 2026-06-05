@@ -418,6 +418,12 @@ export class PlayController extends Component {
     this.skillCounts[skill] = Math.max(0, this.skillCounts[skill] - 1)
   }
 
+  // 三个技能统一通过这个入口扣次数并刷新 UI，避免某个技能的剩余次数显示节奏不一致。
+  private consumeSkillAndRefresh(skill: SkillKind) {
+    this.consumeSkill(skill)
+    this.refreshUiState()
+  }
+
   private hasSkillCount(skill: SkillKind) {
     return this.skillCounts[skill] > 0
   }
@@ -715,7 +721,7 @@ export class PlayController extends Component {
       return
     }
 
-    this.consumeSkill('swap')
+    this.consumeSkillAndRefresh('swap')
     await this.settleBoard(sourcePiece)
     this.restoreSwapPieceLayer(dragState)
     this.isResolving = false
@@ -842,8 +848,7 @@ export class PlayController extends Component {
   private async executeHammerSkill(target: CellPosition, piece: PieceController) {
     this.isResolving = true
     this.board[target.row][target.column] = null
-    this.consumeSkill('hammer')
-    this.refreshUiState()
+    this.consumeSkillAndRefresh('hammer')
 
     await this.animateHammerBreak(piece)
     await this.settleBoard(null)
@@ -890,7 +895,7 @@ export class PlayController extends Component {
     }
 
     this.isResolving = true
-    this.consumeSkill('bomb')
+    this.consumeSkillAndRefresh('bomb')
     const centerPosition = this.getCellPosition(center.row, center.column)
     await this.playBombCast(centerPosition)
 
