@@ -128,6 +128,9 @@ export class PlayController extends Component {
   @property({ tooltip: 'Spawn offset above board' })
   spawnOffsetY = 160
 
+  @property({ type: [SpriteFrame], tooltip: '技能计数数字贴图' })
+  counterNumberSpriteFrames: SpriteFrame[] = []
+
   // 可直接随机生成的初始数字池，超过 128 的数字只能通过合成得到。
   private readonly basePieceList = [2, 4, 8, 16, 32, 64, 128]
   // 二维数组表示棋盘状态，board[row][column] 为空时用 null 表示。
@@ -190,7 +193,8 @@ export class PlayController extends Component {
       onRankTap: () => this.showRankFromPause(),
       onBombSkillTap: () => this.toggleBombSkillFromUi(),
       onHammerSkillTap: () => this.toggleHammerSkillFromUi(),
-      onSwapSkillTap: () => this.toggleSwapSkillFromUi()
+      onSwapSkillTap: () => this.toggleSwapSkillFromUi(),
+      counterNumberSpriteFrames: this.counterNumberSpriteFrames
     })
     this.startPageController = this.getComponent(StartPageController) ?? this.addComponent(StartPageController)
     this.startPageController.setup({
