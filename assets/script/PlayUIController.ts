@@ -18,6 +18,7 @@
   sys
 } from 'cc'
 import { PauseOverlayController } from './PauseOverlayController'
+import { GameOverOverlayController } from './GameOverOverlayController'
 
 const { ccclass } = _decorator
 
@@ -25,6 +26,7 @@ const { ccclass } = _decorator
 export type PlayUIState = {
   currentValue: number | null
   score: number
+  highestValue: number
   isGameOver: boolean
   isPaused: boolean
   isResolving: boolean
@@ -124,6 +126,7 @@ export class PlayUIController extends Component {
   private currentState: PlayUIState = {
     currentValue: null,
     score: 0,
+    highestValue: 0,
     isGameOver: false,
     isPaused: false,
     isResolving: false,
@@ -146,6 +149,12 @@ export class PlayUIController extends Component {
   private readonly scoreTweenState = { value: 0 }
   // 暂停弹窗相关逻辑全部拆到独立组件，这里只保留组件引用和调用入口。
   private pauseOverlayController: PauseOverlayController | null = null
+  // 游戏结束弹窗同样交给独立组件，UI 主控只负责转交状态和按钮回调。
+  private gameOverOverlayController: GameOverOverlayController | null = null
+  // 结算弹窗重玩按钮只通知逻辑层重新开局。
+  private gameOverReplayHandler: (() => void) | null = null
+  // 结算弹窗分享按钮只通知逻辑层做平台分享适配。
+  private gameOverShareHandler: (() => void) | null = null
   // 缓存第一个技能节点，和其他技能共用选中态与取消提示。
   private bombSkillNode: Node | null = null
   // 缓存第三个技能节点，便于刷新选中态和销毁时解绑事件。
@@ -179,6 +188,8 @@ export class PlayUIController extends Component {
     onBombSkillTap: () => void
     onHammerSkillTap: () => void
     onSwapSkillTap: () => void
+    onGameOverReplayTap: () => void
+    onGameOverShareTap: () => void
     counterNumberSpriteFrames?: SpriteFrame[]
   }) {
     this.boardwidth = options.boardwidth
@@ -191,6 +202,8 @@ export class PlayUIController extends Component {
     this.bombSkillHandler = options.onBombSkillTap
     this.hammerSkillHandler = options.onHammerSkillTap
     this.swapSkillHandler = options.onSwapSkillTap
+    this.gameOverReplayHandler = options.onGameOverReplayTap
+    this.gameOverShareHandler = options.onGameOverShareTap
     this.counterNumberSpriteFrames = options.counterNumberSpriteFrames ?? []
 
     this.fitBackgroundToScreen()
@@ -201,6 +214,7 @@ export class PlayUIController extends Component {
     // this.ensureStatusLabel()
     // this.ensurePauseButton()
     this.ensurePauseOverlay()
+    this.ensureGameOverOverlay()
     this.configureControlBar()
     this.configureStatusBar()
     this.updateSkillHintLayout()
@@ -213,6 +227,7 @@ export class PlayUIController extends Component {
     this.configureStatusBar()
     this.updateSkillHintLayout()
     this.pauseOverlayController?.syncLayout()
+    this.gameOverOverlayController?.syncLayout()
   }
 
   // 逻辑层每次状态变化后只需要把结果喂给 UI 层即可。
@@ -223,6 +238,11 @@ export class PlayUIController extends Component {
     // this.refreshStatus()
     // this.refreshPauseButton()
     this.pauseOverlayController?.renderState(this.currentState.isPaused)
+    this.gameOverOverlayController?.renderState(
+      this.currentState.isGameOver,
+      this.currentState.score,
+      this.currentState.highestValue
+    )
   }
 
   onDestroy() {
@@ -257,6 +277,7 @@ export class PlayUIController extends Component {
     this.skillHintNode = null
     this.skillHintOpacity = null
     this.pauseOverlayController = null
+    this.gameOverOverlayController = null
   }
 
   // 背景节点依然挂在 play 根节点上，这里只负责把它铺满整个画布。
@@ -510,6 +531,24 @@ export class PlayUIController extends Component {
       pauseHandler: this.pauseHandler,
       homeHandler: this.returnHomeHandler,
       rankHandler: this.rankHandler
+    })
+  }
+
+  // 游戏结束层运行时生成，避免为了结算弹窗再要求手动维护一套 scene 层级。
+  private ensureGameOverOverlay() {
+    let overlay = this.node.getChildByName('GameOverOverlay')
+    if (!overlay) {
+      overlay = new Node('GameOverOverlay')
+      overlay.setParent(this.node)
+      overlay.active = false
+      overlay.addComponent(UITransform).setContentSize(750, 1334)
+    }
+
+    this.gameOverOverlayController = overlay.getComponent(GameOverOverlayController) ?? overlay.addComponent(GameOverOverlayController)
+    this.gameOverOverlayController.setup({
+      hostNode: this.node,
+      replayHandler: this.gameOverReplayHandler,
+      shareHandler: this.gameOverShareHandler
     })
   }
 

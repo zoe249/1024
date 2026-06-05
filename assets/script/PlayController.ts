@@ -141,7 +141,7 @@ export class PlayController extends Component {
   private currentColumn = 0
   // 是否处于按住后的快速下落状态。
   private isFastDropping = false
-  // 游戏结束标记，结束后点击任意位置会重新开始。
+  // 游戏结束标记；当前由结算弹窗接管重玩入口，根节点触摸重开只作为兜底。
   private isGameOver = false
   // 是否正在执行合并、重力结算等异步流程；期间禁止再次操作。
   private isResolving = false
@@ -163,6 +163,8 @@ export class PlayController extends Component {
   }
   // 奖励分数和棋盘总和分开累计，方便后续扩展更多得分来源。
   private bonusScore = 0
+  // 本局曾经出现过的最高数字，结算弹窗用它展示“最高合成”。
+  private highestPieceValue = 0
   // UI 渲染组件，专门负责棋盘绘制、状态栏、控制栏和暂停遮罩。
   private uiController: PlayUIController | null = null
   // 首页单独交给启动页组件管理，避免把展示逻辑散落在玩法代码里。
@@ -194,6 +196,10 @@ export class PlayController extends Component {
       onBombSkillTap: () => this.toggleBombSkillFromUi(),
       onHammerSkillTap: () => this.toggleHammerSkillFromUi(),
       onSwapSkillTap: () => this.toggleSwapSkillFromUi(),
+      onGameOverReplayTap: () => {
+        void this.restartGame()
+      },
+      onGameOverShareTap: () => this.shareGameFromGameOver(),
       counterNumberSpriteFrames: this.counterNumberSpriteFrames
     })
     this.startPageController = this.getComponent(StartPageController) ?? this.addComponent(StartPageController)
@@ -405,6 +411,7 @@ export class PlayController extends Component {
     )
     // 重开或首次进入时，奖励分数要和棋盘一起清零。
     this.bonusScore = 0
+    this.highestPieceValue = 0
     this.currentColumn = Math.floor(this.boardwidth / 2)
   }
 
@@ -476,6 +483,7 @@ export class PlayController extends Component {
     this.isFastDropping = false
     this.trailTimer = 0
     pieceController.setValue(value)
+    this.updateHighestPieceValue(value)
     pieceNode.setScale(Vec3.ONE)
     pieceNode.setPosition(this.getSpawnPosition(column))
     this.node.addChild(pieceNode)
@@ -1597,6 +1605,7 @@ export class PlayController extends Component {
 
     await Promise.all(consumedAnimations)
     anchor.setValue(nextValue)
+    this.updateHighestPieceValue(nextValue)
     anchor.node.setPosition(anchorPosition)
     this.spawnMergeFlash(anchor, anchorPosition, consumed.length)
     this.spawnMergeBurst(anchor, anchorPosition, consumed.length)
@@ -2057,6 +2066,7 @@ export class PlayController extends Component {
     return {
       currentValue: this.currentPiece?.getValue() ?? null,
       score: boardScore + this.bonusScore,
+      highestValue: this.highestPieceValue,
       isGameOver: this.isGameOver,
       isPaused: this.isPaused,
       isResolving: this.isResolving,
@@ -2082,6 +2092,11 @@ export class PlayController extends Component {
     }
 
     return score
+  }
+
+  // 统一维护本局历史最高值，避免技能移除最高棋子后结算数字回落。
+  private updateHighestPieceValue(value: number) {
+    this.highestPieceValue = Math.max(this.highestPieceValue, value)
   }
 
   // 当前版本的奖励分规则集中放在这里，后面扩展倍率或不同来源时不需要到处改调用点。
@@ -2170,6 +2185,16 @@ export class PlayController extends Component {
 
   // 分享入口只负责适配平台能力；没有平台 API 时保持静默降级，避免打断暂停弹窗。
   private shareGameFromPause() {
+    this.shareCurrentGameScore('pause_share')
+  }
+
+  // 结算弹窗分享本局分数，和暂停分享共用平台适配逻辑。
+  private shareGameFromGameOver() {
+    this.shareCurrentGameScore('game_over_share')
+  }
+
+  // 分享入口只负责适配平台能力；没有平台 API 时保持静默降级，避免打断弹窗。
+  private shareCurrentGameScore(source: string) {
     const score = this.getBoardScore() + this.bonusScore
     const title = `我在 1024 数字花园合成了 ${score} 分，来挑战一下吧`
     const wxApi = (globalThis as {
@@ -2181,7 +2206,7 @@ export class PlayController extends Component {
     if (typeof wxApi?.shareAppMessage === 'function') {
       wxApi.shareAppMessage({
         title,
-        query: 'from=pause_share'
+        query: `from=${source}`
       })
       return
     }
