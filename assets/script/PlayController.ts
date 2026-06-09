@@ -269,6 +269,7 @@ export class PlayController extends Component {
     const currentPosition = this.currentPiece.node.position.clone()
     const nextY = Math.max(targetPosition.y, currentPosition.y - speed * dt)
 
+    this.currentPiece.syncTrailEffect()
     this.currentPiece.node.setPosition(targetPosition.x, nextY, 0)
     // this.updateFallingTrail(dt)
 
@@ -477,6 +478,8 @@ export class PlayController extends Component {
       // 让预制体的真实显示尺寸和当前棋盘格子尺寸保持一致。
       pieceTransform.setContentSize(this.pieceSize, this.pieceSize)
     }
+    // 棋子尺寸由棋盘动态决定，拖尾发射区域也要在实例化后按真实尺寸重新校准。
+    pieceController.syncTrailEffect()
 
     const value = this.basePieceList[Math.floor(Math.random() * this.basePieceList.length)]
     this.currentColumn = column
