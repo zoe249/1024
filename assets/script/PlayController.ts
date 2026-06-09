@@ -454,7 +454,12 @@ export class PlayController extends Component {
     }
   }
 
-  // 生成下一颗棋子并放到 spawn 区
+  /**
+   * 生成下一颗可操作棋子并放到出生区。
+   *
+   * 这里只负责实例化预制体、同步棋盘格子尺寸、随机初始数值和刷新 UI 状态。
+   * 如果当前棋盘已经没有可落子列，会直接进入游戏结束流程。
+   */
   private spawnPiece() {
     if (this.isBoardFull() || !this.basePieceController) {
       this.endGame()
@@ -494,7 +499,16 @@ export class PlayController extends Component {
     this.refreshUiState()
   }
 
-  // 棋子真正落地后写入棋盘，再触发定向合并与全盘结算。
+  /**
+   * 将当前下落棋子写入棋盘并启动完整落地结算。
+   *
+   * 落地后先停止拖尾并固定棋子坐标，再执行“落地点定向连锁合并”，
+   * 最后进入统一的重力和全盘合并循环。整个过程中通过 `isResolving`
+   * 冻结输入，避免异步动画期间棋盘状态被再次修改。
+   *
+   * @param row 落地行，row 从底部向上递增。
+   * @param column 落地列，column 从左向右递增。
+   */
   private async landPiece(row: number, column: number) {
 
     if (!this.currentPiece || this.isResolving) {
@@ -527,7 +541,14 @@ export class PlayController extends Component {
     this.spawnPiece()
   }
 
-  // 反复执行“重力下落 -> 全盘合并”，直到棋盘稳定为止。
+  /**
+   * 反复执行重力下落和全盘合并，直到棋盘稳定。
+   *
+   * 每轮先把所有列向下压缩，再扫描全盘可合并组。
+   * 如果没有合并但发生过重力移动，会继续下一轮扫描，确保重力导致的新相邻组也能被处理。
+   *
+   * @param preferredAnchor 优先保留的合并锚点，通常来自刚刚落地或连锁产生的棋子。
+   */
   private async settleBoard(preferredAnchor: PieceController | null) {
     let chainDepth = 1
     while (true) {
@@ -1229,7 +1250,15 @@ export class PlayController extends Component {
     })
   }
 
-  // 只围绕刚落地的棋子做定向连锁检测，优先保证“当前落点继续向上连锁”的手感。
+  /**
+   * 围绕刚落地的棋子执行定向连锁合并。
+   *
+   * 与全盘扫描不同，这里始终以当前连锁锚点为起点，只处理它所在的同值连通块。
+   * 如果合并后产生了新的锚点，会继续向上检查，保证“刚落下的棋子继续升级”的手感。
+   *
+   * @param anchor 刚落地或上一轮连锁产生的锚点棋子。
+   * @returns 本轮连锁最终保留下来的锚点，以及是否发生过棋盘变化。
+   */
   private async resolveLandingChain(anchor: PieceController): Promise<DirectedMergeResult> {
     let currentAnchor: PieceController | null = anchor
     let changed = false
@@ -1249,7 +1278,15 @@ export class PlayController extends Component {
 
     return { anchor: currentAnchor, changed }
   }
-  // 扫描整个棋盘，把所有值相同且四向连通的棋子分组成待合并组。
+  /**
+   * 扫描全盘并收集所有可合并的同值连通块。
+   *
+   * 使用 BFS/DFS 收集四向连通组件，长度大于 1 的组件会转成待合并组。
+   * 当传入 preferredAnchor 时，所在组件会优先以它作为保留棋子，减少连锁结算的跳动感。
+   *
+   * @param preferredAnchor 当前结算流程希望优先保留的锚点棋子。
+   * @returns 所有待播放合并动画的合并组。
+   */
   private findMergeGroups(preferredAnchor: PieceController | null) {
     const visited = Array.from({ length: this.boardheight }, () =>
       Array.from({ length: this.boardwidth }, () => false)
@@ -1415,7 +1452,17 @@ export class PlayController extends Component {
     }
   }
 
-  // 只检查落地点所在的连通块，并把其中可合并的成员全部吸附到新的锚点上。
+  /**
+   * 合并落地点所在的同值连通块。
+   *
+   * 这个方法只处理 anchorPiece 当前所在组件，不扫描全盘。
+   * 合并锚点优先选择落点列中更靠下的棋子，其余成员播放吸附动画后从棋盘数组移除，
+   * 再对受影响列执行重力下落，为下一轮连锁创造稳定输入。
+   *
+   * @param anchorPiece 当前落地连锁的起点棋子。
+   * @param chainDepth 当前连锁深度，用于计算奖励分和动画强度。
+   * @returns 合并后保留的锚点，以及本轮是否改变棋盘。
+   */
   private async mergeLandingComponent(anchorPiece: PieceController, chainDepth: number): Promise<DirectedMergeResult> {
     const anchorPos = this.findPiece(anchorPiece)
     if (!anchorPos) {
@@ -1474,7 +1521,16 @@ export class PlayController extends Component {
     return { anchor: mergeAnchor, changed: true }
   }
 
-  // 落地后的首次合并优先保留落点列里最靠下的棋子，保证玩家对合并方向的预期稳定。
+  /**
+   * 为落地连锁选择保留下来的锚点格子。
+   *
+   * 优先选择落点列内最靠下的棋子；如果连通块不在落点列，则退化为整组内最靠下、
+   * 且距离落点列最近的棋子，保证玩家对合并方向的预期稳定。
+   *
+   * @param component 当前同值连通块内的所有格子。
+   * @param landingColumn 本次落子的列。
+   * @returns 应作为合并锚点的格子坐标。
+   */
   private chooseLandingAnchor(component: CellPosition[], landingColumn: number) {
     const sameColumn = component.filter(pos => pos.column === landingColumn)
     const candidates = sameColumn.length > 0 ? sameColumn : component
@@ -1501,7 +1557,14 @@ export class PlayController extends Component {
     await this.animateDirectedMerge(anchor, anchorPosition, consumed, nextValue)
   }
 
-  // 对全盘应用重力：每一列都向下压缩，消除中间空洞。
+  /**
+   * 对整张棋盘应用重力下落。
+   *
+   * 每列从底部开始写入非空棋子，清除中间空洞，并为移动过的棋子播放下落动画。
+   * 返回值用于 settleBoard 判断是否需要继续扫描新形成的合并组。
+   *
+   * @returns 是否有任何棋子发生了位置移动。
+   */
   private async applyGravityAllColumns() {
     const animations: Promise<void>[] = []
     let moved = false
@@ -1535,7 +1598,15 @@ export class PlayController extends Component {
 
     return moved
   }
-  // 指定列重力落下
+  /**
+   * 只对指定列应用重力下落。
+   *
+   * 技能消除或落地点局部合并后，只有部分列会出现空洞。
+   * 这里先去重并过滤非法列，再逐列压缩棋子，减少不必要的全盘动画。
+   *
+   * @param columns 需要重新压缩的列索引集合。
+   * @returns 是否有任何棋子发生了位置移动。
+   */
   private async applyGravityColumns(columns: number[]) {
     const uniqueColumns = [...new Set(columns)].filter(column => column >= 0 && column < this.boardwidth)
     if (uniqueColumns.length === 0) {
@@ -1574,7 +1645,16 @@ export class PlayController extends Component {
 
     return moved
   }
-  // 用统一的缓动方式把节点移动到目标格子，保证落子和重力动画节奏一致。
+  /**
+   * 用统一缓动把节点移动到目标格子。
+   *
+   * 落子、重力和局部结算都复用这套移动节奏，调用前会先停止目标节点旧 Tween，
+   * 避免同一棋子同时被多个动画驱动。
+   *
+   * @param node 需要移动的节点。
+   * @param position 目标本地坐标。
+   * @param duration 期望动画时长，会被限制到较短范围以保持结算节奏。
+   */
   private animateMove(node: Node, position: Vec3, duration: number) {
     Tween.stopAllByTarget(node)
     return new Promise<void>(resolve => {
@@ -1584,7 +1664,17 @@ export class PlayController extends Component {
         .start()
     })
   }
-  // 执行一次完整的合并表现：成员吸附、锚点升级、闪光和爆裂，再做回弹。
+  /**
+   * 执行一次完整的定向合并表现。
+   *
+   * 所有被吞并棋子先并发吸附到锚点并缩小销毁，随后锚点升级数值，
+   * 再播放闪光、爆裂和轻微回弹，形成一次完整的合并反馈。
+   *
+   * @param anchor 合并后保留并升级的棋子。
+   * @param anchorPosition 锚点所在的目标坐标。
+   * @param consumed 会被吸附并销毁的棋子列表。
+   * @param nextValue 合并后锚点的新数值。
+   */
   private async animateDirectedMerge(
     anchor: PieceController,
     anchorPosition: Vec3,
@@ -1697,7 +1787,16 @@ export class PlayController extends Component {
   //   }
   // }
 
-  // 合并瞬间在锚点位置补一个短暂的闪光，加强升级反馈。
+  /**
+   * 在合并锚点位置生成短暂闪光。
+   *
+   * 闪光复用棋子贴图并快速放大淡出，用来强调升级瞬间；
+   * strength 会轻微影响放大幅度，但仍受特效数量上限约束。
+   *
+   * @param anchor 提供贴图和颜色参考的锚点棋子。
+   * @param position 闪光出现的位置。
+   * @param strength 本次合并强度，通常与被吞并棋子数量相关。
+   */
   private spawnMergeFlash(anchor: PieceController, position: Vec3, strength: number) {
     if (!this.canSpawnFx(1)) {
       return
@@ -1724,7 +1823,16 @@ export class PlayController extends Component {
       .call(() => this.destroyFxNode(flash))
       .start()
   }
-  // 合并时向四周喷射碎片粒子，strength 越高，粒子越多、扩散越远。
+  /**
+   * 合并时从锚点向四周喷射碎片粒子。
+   *
+   * 粒子数量和扩散半径会随 strength 增加，用来区分普通合并和更大的连锁合并。
+   * 所有粒子都会登记到 activeFx，便于暂停、返回首页或重开时统一清理。
+   *
+   * @param anchor 提供贴图和颜色参考的锚点棋子。
+   * @param position 粒子爆发中心。
+   * @param strength 本次合并强度。
+   */
   private spawnMergeBurst(anchor: PieceController, position: Vec3, strength: number) {
     const count = Math.min(4, 2 + strength)
     if (!this.canSpawnFx(count)) {

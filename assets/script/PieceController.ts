@@ -95,7 +95,15 @@ export class PieceController extends Component {
     return this.value
   }
 
-  // 根据棋子运行时尺寸校准拖尾发射器，避免预制体里的预览坐标在真实棋盘中偏移。
+  /**
+   * 根据棋子运行时尺寸校准拖尾发射器。
+   *
+   * 拖尾节点挂在棋子预制体内部，但棋子的真实尺寸会由棋盘布局动态决定。
+   * 因此这里统一根据当前 `UITransform` 重算发射区域、粒子尺寸、速度和颜色，
+   * 同时缓存上一次尺寸，避免每帧重复改写粒子系统造成表现抖动。
+   *
+   * @param force 是否强制刷新；棋子数值变化导致颜色变化时需要传入 true。
+   */
   syncTrailEffect(force = false) {
     if (!this.particleSystem) {
       return
@@ -144,7 +152,16 @@ export class PieceController extends Component {
     particle.positionType = 0
   }
 
-  // 拖尾颜色跟随棋子底色，从靠近棋子的深色逐渐过渡到尾端浅色。
+  /**
+   * 让拖尾颜色跟随棋子底色，并从起点到尾端逐渐变浅。
+   *
+   * Cocos 粒子组件在不同版本里可能同时读取公开字段和内部序列化字段，
+   * 所以这里同步写入两组颜色字段，保证预览和运行时表现一致。
+   *
+   * @param particle 粒子系统实例，使用 any 是为了兼容内部颜色字段。
+   * @param startAlpha 靠近棋子位置的起始透明度。
+   * @param endAlpha 拖尾尾端的结束透明度。
+   */
   private syncTrailColor(particle: any, startAlpha: number, endAlpha: number) {
     const baseColor = this.currentBgColor
     const startColor = new Color(
@@ -216,7 +233,14 @@ export class PieceController extends Component {
     // 这里统一设置字体和粗细，减少不同数字长度带来的观感跳动。
   }
 
-  // 确保存在一个专门负责绘制圆角底板的 Body 节点，并关闭原始 Sprite 的显示。
+  /**
+   * 确保棋子使用 Graphics 绘制圆角底板。
+   *
+   * 预制体根节点保留 Sprite 是为了兼容资源引用和特效贴图复用，
+   * 实际棋子外观由 Body 子节点上的 Graphics 绘制，方便根据数字颜色动态重绘。
+   *
+   * @returns 根节点原始 Sprite，用于后续特效节点复用 SpriteFrame。
+   */
   private ensureRoundedBody() {
     const rootTransform = this.node.getComponent(UITransform)
     const sourceSprite = this.node.getComponent(Sprite)
@@ -243,7 +267,12 @@ export class PieceController extends Component {
     return sourceSprite
   }
 
-  // 每次颜色或尺寸变化后都重绘圆角底板，保证棋子始终与当前尺寸匹配。
+  /**
+   * 按当前尺寸和底色重绘棋子的圆角底板。
+   *
+   * 棋子尺寸会跟随棋盘布局变化，不能依赖预制体里的固定像素。
+   * 每次数值或尺寸变化后都通过这里重新计算圆角半径和绘制范围。
+   */
   private redrawRoundedBody() {
     if (!this.bodyGraphics) {
       return
@@ -260,7 +289,12 @@ export class PieceController extends Component {
     this.bodyGraphics.fill()
   }
 
-  // 按当前数值刷新整颗棋子的外观，包括底色、文字内容和字体排版。
+  /**
+   * 按当前数值刷新棋子的完整显示状态。
+   *
+   * 这里集中处理数字对应色板、文字颜色、圆角底板重绘以及多位数字排版，
+   * 避免外部逻辑直接操作棋子内部节点，保持棋子视图更新入口统一。
+   */
   private refreshView() {
     const style = PIECE_STYLE[this.value] ?? DEFAULT_STYLE
     this.currentBgColor = this.fromHex(style.bg)
