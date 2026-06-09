@@ -9,7 +9,8 @@ import {
   Sprite,
   SpriteFrame,
   UITransform,
-  Vec2
+  Vec2,
+  ParticleSystem2D
 } from 'cc'
 
 const { ccclass } = _decorator
@@ -56,6 +57,8 @@ export class PieceController extends Component {
   private currentBgColor = new Color(53, 80, 107, 255)
   // 当前文字颜色缓存，便于统一刷新。
   private currentTextColor = new Color(245, 250, 255, 255)
+  // 粒子拖尾系统
+  private particleSystem: ParticleSystem2D = null
 
   // 初始化圆角棋子外观、数值文本引用以及文本特效。
   onLoad() {
@@ -63,6 +66,7 @@ export class PieceController extends Component {
     const valueNode = this.node.getChildByName('Value')
     this.valueLabel = valueNode?.getComponent(Label) ?? null
     this.valueTransform = valueNode?.getComponent(UITransform) ?? null
+    this.particleSystem = this.node.getChildByName('TrailEmitter')?.getComponent(ParticleSystem2D) ?? null
     this.ensureLabelEffects()
     this.refreshView()
   }
@@ -70,6 +74,15 @@ export class PieceController extends Component {
   // 供外部逻辑读取棋子数值。
   getValue() {
     return this.value
+  }
+
+  /**
+   * 停止拖尾
+   */
+  stopParticle() {
+    if (this.particleSystem) {
+      this.particleSystem.stopSystem()
+    }
   }
 
   // 返回原始 SpriteFrame，供拖尾和合并粒子复用。

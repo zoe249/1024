@@ -270,7 +270,7 @@ export class PlayController extends Component {
     const nextY = Math.max(targetPosition.y, currentPosition.y - speed * dt)
 
     this.currentPiece.node.setPosition(targetPosition.x, nextY, 0)
-    this.updateFallingTrail(dt)
+    // this.updateFallingTrail(dt)
 
     if (nextY <= targetPosition.y + 1) {
       void this.landPiece(dropRow, this.currentColumn)
@@ -493,10 +493,11 @@ export class PlayController extends Component {
 
   // 棋子真正落地后写入棋盘，再触发定向合并与全盘结算。
   private async landPiece(row: number, column: number) {
+
     if (!this.currentPiece || this.isResolving) {
       return
     }
-
+    this.currentPiece.stopParticle()
     this.isResolving = true
     const landedPiece = this.currentPiece
     this.currentPiece = null
@@ -1623,76 +1624,75 @@ export class PlayController extends Component {
     })
   }
   // 用计时器控制下落拖尾的生成频率，避免每帧都创建特效。
-  private updateFallingTrail(dt: number) {
-    if (!this.currentPiece) {
-      return
-    }
+  // private updateFallingTrail(dt: number) {
+  //   if (!this.currentPiece) {
+  //     return
+  //   }
 
-    this.trailTimer += dt
-    const interval = this.isFastDropping ? 0.04 : 0.08
-    if (this.trailTimer < interval) {
-      return
-    }
+  //   this.trailTimer += dt
+  //   const interval = this.isFastDropping ? 0.04 : 0.08
+  //   if (this.trailTimer < interval) {
+  //     return
+  //   }
 
-    this.trailTimer = 0
-    this.spawnTrailParticles(this.currentPiece)
-  }
+  //   this.trailTimer = 0
+  // }
   // 根据当前下落速度生成拖尾粒子，快速下落时会更密、更长。
-  private spawnTrailParticles(piece: PieceController) {
-    const count = this.isFastDropping ? 2 : 1
-    if (!this.canSpawnFx(count)) {
-      return
-    }
+  // private spawnTrailParticles(piece: PieceController) {
+  //   const count = this.isFastDropping ? 2 : 1
+  //   if (!this.canSpawnFx(count)) {
+  //     return
+  //   }
 
-    const origin = piece.node.position.clone().add3f(0, -this.pieceSize * 0.32, 0)
+  //   const origin = piece.node.position.clone().add3f(0, -this.pieceSize * 0.32, 0)
 
-    for (let i = 0; i < count; i++) {
-      const particle = this.createFxPiece(piece)
-      const opacity = particle.addComponent(UIOpacity)
-      opacity.opacity = this.isFastDropping ? 110 : 72
-      const transform = particle.getComponent(UITransform)
-      const width = this.isFastDropping ? 14 + Math.random() * 6 : 10 + Math.random() * 4
-      const height = this.isFastDropping ? 44 + Math.random() * 14 : 28 + Math.random() * 10
-      transform?.setContentSize(width, height)
+  //   for (let i = 0; i < count; i++) {
+  //     const particle = this.createFxPiece(piece)
+  //     const opacity = particle.addComponent(UIOpacity)
+  //     opacity.opacity = this.isFastDropping ? 110 : 72
+  //     const transform = particle.getComponent(UITransform)
+  //     const width = this.isFastDropping ? 14 + Math.random() * 6 : 10 + Math.random() * 4
+  //     const height = this.isFastDropping ? 44 + Math.random() * 14 : 28 + Math.random() * 10
+  //     transform?.setContentSize(width, height)
 
-      particle.setParent(this.node)
-      particle.setSiblingIndex(0)
-      particle.setPosition(
-        new Vec3(
-          origin.x + (Math.random() - 0.5) * this.pieceSize * 0.22,
-          origin.y - Math.random() * 10,
-          0
-        )
-      )
-      particle.setScale(this.isFastDropping ? new Vec3(0.18, 0.1, 1) : new Vec3(0.12, 0.08, 1))
+  //     particle.setParent(this.node)
+  //     particle.setSiblingIndex(0)
+  //     particle.setPosition(
+  //       new Vec3(
+  //         origin.x + (Math.random() - 0.5) * this.pieceSize * 0.22,
+  //         origin.y - Math.random() * 10,
+  //         0
+  //       )
+  //     )
+  //     particle.setScale(this.isFastDropping ? new Vec3(0.18, 0.1, 1) : new Vec3(0.12, 0.08, 1))
 
-      const sprite = particle.getComponent(Sprite)
-      if (sprite) {
-        const color = piece.getBackgroundColor()
-        color.r = Math.min(255, color.r + 55)
-        color.g = Math.min(255, color.g + 55)
-        color.b = Math.min(255, color.b + 55)
-        color.a = 255
-        sprite.color = color
-      }
+  //     const sprite = particle.getComponent(Sprite)
+  //     if (sprite) {
+  //       const color = piece.getBackgroundColor()
+  //       color.r = Math.min(255, color.r + 55)
+  //       color.g = Math.min(255, color.g + 55)
+  //       color.b = Math.min(255, color.b + 55)
+  //       color.a = 255
+  //       sprite.color = color
+  //     }
 
-      this.activeFx.add(particle)
+  //     this.activeFx.add(particle)
 
-      const driftX = (Math.random() - 0.5) * (this.isFastDropping ? 20 : 12)
-      const driftY = this.isFastDropping ? -56 - Math.random() * 22 : -36 - Math.random() * 16
-      const target = particle.position.clone().add3f(driftX, driftY, 0)
-      const stretch = this.isFastDropping ? new Vec3(0.04, 0.34, 1) : new Vec3(0.03, 0.24, 1)
-      const duration = this.isFastDropping ? 0.18 : 0.22
+  //     const driftX = (Math.random() - 0.5) * (this.isFastDropping ? 20 : 12)
+  //     const driftY = this.isFastDropping ? -56 - Math.random() * 22 : -36 - Math.random() * 16
+  //     const target = particle.position.clone().add3f(driftX, driftY, 0)
+  //     const stretch = this.isFastDropping ? new Vec3(0.04, 0.34, 1) : new Vec3(0.03, 0.24, 1)
+  //     const duration = this.isFastDropping ? 0.18 : 0.22
 
-      tween(particle)
-        .parallel(
-          tween().to(duration, { position: target, scale: stretch }, { easing: 'sineOut' }),
-          tween(opacity).to(duration, { opacity: 0 })
-        )
-        .call(() => this.destroyFxNode(particle))
-        .start()
-    }
-  }
+  //     tween(particle)
+  //       .parallel(
+  //         tween().to(duration, { position: target, scale: stretch }, { easing: 'sineOut' }),
+  //         tween(opacity).to(duration, { opacity: 0 })
+  //       )
+  //       .call(() => this.destroyFxNode(particle))
+  //       .start()
+  //   }
+  // }
 
   // 合并瞬间在锚点位置补一个短暂的闪光，加强升级反馈。
   private spawnMergeFlash(anchor: PieceController, position: Vec3, strength: number) {
