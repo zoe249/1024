@@ -5770,7 +5770,7 @@
       "__expectedType__": "cc.AudioClip"
     },
     "landingMergeAudioClip": {
-      "__uuid__": "b1811dcb-cea9-4b5a-a97d-6d4578b23cfc",
+      "__uuid__": "155c7023-62de-4038-b9f9-4d729a429623",
       "__expectedType__": "cc.AudioClip"
     },
     "swapRollbackAudioClip": {
@@ -5779,7 +5779,7 @@
     },
     "startPageBgmClip": null,
     "gameplayBgmClip": {
-      "__uuid__": "79b837f4-ccda-48cf-88cd-6e56cf1d6f29",
+      "__uuid__": "41c3b3be-ba55-4356-9a73-d1c487e10901",
       "__expectedType__": "cc.AudioClip"
     },
     "spacing": 10,

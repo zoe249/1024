@@ -66,9 +66,19 @@ assets/
 │  ├─ game.scene           主游戏场景
 │  └─ particle.scene       粒子/测试场景
 ├─ script/                 主要脚本
-│  ├─ PlayController.ts    游戏逻辑控制
-│  ├─ PlayUIController.ts  UI 渲染与界面布局
-│  └─ PieceController.ts   单个棋子的显示与数值表现
+│  ├─ PlayController.ts          对局主流程调度
+│  ├─ PlayUIController.ts        UI 渲染与界面布局
+│  ├─ StartPageController.ts     首页覆盖层与排行榜弹窗
+│  ├─ PauseOverlayController.ts  暂停遮罩
+│  ├─ GameOverOverlayController.ts 结算弹窗
+│  ├─ PieceController.ts         单个棋子的显示与数值表现
+│  ├─ BoardGeometry.ts           棋盘坐标、触摸换算和出生点计算
+│  ├─ BoardModel.ts              棋盘基础查询与棋子节点清理
+│  ├─ ScoreManager.ts            分数、最高值和合并奖励规则
+│  ├─ SkillStock.ts              技能次数库存
+│  ├─ GameAudioManager.ts        背景音乐与音效播放
+│  ├─ GameShareAdapter.ts        微信小游戏与 Web 分享适配
+│  └─ TransientFxRegistry.ts     临时特效节点生命周期管理
 └─ texture/                其他纹理资源
 ```
 

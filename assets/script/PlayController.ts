@@ -1,12 +1,17 @@
 ﻿import { _decorator, Color, Component, EventTouch, instantiate, Node, Prefab, Sprite, SpriteFrame, tween, Tween, UITransform, UIOpacity, Vec2, Vec3 } from 'cc'
 import { PieceController } from './PieceController'
-import { AudioClip, AudioSource } from 'cc'
+import { AudioClip } from 'cc'
 import { PlayUIController, type PlayUIState } from './PlayUIController'
 import { StartPageController } from './StartPageController'
+import { GameAudioManager } from './GameAudioManager'
+import { GameShareAdapter } from './GameShareAdapter'
+import { SkillStock } from './SkillStock'
+import { BoardGeometry } from './BoardGeometry'
+import { ScoreManager, type ScoreRewardEvent } from './ScoreManager'
+import { BoardModel, type BoardCell } from './BoardModel'
+import { TransientFxRegistry } from './TransientFxRegistry'
 
 const { ccclass, property } = _decorator
-
-type BoardCell = PieceController | null
 
 // 统一描述棋盘中的格子坐标，row 从下往上增长，column 从左往右增长。
 type CellPosition = {
@@ -41,17 +46,6 @@ type SwapDragState = {
   desiredPiecePosition: Vec3
   desiredPreviewPiecePosition: Vec3 | null
 }
-
-// 分数奖励先独立成事件结构，后面要加连锁倍率、活动加成时只需要扩展这里。
-type ScoreRewardEvent = {
-  source: 'merge'
-  amount: number
-  resultValue: number
-  consumedCount: number
-  chainDepth: number
-}
-
-type SkillKind = 'bomb' | 'hammer' | 'swap'
 
 // 控制同屏特效节点上限，避免频繁创建粒子导致卡顿。
 const MAX_ACTIVE_FX = 18
@@ -155,16 +149,12 @@ export class PlayController extends Component {
   private isBombSkillActive = false
   // 当前正在被拖拽的棋子信息，释放后用于判断是否可以交换。
   private swapDragState: SwapDragState | null = null
-  // 本局技能库存：炸弹、锤子和交换每局默认各 1 次，施放成功后扣减。
-  private skillCounts: Record<SkillKind, number> = {
-    bomb: INITIAL_SKILL_COUNT,
-    hammer: INITIAL_SKILL_COUNT,
-    swap: INITIAL_SKILL_COUNT
-  }
-  // 奖励分数和棋盘总和分开累计，方便后续扩展更多得分来源。
-  private bonusScore = 0
-  // 本局曾经出现过的最高数字，结算弹窗用它展示“最高合成”。
-  private highestPieceValue = 0
+  // 本局技能库存交给独立对象管理，玩法层只判断能否施放和何时扣减。
+  private readonly skillStock = new SkillStock(INITIAL_SKILL_COUNT)
+  // 棋盘坐标和分数规则都交给独立模块，PlayController 保留对局流程调度。
+  private readonly boardModel = new BoardModel()
+  private boardGeometry: BoardGeometry | null = null
+  private readonly scoreManager = new ScoreManager()
   // UI 渲染组件，专门负责棋盘绘制、状态栏、控制栏和暂停遮罩。
   private uiController: PlayUIController | null = null
   // 首页单独交给启动页组件管理，避免把展示逻辑散落在玩法代码里。
@@ -173,16 +163,17 @@ export class PlayController extends Component {
   private hasStartedSession = false
   // 拖尾生成计时器，用来控制特效频率。
   private trailTimer = 0
-  // 当前屏幕上仍未销毁的特效节点集合，便于统一清理。
-  private activeFx = new Set<Node>()
-  // 背景音乐使用独立音频源，便于和音效分开调音量。
-  private bgmAudioSource: AudioSource | null = null
-  // 音效统一复用一个音频源播放 one-shot，避免频繁创建组件。
-  private sfxAudioSource: AudioSource | null = null
+  // 当前屏幕上仍未销毁的特效节点交给注册表统一管理，便于重开和回首页收口。
+  private readonly transientFx = new TransientFxRegistry(MAX_ACTIVE_FX)
+  // 音频和分享适配从玩法主流程中拆出，降低 PlayController 的横向职责。
+  private audioManager: GameAudioManager | null = null
+  private readonly shareAdapter = new GameShareAdapter()
   // 生命周期入口：先准备棋盘数据，再把界面初始化交给独立的 UI 组件。
   onLoad() {
     this.resetBoard()
-    this.ensureAudioSources()
+    this.boardGeometry = new BoardGeometry(this.node, this.buildBoardGeometryOptions())
+    this.audioManager = new GameAudioManager(this.node)
+    this.audioManager.setup()
     this.uiController = this.getComponent(PlayUIController) ?? this.addComponent(PlayUIController)
     // UI 组件只接收绘制所需参数和按钮回调，不参与玩法计算。
     this.uiController.setup({
@@ -213,7 +204,7 @@ export class PlayController extends Component {
     // 某些平台会在启动后一帧才拿到稳定的安全区，这里让 UI 组件再补一次布局。
     this.uiController?.syncLayout()
     this.startPageController?.syncLayout()
-    this.playStartPageBackgroundMusic()
+    this.audioManager?.playStartPageBackgroundMusic(this.startPageBgmClip)
     this.refreshUiState()
   }
 
@@ -407,46 +398,15 @@ export class PlayController extends Component {
 
   // 重置棋盘数据，并把默认目标列放在中间列。
   private resetBoard() {
-    this.board = Array.from({ length: this.boardheight }, () =>
-      Array.from({ length: this.boardwidth }, () => null)
-    )
-    // 重开或首次进入时，奖励分数要和棋盘一起清零。
-    this.bonusScore = 0
-    this.highestPieceValue = 0
+    this.board = this.boardModel.createEmptyBoard(this.boardheight, this.boardwidth)
+    // 重开或首次进入时，分数统计要和棋盘一起清零。
+    this.scoreManager.reset()
     this.currentColumn = Math.floor(this.boardwidth / 2)
-  }
-
-  // 每局开始时统一重置技能库存，保证炸弹、锤子、交换都从 1 次开始。
-  private resetSkillCounts() {
-    this.skillCounts = {
-      bomb: INITIAL_SKILL_COUNT,
-      hammer: INITIAL_SKILL_COUNT,
-      swap: INITIAL_SKILL_COUNT
-    }
-  }
-
-  // 技能只有在真正施放成功后才扣次数，取消技能或无效目标不会消耗库存。
-  private consumeSkill(skill: SkillKind) {
-    this.skillCounts[skill] = Math.max(0, this.skillCounts[skill] - 1)
-  }
-
-  // 三个技能统一通过这个入口扣次数并刷新 UI，避免某个技能的剩余次数显示节奏不一致。
-  private consumeSkillAndRefresh(skill: SkillKind) {
-    this.consumeSkill(skill)
-    this.refreshUiState()
-  }
-
-  private hasSkillCount(skill: SkillKind) {
-    return this.skillCounts[skill] > 0
   }
 
   // 清理棋盘中已经实例化的棋子节点，返回首页和重新开始都复用这套收口逻辑。
   private clearBoardPieces() {
-    for (let row = 0; row < this.boardheight; row++) {
-      for (let column = 0; column < this.boardwidth; column++) {
-        this.board[row][column]?.node.destroy()
-      }
-    }
+    this.boardModel.destroyBoardPieces(this.board, this.boardheight, this.boardwidth)
 
     if (this.currentPiece) {
       this.currentPiece.node.destroy()
@@ -491,7 +451,7 @@ export class PlayController extends Component {
     this.isFastDropping = false
     this.trailTimer = 0
     pieceController.setValue(value)
-    this.updateHighestPieceValue(value)
+    this.scoreManager.updateHighestPieceValue(value)
     pieceNode.setScale(Vec3.ONE)
     pieceNode.setPosition(this.getSpawnPosition(column))
     this.node.addChild(pieceNode)
@@ -518,14 +478,14 @@ export class PlayController extends Component {
     this.isResolving = true
     const landedPiece = this.currentPiece
     this.currentPiece = null
-    this.clearTransientFx()
+    this.transientFx.clear()
     this.board[row][column] = landedPiece
     landedPiece.node.setPosition(this.getCellPosition(row, column))
     this.refreshUiState()
 
     const willMergeOnLanding = this.canPieceMergeNow(landedPiece)
     if (!willMergeOnLanding) {
-      this.playSoundEffect(this.collisionAudioClip)
+      this.audioManager?.playSoundEffect(this.collisionAudioClip)
     }
 
     const directedResult = await this.resolveLandingChain(landedPiece)
@@ -750,7 +710,7 @@ export class PlayController extends Component {
     ])
 
     if (this.findMergeGroups(sourcePiece).length === 0) {
-      this.playSoundEffect(this.swapRollbackAudioClip)
+      this.audioManager?.playSoundEffect(this.swapRollbackAudioClip)
       await this.rollbackSwapSkill(dragState, target)
       this.restoreSwapPieceLayer(dragState)
       this.isResolving = false
@@ -758,7 +718,8 @@ export class PlayController extends Component {
       return
     }
 
-    this.consumeSkillAndRefresh('swap')
+    this.skillStock.consume('swap')
+    this.refreshUiState()
     await this.settleBoard(sourcePiece)
     this.restoreSwapPieceLayer(dragState)
     this.isResolving = false
@@ -885,7 +846,8 @@ export class PlayController extends Component {
   private async executeHammerSkill(target: CellPosition, piece: PieceController) {
     this.isResolving = true
     this.board[target.row][target.column] = null
-    this.consumeSkillAndRefresh('hammer')
+    this.skillStock.consume('hammer')
+    this.refreshUiState()
 
     await this.animateHammerBreak(piece)
     await this.settleBoard(null)
@@ -932,7 +894,8 @@ export class PlayController extends Component {
     }
 
     this.isResolving = true
-    this.consumeSkillAndRefresh('bomb')
+    this.skillStock.consume('bomb')
+    this.refreshUiState()
     const centerPosition = this.getCellPosition(center.row, center.column)
     await this.playBombCast(centerPosition)
 
@@ -1100,8 +1063,22 @@ export class PlayController extends Component {
     await Promise.all(animations)
   }
 
-  // 技能消除专用碎片：拆出多块小棋子向外喷射，表现比整块缩小更接近“炸碎”。
+  /**
+   * 生成技能消除专用碎片。
+   *
+   * 从被消除棋子的贴图和底色派生多个小碎片，沿圆周方向喷射并淡出。
+   * 所有碎片都会登记到 transientFx，保证返回首页、重开或落地清理时不会残留。
+   *
+   * @param piece 提供贴图和底色参考的棋子。
+   * @param position 碎片爆发中心。
+   * @param count 碎片数量。
+   * @param forceScale 扩散距离缩放，炸弹会比锤子更大。
+   */
   private spawnSkillShatterParticles(piece: PieceController, position: Vec3, count: number, forceScale: number) {
+    if (!this.transientFx.canRegister(count)) {
+      return
+    }
+
     const spriteFrame = piece.getSpriteFrame()
     const baseColor = piece.getBackgroundColor()
     const particleSize = Math.max(10, this.pieceSize * 0.16)
@@ -1133,6 +1110,7 @@ export class PlayController extends Component {
         0
       ))
       particle.setScale(new Vec3(0.8, 0.8, 1))
+      this.transientFx.register(particle)
 
       const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.55
       const distance = this.pieceSize * forceScale * (0.38 + Math.random() * 0.42)
@@ -1145,14 +1123,22 @@ export class PlayController extends Component {
           tween().to(duration, { position: target, scale: endScale, eulerAngles: new Vec3(0, 0, 180 + Math.random() * 240) }, { easing: 'quadOut' }),
           tween(opacity).to(duration, { opacity: 0 }, { easing: 'quadIn' })
         )
-        .call(() => particle.destroy())
+        .call(() => this.transientFx.destroy(particle))
         .start()
     }
   }
 
-  // 爆炸中心补一个短暂冲击波，帮助玩家看清本次炸弹范围。
+  /**
+   * 在炸弹中心生成短暂冲击波。
+   *
+   * 冲击波使用临时节点表现，大小会随本次命中的棋子数量略微变化，
+   * 用来强化炸弹范围和命中反馈。
+   *
+   * @param position 爆炸中心位置。
+   * @param strength 本次炸弹影响的棋子数量。
+   */
   private spawnBombShockwave(position: Vec3, strength: number) {
-    if (!this.canSpawnFx(1)) {
+    if (!this.transientFx.canRegister(1)) {
       return
     }
 
@@ -1166,7 +1152,7 @@ export class PlayController extends Component {
     shockwave.setParent(this.node)
     shockwave.setPosition(position)
     shockwave.setScale(new Vec3(0.35, 0.35, 1))
-    this.activeFx.add(shockwave)
+    this.transientFx.register(shockwave)
 
     const scale = 1.2 + Math.min(strength, 9) * 0.05
     tween(shockwave)
@@ -1174,7 +1160,7 @@ export class PlayController extends Component {
         tween().to(0.18, { scale: new Vec3(scale, scale, 1) }, { easing: 'quadOut' }),
         tween(opacity).to(0.18, { opacity: 0 }, { easing: 'quadIn' })
       )
-      .call(() => this.destroyFxNode(shockwave))
+      .call(() => this.transientFx.destroy(shockwave))
       .start()
   }
 
@@ -1431,14 +1417,14 @@ export class PlayController extends Component {
       const consumed = group.members.filter(piece => piece !== group.anchor)
       const nextValue = group.value * Math.pow(2, consumed.length)
       // 奖励分在合并动画开始前就结算，让总分数字可以连续滚动，不会等动画播完再跳第二次。
-      rewards.push(this.buildMergeReward(nextValue, consumed.length, chainDepth))
+      rewards.push(this.scoreManager.buildMergeReward(nextValue, consumed.length, chainDepth))
       consumedGroups.push(consumed)
       animations.push(this.animateMergeGroup(group.anchor, anchorPosition, consumed, nextValue))
     }
 
     this.applyScoreRewards(rewards)
     if (groups.length > 0) {
-      this.playSoundEffect(this.landingMergeAudioClip)
+      this.audioManager?.playSoundEffect(this.landingMergeAudioClip)
     }
     await Promise.all(animations)
     // 动画播完后再真正从棋盘数据里移除被吞掉的棋子，保证结算前后的棋盘总和一致。
@@ -1502,8 +1488,8 @@ export class PlayController extends Component {
 
     const nextValue = mergeAnchor.getValue() * Math.pow(2, consumed.length)
     // 落地连锁的奖励分同样提前结算，避免分数先停住再补播一次消除加分。
-    this.applyScoreRewards([this.buildMergeReward(nextValue, consumed.length, chainDepth)])
-    this.playSoundEffect(this.landingMergeAudioClip)
+    this.applyScoreRewards([this.scoreManager.buildMergeReward(nextValue, consumed.length, chainDepth)])
+    this.audioManager?.playSoundEffect(this.landingMergeAudioClip)
     await this.animateDirectedMerge(
       mergeAnchor,
       this.getCellPosition(mergeAnchorPos.row, mergeAnchorPos.column),
@@ -1699,7 +1685,7 @@ export class PlayController extends Component {
 
     await Promise.all(consumedAnimations)
     anchor.setValue(nextValue)
-    this.updateHighestPieceValue(nextValue)
+    this.scoreManager.updateHighestPieceValue(nextValue)
     anchor.node.setPosition(anchorPosition)
     this.spawnMergeFlash(anchor, anchorPosition, consumed.length)
     this.spawnMergeBurst(anchor, anchorPosition, consumed.length)
@@ -1716,77 +1702,6 @@ export class PlayController extends Component {
         .start()
     })
   }
-  // 用计时器控制下落拖尾的生成频率，避免每帧都创建特效。
-  // private updateFallingTrail(dt: number) {
-  //   if (!this.currentPiece) {
-  //     return
-  //   }
-
-  //   this.trailTimer += dt
-  //   const interval = this.isFastDropping ? 0.04 : 0.08
-  //   if (this.trailTimer < interval) {
-  //     return
-  //   }
-
-  //   this.trailTimer = 0
-  // }
-  // 根据当前下落速度生成拖尾粒子，快速下落时会更密、更长。
-  // private spawnTrailParticles(piece: PieceController) {
-  //   const count = this.isFastDropping ? 2 : 1
-  //   if (!this.canSpawnFx(count)) {
-  //     return
-  //   }
-
-  //   const origin = piece.node.position.clone().add3f(0, -this.pieceSize * 0.32, 0)
-
-  //   for (let i = 0; i < count; i++) {
-  //     const particle = this.createFxPiece(piece)
-  //     const opacity = particle.addComponent(UIOpacity)
-  //     opacity.opacity = this.isFastDropping ? 110 : 72
-  //     const transform = particle.getComponent(UITransform)
-  //     const width = this.isFastDropping ? 14 + Math.random() * 6 : 10 + Math.random() * 4
-  //     const height = this.isFastDropping ? 44 + Math.random() * 14 : 28 + Math.random() * 10
-  //     transform?.setContentSize(width, height)
-
-  //     particle.setParent(this.node)
-  //     particle.setSiblingIndex(0)
-  //     particle.setPosition(
-  //       new Vec3(
-  //         origin.x + (Math.random() - 0.5) * this.pieceSize * 0.22,
-  //         origin.y - Math.random() * 10,
-  //         0
-  //       )
-  //     )
-  //     particle.setScale(this.isFastDropping ? new Vec3(0.18, 0.1, 1) : new Vec3(0.12, 0.08, 1))
-
-  //     const sprite = particle.getComponent(Sprite)
-  //     if (sprite) {
-  //       const color = piece.getBackgroundColor()
-  //       color.r = Math.min(255, color.r + 55)
-  //       color.g = Math.min(255, color.g + 55)
-  //       color.b = Math.min(255, color.b + 55)
-  //       color.a = 255
-  //       sprite.color = color
-  //     }
-
-  //     this.activeFx.add(particle)
-
-  //     const driftX = (Math.random() - 0.5) * (this.isFastDropping ? 20 : 12)
-  //     const driftY = this.isFastDropping ? -56 - Math.random() * 22 : -36 - Math.random() * 16
-  //     const target = particle.position.clone().add3f(driftX, driftY, 0)
-  //     const stretch = this.isFastDropping ? new Vec3(0.04, 0.34, 1) : new Vec3(0.03, 0.24, 1)
-  //     const duration = this.isFastDropping ? 0.18 : 0.22
-
-  //     tween(particle)
-  //       .parallel(
-  //         tween().to(duration, { position: target, scale: stretch }, { easing: 'sineOut' }),
-  //         tween(opacity).to(duration, { opacity: 0 })
-  //       )
-  //       .call(() => this.destroyFxNode(particle))
-  //       .start()
-  //   }
-  // }
-
   /**
    * 在合并锚点位置生成短暂闪光。
    *
@@ -1798,7 +1713,7 @@ export class PlayController extends Component {
    * @param strength 本次合并强度，通常与被吞并棋子数量相关。
    */
   private spawnMergeFlash(anchor: PieceController, position: Vec3, strength: number) {
-    if (!this.canSpawnFx(1)) {
+    if (!this.transientFx.canRegister(1)) {
       return
     }
 
@@ -1812,7 +1727,7 @@ export class PlayController extends Component {
     if (sprite) {
       sprite.color = new Color(255, 248, 214, 255)
     }
-    this.activeFx.add(flash)
+    this.transientFx.register(flash)
 
     const targetScale = 1.1 + Math.min(strength, 2) * 0.08
     tween(flash)
@@ -1820,14 +1735,14 @@ export class PlayController extends Component {
         tween().to(0.12, { scale: new Vec3(targetScale, targetScale, 1) }, { easing: 'quadOut' }),
         tween(opacity).to(0.12, { opacity: 0 })
       )
-      .call(() => this.destroyFxNode(flash))
+      .call(() => this.transientFx.destroy(flash))
       .start()
   }
   /**
    * 合并时从锚点向四周喷射碎片粒子。
    *
    * 粒子数量和扩散半径会随 strength 增加，用来区分普通合并和更大的连锁合并。
-   * 所有粒子都会登记到 activeFx，便于暂停、返回首页或重开时统一清理。
+   * 所有粒子都会登记到 transientFx，便于暂停、返回首页或重开时统一清理。
    *
    * @param anchor 提供贴图和颜色参考的锚点棋子。
    * @param position 粒子爆发中心。
@@ -1835,7 +1750,7 @@ export class PlayController extends Component {
    */
   private spawnMergeBurst(anchor: PieceController, position: Vec3, strength: number) {
     const count = Math.min(4, 2 + strength)
-    if (!this.canSpawnFx(count)) {
+    if (!this.transientFx.canRegister(count)) {
       return
     }
 
@@ -1849,7 +1764,7 @@ export class PlayController extends Component {
       particle.setParent(this.node)
       particle.setPosition(position)
       particle.setScale(new Vec3(0.15, 0.15, 1))
-      this.activeFx.add(particle)
+      this.transientFx.register(particle)
 
       const angle = (Math.PI * 2 * i) / count + Math.random() * 0.35
       const distance = radius * (0.75 + Math.random() * 0.4)
@@ -1864,7 +1779,7 @@ export class PlayController extends Component {
           tween().to(0.18, { position: target, scale: new Vec3(0.04, 0.04, 1) }, { easing: 'quadOut' }),
           tween(opacity).to(0.18, { opacity: 0 })
         )
-        .call(() => this.destroyFxNode(particle))
+        .call(() => this.transientFx.destroy(particle))
         .start()
     }
   }
@@ -1882,271 +1797,81 @@ export class PlayController extends Component {
     return node
   }
 
-  // 运行时自动准备一对音频源，避免场景里必须手动摆放 BGM 和 SFX 节点。
-  private ensureAudioSources() {
-    this.bgmAudioSource = this.ensureAudioSourceNode('GameBgmAudioSource')
-    this.sfxAudioSource = this.ensureAudioSourceNode('GameSfxAudioSource')
-  }
-
-  // 音频节点不存在时自动创建；已存在则直接复用，避免反复加组件。
-  private ensureAudioSourceNode(nodeName: string) {
-    let audioNode = this.node.getChildByName(nodeName)
-    if (!audioNode) {
-      audioNode = new Node(nodeName)
-      audioNode.setParent(this.node)
-      audioNode.setPosition(0, 0, 0)
-    }
-
-    return audioNode.getComponent(AudioSource) ?? audioNode.addComponent(AudioSource)
-  }
-
-  // 首页音乐使用独立入口，当前没有绑定资源时不会播放任何背景音乐。
-  private playStartPageBackgroundMusic() {
-    this.playLoopBackgroundMusic(this.startPageBgmClip)
-  }
-
-  // 玩法音乐只在点击开始进入对局后播放，避免首页误播游戏内 BGM。
-  private playGameplayBackgroundMusic() {
-    this.playLoopBackgroundMusic(this.gameplayBgmClip)
-  }
-
-  // 循环背景音乐统一走这里，切换曲目时先停止旧音频再播放新音频。
-  private playLoopBackgroundMusic(clip: AudioClip | null) {
-    if (!this.bgmAudioSource) {
-      return
-    }
-
-    if (!clip) {
-      // 首页未配置专属 BGM 时，需要停止玩法 BGM，避免返回首页后继续播放游戏音乐。
-      if (this.bgmAudioSource.playing) {
-        this.bgmAudioSource.stop()
-      }
-      this.bgmAudioSource.clip = null
-      return
-    }
-
-    if (this.bgmAudioSource.playing && this.bgmAudioSource.clip !== clip) {
-      this.bgmAudioSource.stop()
-    }
-
-    this.bgmAudioSource.clip = clip
-    this.bgmAudioSource.loop = true
-    if (this.bgmAudioSource.playing) {
-      return
-    }
-
-    this.bgmAudioSource.play()
-  }
-
-  // 所有短音效都走 one-shot，避免切断当前正在播放的其他反馈音。
-  private playSoundEffect(clip: AudioClip | null) {
-    if (!clip || !this.sfxAudioSource) {
-      return
-    }
-
-    this.sfxAudioSource.playOneShot(clip)
-  }
-
-  // 限制特效节点总数，避免短时间内创建过多粒子。
-  private canSpawnFx(count: number) {
-    return this.activeFx.size + count <= MAX_ACTIVE_FX
-  }
-  // 销毁并移除特效节点
-  private destroyFxNode(node: Node) {
-    this.activeFx.delete(node)
-    node.destroy()
-  }
-  // 停止并清理所有运行中粒子
-  private clearTransientFx() {
-    for (const node of this.activeFx) {
-      Tween.stopAllByTarget(node)
-      const opacity = node.getComponent(UIOpacity)
-      if (opacity) {
-        Tween.stopAllByTarget(opacity)
-      }
-      node.destroy()
-    }
-    this.activeFx.clear()
-  }
-
   // 在棋盘数组里查找某颗棋子当前所在的行列坐标。
   private findPiece(target: PieceController) {
-    for (let row = 0; row < this.boardheight; row++) {
-      for (let column = 0; column < this.boardwidth; column++) {
-        if (this.board[row][column] === target) {
-          return { row, column }
-        }
-      }
-    }
-
-    return null
+    return this.boardModel.findPiece(this.board, this.boardheight, this.boardwidth, target)
   }
 
   // 判断给定的行列是否仍处在棋盘合法范围内。
   private isInsideBoard(row: number, column: number) {
-    return row >= 0 && row < this.boardheight && column >= 0 && column < this.boardwidth
+    return this.boardGeometry?.isInsideBoard(row, column) ?? false
   }
   // 检查每列是否已满
   private isBoardFull() {
-    for (let column = 0; column < this.boardwidth; column++) {
-      if (this.getDropRow(column) >= 0) {
-        return false
-      }
-    }
-    return true
+    return this.boardModel.isBoardFull(this.board, this.boardheight, this.boardwidth)
   }
   // 返回某列第一个空行
   private getDropRow(column: number) {
-    for (let row = 0; row < this.boardheight; row++) {
-      if (!this.board[row][column]) {
-        return row
-      }
-    }
-    return -1
+    return this.boardModel.getDropRow(this.board, this.boardheight, column)
   }
   // 找到离目标列最近的可用列
   private getNearestAvailableColumn(preferredColumn: number) {
-    if (preferredColumn >= 0 && preferredColumn < this.boardwidth && this.getDropRow(preferredColumn) >= 0) {
-      return preferredColumn
-    }
-
-    for (let distance = 1; distance < this.boardwidth; distance++) {
-      const left = preferredColumn - distance
-      if (left >= 0 && this.getDropRow(left) >= 0) {
-        return left
-      }
-
-      const right = preferredColumn + distance
-      if (right < this.boardwidth && this.getDropRow(right) >= 0) {
-        return right
-      }
-    }
-
-    return -1
+    return this.boardModel.getNearestAvailableColumn(this.board, this.boardheight, this.boardwidth, preferredColumn)
   }
 
-  // 把触摸点换算成列索引，换算时使用当前棋盘实时计算出的网格原点。
+  // 触摸列换算已交给 BoardGeometry，这里只保持旧调用入口。
   private getColumnFromTouch(event: EventTouch) {
-    const uiTransform = this.node.getComponent(UITransform)
-    if (!uiTransform) {
-      return -1
-    }
-
-    const uiLocation = event.getUILocation()
-    // 棋盘外的触摸不参与列选择，避免底栏、状态栏等区域误触发加速下落。
-    if (!this.isTouchInsideBoard(uiLocation.x, uiLocation.y)) {
-      return -1
-    }
-
-    const local = uiTransform.convertToNodeSpaceAR(new Vec3(uiLocation.x, uiLocation.y, 0))
-    const step = this.getStepSize()
-    // 棋盘尺寸和边框可能会调整，所以这里不能再依赖旧的固定 x 偏移。
-    const column = Math.round((local.x - this.getBoardGridOriginX()) / step)
-    return Math.max(0, Math.min(this.boardwidth - 1, column))
+    this.syncBoardGeometryOptions()
+    return this.boardGeometry?.getColumnFromTouch(event) ?? -1
   }
 
-  // 把触摸点换算成棋盘格子坐标，交换技能会用它来判断起点和释放目标。
+  // 触摸格子换算已交给 BoardGeometry，这里只保持旧调用入口。
   private getCellFromTouch(event: EventTouch): CellPosition | null {
-    const uiLocation = event.getUILocation()
-    if (!this.isTouchInsideBoard(uiLocation.x, uiLocation.y)) {
-      return null
-    }
-
-    const local = this.getLocalPositionFromTouch(event)
-    if (!local) {
-      return null
-    }
-
-    const step = this.getStepSize()
-    const column = Math.round((local.x - this.getBoardGridOriginX()) / step)
-    const row = Math.round((local.y - this.getBoardGridOriginY()) / step)
-    if (!this.isInsideBoard(row, column)) {
-      return null
-    }
-
-    return { row, column }
+    this.syncBoardGeometryOptions()
+    return this.boardGeometry?.getCellFromTouch(event) ?? null
   }
 
   // Cocos 触摸坐标先从 UI 坐标转成本节点坐标，所有棋盘操作都基于同一坐标系。
   private getLocalPositionFromTouch(event: EventTouch) {
-    const uiTransform = this.node.getComponent(UITransform)
-    if (!uiTransform) {
-      return null
-    }
-
-    const uiLocation = event.getUILocation()
-    return uiTransform.convertToNodeSpaceAR(new Vec3(uiLocation.x, uiLocation.y, 0))
+    this.syncBoardGeometryOptions()
+    return this.boardGeometry?.getLocalPositionFromTouch(event) ?? null
   }
 
   // 使用棋盘节点的世界包围盒判断触摸是否真的落在棋盘区域内。
   private isTouchInsideBoard(x: number, y: number) {
-    const boardTransform = this.node.getChildByName('board')?.getComponent(UITransform)
-    if (!boardTransform) {
-      return false
-    }
-
-    return boardTransform.getBoundingBoxToWorld().contains(new Vec2(x, y))
+    return this.boardGeometry?.isTouchInsideBoard(x, y) ?? false
   }
-  // 把棋盘中的行列坐标换成节点本地坐标，所有落点、重力和合并都走这套换算。
+  // 格子坐标换算已交给 BoardGeometry，这里只保持旧调用入口。
   private getCellPosition(row: number, column: number) {
-    const step = this.getStepSize()
-    // 从棋盘当前内区实时计算原点，避免边框或尺寸变化后边缘列跑出外框。
-    return new Vec3(this.getBoardGridOriginX() + column * step, this.getBoardGridOriginY() + row * step, 0)
+    this.syncBoardGeometryOptions()
+    return this.boardGeometry?.getCellPosition(row, column) ?? new Vec3()
   }
-  // 获取新棋子的出生点，x 与列严格对齐，y 位于棋盘顶部之外。
+  // 出生点换算已交给 BoardGeometry，这里只保持旧调用入口。
   private getSpawnPosition(column: number) {
-    const step = this.getStepSize()
-    // 出生点也复用同一套网格原点，保证生成后垂直落下时不会偏列。
-    return new Vec3(
-      this.getBoardGridOriginX() + column * step,
-      this.getBoardGridOriginY() + this.boardheight * step + this.spawnOffsetY,
-      0
-    )
+    this.syncBoardGeometryOptions()
+    return this.boardGeometry?.getSpawnPosition(column) ?? new Vec3()
   }
 
   // 单格步长 = 棋子尺寸 + 列间距，这是所有坐标换算的基础。
   private getStepSize() {
-    return this.pieceSize + this.spacing
+    this.syncBoardGeometryOptions()
+    return this.boardGeometry?.getStepSize() ?? this.pieceSize + this.spacing
   }
 
-  // 读取棋盘内区宽度；逻辑层优先读 BoardFill，避免继续依赖具体边框画法。
-  private getBoardInnerWidth() {
-    const fillTransform = this.node.getChildByName('board')?.getChildByName('BoardFill')?.getComponent(UITransform)
-    if (fillTransform) {
-      return fillTransform.width
-    }
-
-    const boardTransform = this.node.getChildByName('board')?.getComponent(UITransform)
-    if (boardTransform) {
-      return boardTransform.width - 40
-    }
-
-    return this.getStepSize() * this.boardwidth
+  // 把 PlayController 上的可调参数同步给几何模块，兼容编辑器里继续改属性。
+  private syncBoardGeometryOptions() {
+    this.boardGeometry?.updateOptions(this.buildBoardGeometryOptions())
   }
 
-  // 读取棋盘内区高度；逻辑层只关心有效落子区域，不关心具体边框样式。
-  private getBoardInnerHeight() {
-    const fillTransform = this.node.getChildByName('board')?.getChildByName('BoardFill')?.getComponent(UITransform)
-    if (fillTransform) {
-      return fillTransform.height
+  // 几何模块只接收必要参数，避免直接读取玩法控制器内部状态。
+  private buildBoardGeometryOptions() {
+    return {
+      boardWidth: this.boardwidth,
+      boardHeight: this.boardheight,
+      pieceSize: this.pieceSize,
+      spacing: this.spacing,
+      spawnOffsetY: this.spawnOffsetY
     }
-
-    const boardTransform = this.node.getChildByName('board')?.getComponent(UITransform)
-    if (boardTransform) {
-      return boardTransform.height - 40
-    }
-
-    return this.getStepSize() * this.boardheight
-  }
-
-  // 根据棋盘当前内区宽度计算左下角第一个格子的中心 x 坐标。
-  private getBoardGridOriginX() {
-    return -this.getBoardInnerWidth() / 2 + this.getStepSize() / 2
-  }
-
-  // 根据棋盘当前内区高度计算左下角第一个格子的中心 y 坐标。
-  private getBoardGridOriginY() {
-    return -this.getBoardInnerHeight() / 2 + this.getStepSize() / 2
   }
 
   // 把当前玩法状态统一推送给 UI 组件，避免逻辑层分别操作多个界面节点。
@@ -2161,9 +1886,9 @@ export class PlayController extends Component {
     }
 
     this.hasStartedSession = true
-    this.resetSkillCounts()
+    this.skillStock.reset()
     this.refreshUiState()
-    this.playGameplayBackgroundMusic()
+    this.audioManager?.playGameplayBackgroundMusic(this.gameplayBgmClip)
     this.startPageController?.hide(() => {
       if (!this.currentPiece && !this.isGameOver) {
         this.spawnPiece()
@@ -2173,73 +1898,24 @@ export class PlayController extends Component {
 
   // 逻辑层只暴露一份纯数据状态给 UI 层，保证职责边界清晰。
   private buildUiState(): PlayUIState {
-    const boardScore = this.getBoardScore()
+    const boardScore = this.scoreManager.getBoardScore(this.board)
     return {
       currentValue: this.currentPiece?.getValue() ?? null,
-      score: boardScore + this.bonusScore,
-      highestValue: this.highestPieceValue,
+      score: boardScore + this.scoreManager.getBonusScore(),
+      highestValue: this.scoreManager.getHighestPieceValue(),
       isGameOver: this.isGameOver,
       isPaused: this.isPaused,
       isResolving: this.isResolving,
       activeSkill: this.isBombSkillActive ? 'bomb' : this.isHammerSkillActive ? 'hammer' : this.isSwapSkillActive ? 'swap' : null,
-      skillCounts: {
-        bomb: this.skillCounts.bomb,
-        hammer: this.skillCounts.hammer,
-        swap: this.skillCounts.swap
-      }
+      skillCounts: this.skillStock.toUiState()
     }
   }
 
-  // 当前分数定义为棋盘内所有已落地棋子的数字总和，不包含仍在下落中的当前棋子。
-  private getBoardScore() {
-    let score = 0
-    for (const row of this.board) {
-      for (const piece of row) {
-        if (!piece) {
-          continue
-        }
-        score += piece.getValue()
-      }
-    }
-
-    return score
-  }
-
-  // 统一维护本局历史最高值，避免技能移除最高棋子后结算数字回落。
-  private updateHighestPieceValue(value: number) {
-    this.highestPieceValue = Math.max(this.highestPieceValue, value)
-  }
-
-  // 当前版本的奖励分规则集中放在这里，后面扩展倍率或不同来源时不需要到处改调用点。
-  private buildMergeReward(nextValue: number, consumedCount: number, chainDepth: number): ScoreRewardEvent {
-    const amount = this.calculateMergeRewardAmount(nextValue, consumedCount, chainDepth)
-    return {
-      source: 'merge',
-      amount,
-      resultValue: nextValue,
-      consumedCount,
-      chainDepth
-    }
-  }
-
-  // 合并奖励分按“结果值 x 消除倍率”计算；消除越多，倍率越高。
-  private calculateMergeRewardAmount(nextValue: number, consumedCount: number, chainDepth: number) {
-    const clearMultiplier = Math.max(1, consumedCount)
-    // 连锁深度先单独保留入口，当前版本不叠加倍率，后续活动或模式扩展时直接在这里继续乘即可。
-    const chainMultiplier = 1 + Math.max(0, chainDepth - 1) * 0
-    return Math.floor(nextValue * clearMultiplier * chainMultiplier)
-  }
-
-  // 奖励分统一走这个入口累计，方便后续增加日志、上报或临时活动加成。
+  // 奖励分累计已交给 ScoreManager，这里负责根据结果刷新 UI。
   private applyScoreRewards(rewards: ScoreRewardEvent[]) {
-    if (rewards.length === 0) {
-      return
+    if (this.scoreManager.applyScoreRewards(rewards)) {
+      this.refreshUiState()
     }
-
-    for (const reward of rewards) {
-      this.bonusScore += reward.amount
-    }
-    this.refreshUiState()
   }
 
   // UI 层按钮点击后只通过这个入口切换暂停，真正的状态变化仍由逻辑层维护。
@@ -2271,7 +1947,7 @@ export class PlayController extends Component {
     }
 
     this.clearBoardPieces()
-    this.clearTransientFx()
+    this.transientFx.clear()
     this.hasStartedSession = false
     this.isGameOver = false
     this.isFastDropping = false
@@ -2282,8 +1958,8 @@ export class PlayController extends Component {
     this.isBombSkillActive = false
     this.swapDragState = null
     this.resetBoard()
-    this.resetSkillCounts()
-    this.playStartPageBackgroundMusic()
+    this.skillStock.reset()
+    this.audioManager?.playStartPageBackgroundMusic(this.startPageBgmClip)
     this.refreshUiState()
     this.startPageController?.syncLayout()
     this.startPageController?.show()
@@ -2296,43 +1972,12 @@ export class PlayController extends Component {
 
   // 分享入口只负责适配平台能力；没有平台 API 时保持静默降级，避免打断暂停弹窗。
   private shareGameFromPause() {
-    this.shareCurrentGameScore('pause_share')
+    this.shareAdapter.shareScore(this.scoreManager.getTotalScore(this.board), 'pause_share')
   }
 
   // 结算弹窗分享本局分数，和暂停分享共用平台适配逻辑。
   private shareGameFromGameOver() {
-    this.shareCurrentGameScore('game_over_share')
-  }
-
-  // 分享入口只负责适配平台能力；没有平台 API 时保持静默降级，避免打断弹窗。
-  private shareCurrentGameScore(source: string) {
-    const score = this.getBoardScore() + this.bonusScore
-    const title = `我在 1024 数字花园合成了 ${score} 分，来挑战一下吧`
-    const wxApi = (globalThis as {
-      wx?: {
-        shareAppMessage?: (options: { title: string; query?: string }) => void
-      }
-    }).wx
-
-    if (typeof wxApi?.shareAppMessage === 'function') {
-      wxApi.shareAppMessage({
-        title,
-        query: `from=${source}`
-      })
-      return
-    }
-
-    const webNavigator = (globalThis as {
-      navigator?: {
-        share?: (data: { title: string; text: string }) => Promise<void>
-      }
-    }).navigator
-    if (typeof webNavigator?.share === 'function') {
-      void webNavigator.share({ title: '1024 数字花园', text: title }).catch(() => undefined)
-      return
-    }
-
-    console.info('当前平台暂未接入分享能力', title)
+    this.shareAdapter.shareScore(this.scoreManager.getTotalScore(this.board), 'game_over_share')
   }
 
   // UI 层第三技能按钮通过这个入口切换交换技能，技能态只冻结下落，不打开暂停弹窗。
@@ -2350,7 +1995,7 @@ export class PlayController extends Component {
       return
     }
 
-    if (!this.hasSkillCount('swap')) {
+    if (!this.skillStock.has('swap')) {
       return
     }
 
@@ -2375,7 +2020,7 @@ export class PlayController extends Component {
       return
     }
 
-    if (!this.hasSkillCount('hammer')) {
+    if (!this.skillStock.has('hammer')) {
       return
     }
 
@@ -2400,7 +2045,7 @@ export class PlayController extends Component {
       return
     }
 
-    if (!this.hasSkillCount('bomb')) {
+    if (!this.skillStock.has('bomb')) {
       return
     }
 
@@ -2429,7 +2074,7 @@ export class PlayController extends Component {
     this.isBombSkillActive = false
     this.swapDragState = null
     this.currentPiece = null
-    this.clearTransientFx()
+    this.transientFx.clear()
     this.refreshUiState()
   }
   // 重新开始游戏并清空棋盘
@@ -2439,7 +2084,7 @@ export class PlayController extends Component {
     }
 
     this.clearBoardPieces()
-    this.clearTransientFx()
+    this.transientFx.clear()
     this.isGameOver = false
     this.isFastDropping = false
     this.isResolving = false
@@ -2449,7 +2094,7 @@ export class PlayController extends Component {
     this.isBombSkillActive = false
     this.swapDragState = null
     this.resetBoard()
-    this.resetSkillCounts()
+    this.skillStock.reset()
     this.spawnPiece()
   }
 }
