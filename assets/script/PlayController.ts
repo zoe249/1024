@@ -52,6 +52,25 @@ const MAX_ACTIVE_FX = 18
 // 每局开始时三个技能都给 1 次，后续奖励或商店扩展可以从这里统一调整初始值。
 const INITIAL_SKILL_COUNT = 1
 
+@ccclass('PlaySoundEffectClips')
+export class PlaySoundEffectClips {
+  // 锤子技能成功敲碎棋子时播放的短音效。
+  @property({ type: AudioClip, tooltip: 'Hammer skill sound effect' })
+  hammerSkillAudioClip: AudioClip | null = null
+
+  // 炸弹技能成功引爆时播放的短音效。
+  @property({ type: AudioClip, tooltip: 'Bomb skill sound effect' })
+  bombSkillAudioClip: AudioClip | null = null
+
+  // 交换技能成功形成合并时播放的短音效。
+  @property({ type: AudioClip, tooltip: 'Swap skill success sound effect' })
+  swapSkillAudioClip: AudioClip | null = null
+
+  // 游戏进入结算结束状态时播放的短音效。
+  @property({ type: AudioClip, tooltip: 'Game over sound effect' })
+  gameOverAudioClip: AudioClip | null = null
+}
+
 @ccclass('PlayController')
 export class PlayController extends Component {
   // 棋盘列数，当前玩法固定为 5 列。
@@ -86,7 +105,15 @@ export class PlayController extends Component {
   @property({ type: AudioClip, tooltip: 'Swap rollback sound effect' })
   swapRollbackAudioClip: AudioClip | null = null
 
-  // 首页背景音乐预留资源位；未绑定专属音频时首页保持静音，不复用玩法 BGM。
+  // 玩法短音效合集，便于在 Creator 面板里集中拖入技能、结算等反馈音。
+  @property({ type: PlaySoundEffectClips, tooltip: 'Gameplay sound effect clips' })
+  soundEffectClips = new PlaySoundEffectClips()
+
+  // Home 页专用背景音乐，进入首页或从暂停返回首页时循环播放。
+  @property({ type: AudioClip, tooltip: 'Home page background music' })
+  homeBgmClip: AudioClip | null = null
+
+  // 旧版首页背景音乐字段，保留用于兼容已经绑定过 startPageBgmClip 的场景。
   @property({ type: AudioClip, tooltip: 'Start page background music' })
   startPageBgmClip: AudioClip | null = null
 
@@ -204,7 +231,7 @@ export class PlayController extends Component {
     // 某些平台会在启动后一帧才拿到稳定的安全区，这里让 UI 组件再补一次布局。
     this.uiController?.syncLayout()
     this.startPageController?.syncLayout()
-    this.audioManager?.playStartPageBackgroundMusic(this.startPageBgmClip)
+    this.audioManager?.playStartPageBackgroundMusic(this.getHomeBgmClip())
     this.refreshUiState()
   }
 
@@ -215,6 +242,16 @@ export class PlayController extends Component {
     this.node.off(Node.EventType.TOUCH_CANCEL, this.handleTouchCancel, this)
     this.uiController = null
     this.startPageController = null
+  }
+
+  // 所有玩法短音效统一从这里转给音频管理器，空资源会被安全忽略。
+  private playSoundEffect(clip: AudioClip | null) {
+    this.audioManager?.playSoundEffect(clip)
+  }
+
+  // Home 页优先使用新字段，旧字段只作为历史场景的兜底资源位。
+  private getHomeBgmClip() {
+    return this.homeBgmClip ?? this.startPageBgmClip
   }
 
   // 每帧更新当前下落棋子的目标位置，并在接近落点时触发落地结算。
@@ -485,7 +522,7 @@ export class PlayController extends Component {
 
     const willMergeOnLanding = this.canPieceMergeNow(landedPiece)
     if (!willMergeOnLanding) {
-      this.audioManager?.playSoundEffect(this.collisionAudioClip)
+      this.playSoundEffect(this.collisionAudioClip)
     }
 
     const directedResult = await this.resolveLandingChain(landedPiece)
@@ -710,7 +747,7 @@ export class PlayController extends Component {
     ])
 
     if (this.findMergeGroups(sourcePiece).length === 0) {
-      this.audioManager?.playSoundEffect(this.swapRollbackAudioClip)
+      this.playSoundEffect(this.swapRollbackAudioClip)
       await this.rollbackSwapSkill(dragState, target)
       this.restoreSwapPieceLayer(dragState)
       this.isResolving = false
@@ -719,6 +756,7 @@ export class PlayController extends Component {
     }
 
     this.skillStock.consume('swap')
+    this.playSoundEffect(this.soundEffectClips.swapSkillAudioClip)
     this.refreshUiState()
     await this.settleBoard(sourcePiece)
     this.restoreSwapPieceLayer(dragState)
@@ -847,6 +885,7 @@ export class PlayController extends Component {
     this.isResolving = true
     this.board[target.row][target.column] = null
     this.skillStock.consume('hammer')
+    this.playSoundEffect(this.soundEffectClips.hammerSkillAudioClip)
     this.refreshUiState()
 
     await this.animateHammerBreak(piece)
@@ -895,6 +934,7 @@ export class PlayController extends Component {
 
     this.isResolving = true
     this.skillStock.consume('bomb')
+    this.playSoundEffect(this.soundEffectClips.bombSkillAudioClip)
     this.refreshUiState()
     const centerPosition = this.getCellPosition(center.row, center.column)
     await this.playBombCast(centerPosition)
@@ -1424,7 +1464,7 @@ export class PlayController extends Component {
 
     this.applyScoreRewards(rewards)
     if (groups.length > 0) {
-      this.audioManager?.playSoundEffect(this.landingMergeAudioClip)
+      this.playSoundEffect(this.landingMergeAudioClip)
     }
     await Promise.all(animations)
     // 动画播完后再真正从棋盘数据里移除被吞掉的棋子，保证结算前后的棋盘总和一致。
@@ -1489,7 +1529,7 @@ export class PlayController extends Component {
     const nextValue = mergeAnchor.getValue() * Math.pow(2, consumed.length)
     // 落地连锁的奖励分同样提前结算，避免分数先停住再补播一次消除加分。
     this.applyScoreRewards([this.scoreManager.buildMergeReward(nextValue, consumed.length, chainDepth)])
-    this.audioManager?.playSoundEffect(this.landingMergeAudioClip)
+    this.playSoundEffect(this.landingMergeAudioClip)
     await this.animateDirectedMerge(
       mergeAnchor,
       this.getCellPosition(mergeAnchorPos.row, mergeAnchorPos.column),
@@ -1959,7 +1999,7 @@ export class PlayController extends Component {
     this.swapDragState = null
     this.resetBoard()
     this.skillStock.reset()
-    this.audioManager?.playStartPageBackgroundMusic(this.startPageBgmClip)
+    this.audioManager?.playStartPageBackgroundMusic(this.getHomeBgmClip())
     this.refreshUiState()
     this.startPageController?.syncLayout()
     this.startPageController?.show()
@@ -2068,6 +2108,10 @@ export class PlayController extends Component {
   }
   // 进入游戏结束流程
   private endGame() {
+    if (this.isGameOver) {
+      return
+    }
+
     this.isGameOver = true
     this.isSwapSkillActive = false
     this.isHammerSkillActive = false
@@ -2075,6 +2119,8 @@ export class PlayController extends Component {
     this.swapDragState = null
     this.currentPiece = null
     this.transientFx.clear()
+    this.audioManager?.pauseBackgroundMusic()
+    this.playSoundEffect(this.soundEffectClips.gameOverAudioClip)
     this.refreshUiState()
   }
   // 重新开始游戏并清空棋盘
@@ -2095,6 +2141,7 @@ export class PlayController extends Component {
     this.swapDragState = null
     this.resetBoard()
     this.skillStock.reset()
+    this.audioManager?.playGameplayBackgroundMusic(this.gameplayBgmClip)
     this.spawnPiece()
   }
 }

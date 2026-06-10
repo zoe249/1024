@@ -23,7 +23,7 @@
     "_active": false,
     "_components": [],
     "_prefab": {
-      "__id__": 157
+      "__id__": 158
     },
     "_lpos": {
       "__type__": "cc.Vec3",
@@ -54,7 +54,7 @@
     },
     "autoReleaseAssets": false,
     "_globals": {
-      "__id__": 158
+      "__id__": 159
     },
     "_id": "99b0773e-7afc-469a-b7b9-7a3ad527f2be"
   },
@@ -77,13 +77,13 @@
     "_active": true,
     "_components": [
       {
-        "__id__": 154
-      },
-      {
         "__id__": 155
       },
       {
         "__id__": 156
+      },
+      {
+        "__id__": 157
       }
     ],
     "_prefab": null,
@@ -5777,7 +5777,13 @@
       "__uuid__": "b49a4ea7-0646-441e-b94f-cc80a14bdcac",
       "__expectedType__": "cc.AudioClip"
     },
-    "startPageBgmClip": null,
+    "soundEffectClips": {
+      "__id__": 154
+    },
+    "startPageBgmClip": {
+      "__uuid__": "17f88a7b-8f41-41c5-9f2f-1ac30461c010",
+      "__expectedType__": "cc.AudioClip"
+    },
     "gameplayBgmClip": {
       "__uuid__": "41c3b3be-ba55-4356-9a73-d1c487e10901",
       "__expectedType__": "cc.AudioClip"
@@ -5828,6 +5834,25 @@
       }
     ],
     "_id": "dbWPmc0yBGU7olYX6FbrrD"
+  },
+  {
+    "__type__": "PlaySoundEffectClips",
+    "hammerSkillAudioClip": {
+      "__uuid__": "055a1fcf-51f7-4164-befd-62e7cf9d3eae",
+      "__expectedType__": "cc.AudioClip"
+    },
+    "bombSkillAudioClip": {
+      "__uuid__": "0c0b818d-f6fa-4ac0-baa1-eabc0ab1dbba",
+      "__expectedType__": "cc.AudioClip"
+    },
+    "swapSkillAudioClip": {
+      "__uuid__": "155c7023-62de-4038-b9f9-4d729a429623",
+      "__expectedType__": "cc.AudioClip"
+    },
+    "gameOverAudioClip": {
+      "__uuid__": "c2203df6-ea79-4868-a327-2385adda51b0",
+      "__expectedType__": "cc.AudioClip"
+    }
   },
   {
     "__type__": "cc.UITransform",
@@ -5908,28 +5933,28 @@
   {
     "__type__": "cc.SceneGlobals",
     "ambient": {
-      "__id__": 159
-    },
-    "shadows": {
       "__id__": 160
     },
-    "_skybox": {
+    "shadows": {
       "__id__": 161
     },
-    "fog": {
+    "_skybox": {
       "__id__": 162
     },
-    "octree": {
+    "fog": {
       "__id__": 163
     },
-    "skin": {
+    "octree": {
       "__id__": 164
     },
-    "lightProbeInfo": {
+    "skin": {
       "__id__": 165
     },
-    "postSettings": {
+    "lightProbeInfo": {
       "__id__": 166
+    },
+    "postSettings": {
+      "__id__": 167
     },
     "bakedWithStationaryMainLight": false,
     "bakedWithHighpLightmap": false

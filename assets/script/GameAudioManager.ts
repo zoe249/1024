@@ -18,9 +18,16 @@ export class GameAudioManager {
     this.playLoopBackgroundMusic(clip)
   }
 
-  // 玩法音乐只在点击开始进入对局后播放，避免首页误播游戏内 BGM。
+  // 玩法音乐只在进入对局或重新开始后播放，避免首页误播游戏内 BGM。
   playGameplayBackgroundMusic(clip: AudioClip | null) {
     this.playLoopBackgroundMusic(clip)
+  }
+
+  // 游戏结束时暂停背景音乐，保留短音效通道继续播放结算反馈。
+  pauseBackgroundMusic() {
+    if (this.bgmAudioSource?.playing) {
+      this.bgmAudioSource.pause()
+    }
   }
 
   // 所有短音效都走 one-shot，避免切断当前正在播放的其他反馈音。
@@ -32,7 +39,7 @@ export class GameAudioManager {
     this.sfxAudioSource.playOneShot(clip)
   }
 
-  // 音频节点不存在时自动创建；已存在则直接复用，避免反复加组件。
+  // 音频节点不存在时自动创建；已存在则直接复用，避免重复加组件。
   private ensureAudioSourceNode(nodeName: string) {
     let audioNode = this.ownerNode.getChildByName(nodeName)
     if (!audioNode) {
@@ -48,7 +55,7 @@ export class GameAudioManager {
    * 播放或停止循环背景音乐。
    *
    * clip 为空时会停止当前 BGM，避免返回首页后继续播放玩法音乐；
-   * clip 变化时先停止旧音频再切换，clip 相同时不会重复调用 play。
+   * clip 变化时先停止旧音频再切换，clip 相同时不会重复重启正在播放的音乐。
    *
    * @param clip 要循环播放的背景音乐；为空时表示停止背景音乐。
    */
