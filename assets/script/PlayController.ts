@@ -19,7 +19,7 @@ type CellPosition = {
   column: number
 }
 
-// 表示一次可执行的合并组，anchor 是保留下来的棋子，其余成员会向它聚合。
+// 表示一次可执行的合并组，anchor 是保留下来的棋子，其余成员会在原位置消除。
 type MergeGroup = {
   value: number
   anchor: PieceController
@@ -51,6 +51,8 @@ type SwapDragState = {
 const MAX_ACTIVE_FX = 18
 // 每局开始时三个技能都给 1 次，后续奖励或商店扩展可以从这里统一调整初始值。
 const INITIAL_SKILL_COUNT = 1
+// 连续消除音效之间保留最小听感间隔，避免连锁时音效糊成一片。
+const MERGE_SOUND_MIN_INTERVAL = 0.46
 
 @ccclass('PlaySoundEffectClips')
 export class PlaySoundEffectClips {
@@ -195,6 +197,8 @@ export class PlayController extends Component {
   // 音频和分享适配从玩法主流程中拆出，降低 PlayController 的横向职责。
   private audioManager: GameAudioManager | null = null
   private readonly shareAdapter = new GameShareAdapter()
+  // 记录最近一次合并音效时间，用来给连续消除留出可感知的停顿。
+  private lastMergeSoundTimeMs = -Infinity
   // 生命周期入口：先准备棋盘数据，再把界面初始化交给独立的 UI 组件。
   onLoad() {
     this.resetBoard()
@@ -247,6 +251,28 @@ export class PlayController extends Component {
   // 所有玩法短音效统一从这里转给音频管理器，空资源会被安全忽略。
   private playSoundEffect(clip: AudioClip | null) {
     this.audioManager?.playSoundEffect(clip)
+  }
+
+  /**
+   * 播放带最小间隔的合并音效。
+   *
+   * 连续消除时视觉可以保持连贯，但音效如果贴得太近会失去“停顿”的节奏。
+   * 这里仅对合并音效做间隔控制，其他点击、技能、碰撞音效不受影响。
+   */
+  private async playMergeSoundWithGap() {
+    if (!this.landingMergeAudioClip) {
+      return
+    }
+
+    const now = Date.now()
+    const elapsed = (now - this.lastMergeSoundTimeMs) / 1000
+    const delay = Math.max(0, MERGE_SOUND_MIN_INTERVAL - elapsed)
+    if (delay > 0) {
+      await this.waitSeconds(delay)
+    }
+
+    this.lastMergeSoundTimeMs = Date.now()
+    this.playSoundEffect(this.landingMergeAudioClip)
   }
 
   // Home 页优先使用新字段，旧字段只作为历史场景的兜底资源位。
@@ -439,6 +465,7 @@ export class PlayController extends Component {
     // 重开或首次进入时，分数统计要和棋盘一起清零。
     this.scoreManager.reset()
     this.currentColumn = Math.floor(this.boardwidth / 2)
+    this.lastMergeSoundTimeMs = -Infinity
   }
 
   // 清理棋盘中已经实例化的棋子节点，返回首页和重新开始都复用这套收口逻辑。
@@ -1416,7 +1443,7 @@ export class PlayController extends Component {
     return this.collectComponent(piecePos.row, piecePos.column, visited).length > 1
   }
 
-  // 按规则决定整组保留哪颗棋子作为锚点，其他棋子都会向它聚合并消失。
+  // 按规则决定整组保留哪颗棋子作为锚点，其他棋子都会原地消除。
   private chooseAnchor(component: CellPosition[], preferredAnchor: PieceController | null) {
     if (preferredAnchor) {
       const preferredPos = this.findPiece(preferredAnchor)
@@ -1459,15 +1486,12 @@ export class PlayController extends Component {
       // 奖励分在合并动画开始前就结算，让总分数字可以连续滚动，不会等动画播完再跳第二次。
       rewards.push(this.scoreManager.buildMergeReward(nextValue, consumed.length, chainDepth))
       consumedGroups.push(consumed)
-      animations.push(this.animateMergeGroup(group.anchor, anchorPosition, consumed, nextValue))
+      animations.push(this.animateMergeGroup(group.anchor, anchorPosition, consumed, nextValue, animations.length === 0))
     }
 
     this.applyScoreRewards(rewards)
-    if (groups.length > 0) {
-      this.playSoundEffect(this.landingMergeAudioClip)
-    }
     await Promise.all(animations)
-    // 动画播完后再真正从棋盘数据里移除被吞掉的棋子，保证结算前后的棋盘总和一致。
+    // 动画播完后再真正从棋盘数据里移除被消除的棋子，保证结算前后的棋盘总和一致。
     for (const consumed of consumedGroups) {
       for (const piece of consumed) {
         const piecePos = this.findPiece(piece)
@@ -1482,8 +1506,8 @@ export class PlayController extends Component {
    * 合并落地点所在的同值连通块。
    *
    * 这个方法只处理 anchorPiece 当前所在组件，不扫描全盘。
-   * 合并锚点优先选择落点列中更靠下的棋子，其余成员播放吸附动画后从棋盘数组移除，
-   * 再对受影响列执行重力下落，为下一轮连锁创造稳定输入。
+   * 合并锚点固定为当前落地或连锁升级的棋子，其余同值成员原地消除后从棋盘数组移除。
+   * 这样视觉上始终是“当前棋子匹配附近棋子，然后当前棋子升级”。
    *
    * @param anchorPiece 当前落地连锁的起点棋子。
    * @param chainDepth 当前连锁深度，用于计算奖励分和动画强度。
@@ -1503,7 +1527,7 @@ export class PlayController extends Component {
       return { anchor: null, changed: false }
     }
 
-    const mergeAnchorPos = this.chooseLandingAnchor(component, anchorPos.column)
+    const mergeAnchorPos = anchorPos
     const mergeAnchor = this.board[mergeAnchorPos.row][mergeAnchorPos.column]
     if (!mergeAnchor) {
       return { anchor: null, changed: false }
@@ -1529,14 +1553,14 @@ export class PlayController extends Component {
     const nextValue = mergeAnchor.getValue() * Math.pow(2, consumed.length)
     // 落地连锁的奖励分同样提前结算，避免分数先停住再补播一次消除加分。
     this.applyScoreRewards([this.scoreManager.buildMergeReward(nextValue, consumed.length, chainDepth)])
-    this.playSoundEffect(this.landingMergeAudioClip)
     await this.animateDirectedMerge(
       mergeAnchor,
       this.getCellPosition(mergeAnchorPos.row, mergeAnchorPos.column),
       consumed,
-      nextValue
+      nextValue,
+      true
     )
-    // 动画结束后再清理被合并掉的棋子引用，后续重力和二次结算才能拿到稳定棋盘。
+    // 动画结束后再清理被消除的棋子引用，后续重力和二次结算才能拿到稳定棋盘。
     for (const piece of consumed) {
       const piecePos = this.findPiece(piece)
       if (piecePos) {
@@ -1547,40 +1571,15 @@ export class PlayController extends Component {
     return { anchor: mergeAnchor, changed: true }
   }
 
-  /**
-   * 为落地连锁选择保留下来的锚点格子。
-   *
-   * 优先选择落点列内最靠下的棋子；如果连通块不在落点列，则退化为整组内最靠下、
-   * 且距离落点列最近的棋子，保证玩家对合并方向的预期稳定。
-   *
-   * @param component 当前同值连通块内的所有格子。
-   * @param landingColumn 本次落子的列。
-   * @returns 应作为合并锚点的格子坐标。
-   */
-  private chooseLandingAnchor(component: CellPosition[], landingColumn: number) {
-    const sameColumn = component.filter(pos => pos.column === landingColumn)
-    const candidates = sameColumn.length > 0 ? sameColumn : component
-
-    return candidates.reduce((best, current) => {
-      if (current.row < best.row) {
-        return current
-      }
-      if (current.row > best.row) {
-        return best
-      }
-
-      return Math.abs(current.column - landingColumn) < Math.abs(best.column - landingColumn) ? current : best
-    })
-  }
-
-  // 单个合并组的动画封装，底层复用定向合并的表现逻辑。
+  // 单个合并组的动画封装，底层复用定向消除并升级的表现逻辑。
   private async animateMergeGroup(
     anchor: PieceController,
     anchorPosition: Vec3,
     consumed: PieceController[],
-    nextValue: number
+    nextValue: number,
+    shouldPlayMergeSound = false
   ) {
-    await this.animateDirectedMerge(anchor, anchorPosition, consumed, nextValue)
+    await this.animateDirectedMerge(anchor, anchorPosition, consumed, nextValue, shouldPlayMergeSound)
   }
 
   /**
@@ -1691,57 +1690,162 @@ export class PlayController extends Component {
     })
   }
   /**
-   * 执行一次完整的定向合并表现。
+   * 执行一次完整的定向消除表现。
    *
-   * 所有被吞并棋子先并发吸附到锚点并缩小销毁，随后锚点升级数值，
-   * 再播放闪光、爆裂和轻微回弹，形成一次完整的合并反馈。
+   * 所有被消除棋子留在原格播放破碎淡出，随后锚点升级数值，
+   * 再播放闪光、爆裂和轻微回弹，形成“消除附近棋子后当前棋子升级”的反馈。
    *
    * @param anchor 合并后保留并升级的棋子。
    * @param anchorPosition 锚点所在的目标坐标。
-   * @param consumed 会被吸附并销毁的棋子列表。
+   * @param consumed 会被原地消除并销毁的棋子列表。
    * @param nextValue 合并后锚点的新数值。
+   * @param shouldPlayMergeSound 是否在升级爆点帧播放本组合并音效。
    */
   private async animateDirectedMerge(
     anchor: PieceController,
     anchorPosition: Vec3,
     consumed: PieceController[],
-    nextValue: number
+    nextValue: number,
+    shouldPlayMergeSound = false
   ) {
-    const consumedAnimations = consumed.map(piece =>
-      new Promise<void>(resolve => {
-        Tween.stopAllByTarget(piece.node)
-        tween(piece.node)
-          .parallel(
-            tween().to(0.16, { position: anchorPosition }, { easing: 'sineIn' }),
-            tween().to(0.16, { scale: new Vec3(0.24, 0.24, 1) }, { easing: 'quadIn' })
-          )
-          .call(() => {
-            piece.node.destroy()
-            resolve()
-          })
-          .start()
-      })
-    )
+    anchor.node.setPosition(anchorPosition)
+    const consumedAnimations = consumed.map((piece, index) => this.animateConsumedPieceClear(piece, index))
 
-    await Promise.all(consumedAnimations)
+    // 升级不再等待周围棋子完全消失，避免“消除结束后停一下再弹”的顿挫。
+    await this.waitSeconds(0.1)
+    if (shouldPlayMergeSound) {
+      await this.playMergeSoundWithGap()
+    }
+    const upgradeAnimation = this.animateAnchorUpgrade(anchor, anchorPosition, nextValue, consumed.length)
+    await Promise.all([upgradeAnimation, ...consumedAnimations])
+  }
+
+  /**
+   * 播放被消除棋子的原地碎裂动画。
+   *
+   * 周围棋子只做短促但柔和的原地淡出，重点让位给后续当前棋子的爆点升级。
+   * 微小错帧用于避免多颗棋子完全同帧消失造成视觉卡顿，但不再形成机械的逐个队列。
+   *
+   * @param piece 即将从棋盘中移除的棋子。
+   * @param clearIndex 本轮组内的消除顺序，用于制造轻微错帧。
+   */
+  private animateConsumedPieceClear(piece: PieceController, clearIndex: number) {
+    const node = piece.node
+    const origin = node.position.clone()
+    const opacity = node.getComponent(UIOpacity) ?? node.addComponent(UIOpacity)
+    const delay = Math.min(clearIndex, 3) * 0.012
+    const endPosition = origin.clone().add3f(0, this.pieceSize * 0.025, 0)
+
+    opacity.opacity = 255
+    node.setPosition(origin)
+
+    return new Promise<void>(resolve => {
+      Tween.stopAllByTarget(node)
+      Tween.stopAllByTarget(opacity)
+      tween(node)
+        .sequence(
+          tween().delay(delay),
+          tween().to(0.055, { scale: new Vec3(1.04, 1.04, 1) }, { easing: 'sineOut' }),
+          tween().call(() => this.spawnSkillShatterParticles(piece, origin, 3, 0.24)),
+          tween().parallel(
+            tween().to(0.18, {
+              position: endPosition,
+              scale: new Vec3(0.62, 0.62, 1)
+            }, { easing: 'sineInOut' }),
+            tween(opacity).to(0.18, { opacity: 0 }, { easing: 'sineInOut' })
+          )
+        )
+        .call(() => {
+          node.destroy()
+          resolve()
+        })
+        .start()
+    })
+  }
+
+  /**
+   * 播放保留棋子的升级反馈。
+   *
+   * 周围棋子淡出过程中，当前棋子直接切换数值并舒展弹回。
+   * 爆点、碎片和棋子弹跳放在同一时间窗口里，减少串行动画造成的停顿。
+   *
+   * @param anchor 合并后保留并升级的棋子。
+   * @param anchorPosition 锚点所在的目标坐标。
+   * @param nextValue 合并后的新数值。
+   * @param strength 本次被消除的棋子数量。
+   */
+  private async animateAnchorUpgrade(
+    anchor: PieceController,
+    anchorPosition: Vec3,
+    nextValue: number,
+    strength: number
+  ) {
+    anchor.node.setPosition(anchorPosition)
     anchor.setValue(nextValue)
     this.scoreManager.updateHighestPieceValue(nextValue)
-    anchor.node.setPosition(anchorPosition)
-    this.spawnMergeFlash(anchor, anchorPosition, consumed.length)
-    this.spawnMergeBurst(anchor, anchorPosition, consumed.length)
+    this.spawnUpgradeImpact(anchor, anchorPosition, strength)
+    this.spawnMergeFlash(anchor, anchorPosition, strength)
+    this.spawnMergeBurst(anchor, anchorPosition, strength)
 
     await new Promise<void>(resolve => {
       Tween.stopAllByTarget(anchor.node)
       tween(anchor.node)
         .sequence(
-          tween().to(0.08, { scale: new Vec3(1.18, 1.18, 1) }, { easing: 'sineOut' }),
-          tween().to(0.12, { scale: new Vec3(0.98, 0.98, 1) }, { easing: 'sineInOut' }),
-          tween().to(0.08, { scale: Vec3.ONE }, { easing: 'sineOut' })
+          tween().to(0.13, { scale: new Vec3(1.1, 1.1, 1) }, { easing: 'sineOut' }),
+          tween().to(0.115, { scale: new Vec3(0.995, 0.995, 1) }, { easing: 'sineInOut' }),
+          tween().to(0.065, { scale: Vec3.ONE }, { easing: 'sineOut' })
         )
         .call(resolve as any)
         .start()
     })
   }
+
+  // 等待短时间片，用于把消除和升级安排在同一条时间轴上，减少串行动画的停顿感。
+  private waitSeconds(duration: number) {
+    return new Promise<void>(resolve => {
+      this.scheduleOnce(() => resolve(), duration)
+    })
+  }
+
+  /**
+   * 在当前棋子位置生成升级爆点。
+   *
+   * 爆点使用锚点棋子的外观快速放大淡出，作为数值升级瞬间的主视觉。
+   * 它和普通碎片、闪光叠加，但只在当前棋子位置出现，避免又变回“其他棋子飞来合成”的感觉。
+   *
+   * @param anchor 提供贴图和颜色参考的当前棋子。
+   * @param position 爆点中心位置。
+   * @param strength 本次消除数量，用来轻微放大爆点规模。
+   */
+  private spawnUpgradeImpact(anchor: PieceController, position: Vec3, strength: number) {
+    if (!this.transientFx.canRegister(1)) {
+      return
+    }
+
+    const impact = this.createFxPiece(anchor)
+    const opacity = impact.addComponent(UIOpacity)
+    opacity.opacity = 150
+    impact.setParent(this.node)
+    impact.setSiblingIndex(this.node.children.length - 1)
+    impact.setPosition(position)
+    impact.setScale(new Vec3(0.58, 0.58, 1))
+
+    const sprite = impact.getComponent(Sprite)
+    if (sprite) {
+      sprite.color = new Color(255, 246, 176, 255)
+    }
+
+    this.transientFx.register(impact)
+    const targetScale = 1.34 + Math.min(strength, 4) * 0.08
+    tween(impact)
+      .parallel(
+        tween().to(0.26, { scale: new Vec3(targetScale, targetScale, 1) }, { easing: 'sineOut' }),
+        tween(opacity).to(0.26, { opacity: 0 }, { easing: 'sineOut' })
+      )
+      .call(() => this.transientFx.destroy(impact))
+      .start()
+  }
+
   /**
    * 在合并锚点位置生成短暂闪光。
    *
@@ -1750,7 +1854,7 @@ export class PlayController extends Component {
    *
    * @param anchor 提供贴图和颜色参考的锚点棋子。
    * @param position 闪光出现的位置。
-   * @param strength 本次合并强度，通常与被吞并棋子数量相关。
+   * @param strength 本次合并强度，通常与被消除棋子数量相关。
    */
   private spawnMergeFlash(anchor: PieceController, position: Vec3, strength: number) {
     if (!this.transientFx.canRegister(1)) {
@@ -1759,21 +1863,21 @@ export class PlayController extends Component {
 
     const flash = this.createFxPiece(anchor)
     const opacity = flash.addComponent(UIOpacity)
-    opacity.opacity = 120
+    opacity.opacity = 88
     flash.setParent(this.node)
     flash.setPosition(position)
-    flash.setScale(new Vec3(0.9, 0.9, 1))
+    flash.setScale(new Vec3(0.82, 0.82, 1))
     const sprite = flash.getComponent(Sprite)
     if (sprite) {
       sprite.color = new Color(255, 248, 214, 255)
     }
     this.transientFx.register(flash)
 
-    const targetScale = 1.1 + Math.min(strength, 2) * 0.08
+    const targetScale = 1.08 + Math.min(strength, 2) * 0.05
     tween(flash)
       .parallel(
-        tween().to(0.12, { scale: new Vec3(targetScale, targetScale, 1) }, { easing: 'quadOut' }),
-        tween(opacity).to(0.12, { opacity: 0 })
+        tween().to(0.22, { scale: new Vec3(targetScale, targetScale, 1) }, { easing: 'sineOut' }),
+        tween(opacity).to(0.22, { opacity: 0 }, { easing: 'sineOut' })
       )
       .call(() => this.transientFx.destroy(flash))
       .start()
@@ -1789,21 +1893,21 @@ export class PlayController extends Component {
    * @param strength 本次合并强度。
    */
   private spawnMergeBurst(anchor: PieceController, position: Vec3, strength: number) {
-    const count = Math.min(4, 2 + strength)
+    const count = Math.min(3, 1 + strength)
     if (!this.transientFx.canRegister(count)) {
       return
     }
 
-    const radius = 48 + strength * 8
+    const radius = 28 + strength * 5
     for (let i = 0; i < count; i++) {
       const particle = this.createFxPiece(anchor)
       const opacity = particle.addComponent(UIOpacity)
-      opacity.opacity = 150
+      opacity.opacity = 120
       const transform = particle.getComponent(UITransform)
       transform?.setContentSize(14, 14)
       particle.setParent(this.node)
       particle.setPosition(position)
-      particle.setScale(new Vec3(0.15, 0.15, 1))
+      particle.setScale(new Vec3(0.14, 0.14, 1))
       this.transientFx.register(particle)
 
       const angle = (Math.PI * 2 * i) / count + Math.random() * 0.35
@@ -1816,8 +1920,8 @@ export class PlayController extends Component {
 
       tween(particle)
         .parallel(
-          tween().to(0.18, { position: target, scale: new Vec3(0.04, 0.04, 1) }, { easing: 'quadOut' }),
-          tween(opacity).to(0.18, { opacity: 0 })
+          tween().to(0.24, { position: target, scale: new Vec3(0.08, 0.08, 1) }, { easing: 'sineOut' }),
+          tween(opacity).to(0.24, { opacity: 0 }, { easing: 'sineOut' })
         )
         .call(() => this.transientFx.destroy(particle))
         .start()
