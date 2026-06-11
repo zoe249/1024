@@ -106,10 +106,10 @@ export class PlayUIController extends Component {
   private spacing = 10
   // 由逻辑层注入的暂停切换回调，按钮点击后只通知逻辑，不直接改游戏状态。
   private pauseHandler: (() => void) | null = null
-  // 返回首页按钮只把意图通知逻辑层，UI 层不直接清空棋盘。
-  private returnHomeHandler: (() => void) | null = null
-  // 排行榜按钮只把意图通知逻辑层，UI 层不直接关心榜单来源。
-  private rankHandler: (() => void) | null = null
+  // 暂停弹窗重玩按钮只转交给逻辑层处理，不直接清棋盘。
+  private pauseReplayHandler: (() => void) | null = null
+  // 暂停弹窗回首页按钮只转交给逻辑层处理，不直接切页面。
+  private pauseHomeHandler: (() => void) | null = null
   // 第一个技能按钮只通知逻辑层进入炸弹技能，不在 UI 层直接操作棋盘。
   private bombSkillHandler: (() => void) | null = null
   // 第二个技能按钮只通知逻辑层进入锤子技能，不在 UI 层直接操作棋盘。
@@ -183,8 +183,8 @@ export class PlayUIController extends Component {
     pieceSize: number
     spacing: number
     onPauseTap: () => void
-    onReturnHomeTap: () => void
-    onRankTap: () => void
+    onPauseReplayTap: () => void
+    onPauseHomeTap: () => void
     onBombSkillTap: () => void
     onHammerSkillTap: () => void
     onSwapSkillTap: () => void
@@ -197,8 +197,8 @@ export class PlayUIController extends Component {
     this.pieceSize = options.pieceSize
     this.spacing = options.spacing
     this.pauseHandler = options.onPauseTap
-    this.returnHomeHandler = options.onReturnHomeTap
-    this.rankHandler = options.onRankTap
+    this.pauseReplayHandler = options.onPauseReplayTap
+    this.pauseHomeHandler = options.onPauseHomeTap
     this.bombSkillHandler = options.onBombSkillTap
     this.hammerSkillHandler = options.onHammerSkillTap
     this.swapSkillHandler = options.onSwapSkillTap
@@ -529,8 +529,8 @@ export class PlayUIController extends Component {
     this.pauseOverlayController.setup({
       hostNode: this.node,
       pauseHandler: this.pauseHandler,
-      homeHandler: this.returnHomeHandler,
-      rankHandler: this.rankHandler
+      replayHandler: this.pauseReplayHandler,
+      homeHandler: this.pauseHomeHandler
     })
   }
 

@@ -4,10 +4,9 @@
   Color,
   Component,
   EventTouch,
-  Graphics,
   Node,
+  screen,
   Sprite,
-  SpriteFrame,
   tween,
   Tween,
   UITransform,
@@ -28,7 +27,8 @@ const PAUSE_PANEL_HIDDEN_GAP = 32
 const AUDIO_MUSIC_VOLUME_KEY = 'play.audio.musicVolume'
 // 音效音量本地存储键。
 const AUDIO_SOUND_EFFECT_KEY = 'play.audio.soundEffectVolume'
-type PauseActionKind = 'home' | 'rank'
+// 暂停层底部动作按钮的安全区基础留白。
+const PAUSE_ACTION_SAFE_BOTTOM_PADDING = 108
 
 @ccclass('PauseOverlayController')
 export class PauseOverlayController extends Component {
@@ -74,43 +74,38 @@ export class PauseOverlayController extends Component {
   private isPaused = false
   // 由逻辑层注入的暂停切换回调，按钮点击后只通知逻辑，不直接改游戏状态。
   private pauseHandler: (() => void) | null = null
-  // 返回首页只通知逻辑层清理当前对局并展示首页。
+  // 暂停层重玩按钮只通知逻辑层重开当前对局。
+  private replayHandler: (() => void) | null = null
+  // 暂停层回首页按钮只通知逻辑层清理对局并展示首页。
   private homeHandler: (() => void) | null = null
-  // 排行榜按钮只通知逻辑层打开排行入口，弹窗层不直接关心榜单数据来源。
-  private rankHandler: (() => void) | null = null
-  // 返回首页按钮节点，缓存后便于销毁时解绑事件。
-  private homeButtonNode: Node | null = null
-  // 排行榜按钮节点，缓存后便于销毁时解绑事件。
-  private rankButtonNode: Node | null = null
   // 关闭弹窗的按钮
   @property({ type: Node, tooltip: '关闭按钮节点' })
   private closeButtonNode: Node | null = null
-  // 历史分享按钮贴图仍保留给 scene 序列化兼容，新版右下按钮已改为代码绘制排行榜图标。
-  @property({ type: SpriteFrame, tooltip: '历史分享按钮图片，当前版本不再使用' })
-  private shareButtonSpriteFrame: SpriteFrame | null = null
-  // 返回首页按钮使用新增 HomeBtn 图片资源，确保暂停底部按钮是真正的图片按钮。
-  @property({ type: SpriteFrame, tooltip: '返回首页按钮图片' })
-  private homeButtonSpriteFrame: SpriteFrame | null = null
-  // 排行榜按钮优先使用现有 RankBtn 图片资源，未绑定时才退回代码绘制图标。
-  @property({ type: SpriteFrame, tooltip: '排行榜按钮图片' })
-  private rankButtonSpriteFrame: SpriteFrame | null = null
+  // 面板里的 Play/继续按钮，点击后和关闭按钮一样通知逻辑层恢复游戏。
+  private playButtonNode: Node | null = null
+  // 层级管理器中配置的重玩按钮节点，兼容当前 Repay 命名和标准 Replay 命名。
+  private replayButtonNode: Node | null = null
+  // 层级管理器中配置的回首页按钮节点。
+  private homeButtonNode: Node | null = null
 
-  // 由外部 UI 组件在启动时调用，把 play 根节点传进来，方便暂停层复用已有资源。
+  // 由外部 UI 组件在启动时调用，把 play 根节点传进来；暂停层只绑定已有按钮，不创建额外层级。
   setup(options: {
     hostNode: Node
     pauseHandler: (() => void) | null
+    replayHandler: (() => void) | null
     homeHandler: (() => void) | null
-    rankHandler: (() => void) | null
   }) {
     this.hostNode = options.hostNode
     this.pauseHandler = options.pauseHandler
+    this.replayHandler = options.replayHandler
     this.homeHandler = options.homeHandler
-    this.rankHandler = options.rankHandler
     this.ensureOverlayStructure()
     this.ensurePauseOverlayMaskSprite()
     this.bindPauseOverlayMask()
     this.ensureAudioControls()
-    this.ensureActionButtons()
+    this.bindPlayButton()
+    this.bindPauseActionButtons()
+    this.layoutPauseActionButtons()
     this.refreshPauseOverlay()
 
     // 绑定关闭按钮事件，点击后调用 pauseHandler 继续游戏
@@ -122,7 +117,7 @@ export class PauseOverlayController extends Component {
   syncLayout() {
     this.ensurePauseOverlayMaskSprite()
     this.configureAudioControlLayout()
-    this.configureActionButtonLayout()
+    this.layoutPauseActionButtons()
     this.refreshAudioControls()
     this.refreshPauseOverlay()
   }
@@ -144,8 +139,9 @@ export class PauseOverlayController extends Component {
       this.onSoundEffectControlTouch
     )
     this.closeButtonNode?.off(Node.EventType.TOUCH_END, this.onCloseButtonTap, this)
-    this.unbindActionButtonTouchEvents(this.homeButtonNode, this.onHomeButtonTap)
-    this.unbindActionButtonTouchEvents(this.rankButtonNode, this.onRankButtonTap)
+    this.unbindPauseActionButton(this.playButtonNode, this.onCloseButtonTap)
+    this.unbindPauseActionButton(this.replayButtonNode, this.onReplayButtonTap)
+    this.unbindPauseActionButton(this.homeButtonNode, this.onHomeButtonTap)
   }
 
   // PauseOverlay 节点优先复用 scene 中现成的 Mask 和 Panel，缺失时再补最小结构。
@@ -194,27 +190,77 @@ export class PauseOverlayController extends Component {
     this.pauseHandler?.()
   }
 
+  private onReplayButtonTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.replayHandler?.()
+  }
+
   private onHomeButtonTap(event: EventTouch) {
     event.propagationStopped = true
     this.homeHandler?.()
   }
 
-  private onRankButtonTap(event: EventTouch) {
-    event.propagationStopped = true
-    this.rankHandler?.()
+  // Play 按钮是暂停面板里已有的继续按钮，兼容旧命名 Save 和 Continue。
+  private bindPlayButton() {
+    this.playButtonNode = this.findExistingPauseActionNode(['Play', 'Save', 'Continue'])
+    this.bindPauseActionButton(this.playButtonNode, this.onCloseButtonTap)
   }
 
-  // 动作按钮自己先拦截触摸开始和移动，避免事件被全屏 Mask 提前吞掉。
-  private bindActionButtonTouchEvents(node: Node | null, endHandler: (event: EventTouch) => void) {
-    this.unbindActionButtonTouchEvents(node, endHandler)
+  // 只绑定层级管理器中已经存在的暂停动作按钮，不在脚本里创建或隐藏任何按钮节点。
+  private bindPauseActionButtons() {
+    this.replayButtonNode = this.findExistingPauseActionNode(['Repay', 'Replay'])
+    this.homeButtonNode = this.findExistingPauseActionNode(['Home'])
+    this.bindPauseActionButton(this.replayButtonNode, this.onReplayButtonTap)
+    this.bindPauseActionButton(this.homeButtonNode, this.onHomeButtonTap)
+  }
+
+  // 这两个按钮来自层级管理器，这里只根据安全区修正位置，不创建新节点。
+  private layoutPauseActionButtons() {
+    const overlayTransform = this.node.getComponent(UITransform)
+    if (!overlayTransform) {
+      return
+    }
+
+    const safeArea = sys.getSafeAreaRect()
+    const safeBottom = safeArea
+      ? (safeArea.y / Math.max(1, screen.windowSize.height)) * overlayTransform.height
+      : 0
+    const edgeInsetX = Math.max(96, Math.min(132, overlayTransform.width * 0.15))
+    const bottomInsetY = Math.max(PAUSE_ACTION_SAFE_BOTTOM_PADDING, safeBottom + PAUSE_ACTION_SAFE_BOTTOM_PADDING)
+    const buttonY = -overlayTransform.height * 0.5 + bottomInsetY
+
+    this.homeButtonNode?.setPosition(-overlayTransform.width * 0.5 + edgeInsetX, buttonY, 0)
+    this.replayButtonNode?.setPosition(overlayTransform.width * 0.5 - edgeInsetX, buttonY, 0)
+  }
+
+  // 新按钮可能被放在 PauseOverlay 根节点、Panel 或 Mask 下，这里只做浅层兼容查找。
+  private findExistingPauseActionNode(names: string[]) {
+    const parents = [this.node, this.pauseOverlayPanel, this.pauseOverlayMask]
+    for (const parent of parents) {
+      if (!parent) {
+        continue
+      }
+      for (const name of names) {
+        const node = parent.getChildByName(name)
+        if (node) {
+          return node
+        }
+      }
+    }
+    return null
+  }
+
+  // 按钮节点自己拦截触摸过程，避免事件继续传到底层棋盘或遮罩。
+  private bindPauseActionButton(node: Node | null, endHandler: (event: EventTouch) => void) {
+    this.unbindPauseActionButton(node, endHandler)
     node?.on(Node.EventType.TOUCH_START, this.swallowOverlayTouch, this)
     node?.on(Node.EventType.TOUCH_MOVE, this.swallowOverlayTouch, this)
     node?.on(Node.EventType.TOUCH_CANCEL, this.swallowOverlayTouch, this)
     node?.on(Node.EventType.TOUCH_END, endHandler, this)
   }
 
-  // 关闭或销毁暂停层时统一清理动作按钮事件，避免重复绑定导致一次点击触发多次。
-  private unbindActionButtonTouchEvents(node: Node | null, endHandler: (event: EventTouch) => void) {
+  // 销毁或重复 setup 前统一解绑，避免一次点击触发多次回调。
+  private unbindPauseActionButton(node: Node | null, endHandler: (event: EventTouch) => void) {
     node?.off(Node.EventType.TOUCH_START, this.swallowOverlayTouch, this)
     node?.off(Node.EventType.TOUCH_MOVE, this.swallowOverlayTouch, this)
     node?.off(Node.EventType.TOUCH_CANCEL, this.swallowOverlayTouch, this)
@@ -286,183 +332,6 @@ export class PauseOverlayController extends Component {
     this.bindAudioControlEvents()
     this.refreshAudioControls()
     this.applyAudioSettings()
-  }
-
-  // 暂停遮罩底部新增动作区：返回首页和排行榜都通过回调交给逻辑层处理。
-  private ensureActionButtons() {
-    const panel = this.pauseOverlayPanel
-    const actionParent = this.pauseOverlayMask ?? this.node
-    if (!panel || !actionParent) {
-      return
-    }
-
-    const legacySaveButton = panel.getChildByName('Save')
-    if (legacySaveButton) {
-      // 旧的“保存”按钮没有对应功能，先隐藏给新动作区让位。
-      legacySaveButton.active = false
-    }
-    // 兼容旧版本运行时创建在面板里的动作按钮，避免新旧按钮同时显示或拦截触摸。
-    const oldHomeButton = panel.getChildByName('HomeButton')
-    const oldShareButton = panel.getChildByName('ShareButton')
-    if (oldHomeButton) {
-      oldHomeButton.active = false
-    }
-    if (oldShareButton) {
-      oldShareButton.active = false
-    }
-
-    this.homeButtonNode = this.ensureActionButton(actionParent, 'HomeButton', 'home')
-    this.rankButtonNode = this.ensureActionButton(actionParent, 'RankButton', 'rank')
-    this.configureActionButtonLayout()
-
-    this.bindActionButtonTouchEvents(this.homeButtonNode, this.onHomeButtonTap)
-    this.bindActionButtonTouchEvents(this.rankButtonNode, this.onRankButtonTap)
-  }
-
-  // 动作按钮改成纯图标形态，文字节点仅做历史兼容隐藏，不参与显示。
-  private ensureActionButton(parent: Node, name: string, kind: PauseActionKind) {
-    let button = parent.getChildByName(name)
-    if (!button) {
-      button = new Node(name)
-      button.setParent(parent)
-      button.addComponent(UITransform).setContentSize(124, 124)
-
-      const card = new Node('Card')
-      card.setParent(button)
-      card.setPosition(0, 0, 0)
-      card.addComponent(UITransform).setContentSize(112, 112)
-      const cardGraphics = card.addComponent(Graphics)
-      cardGraphics.fillColor = new Color(255, 255, 255, 238)
-      cardGraphics.roundRect(-56, -56, 112, 112, 30)
-      cardGraphics.fill()
-      cardGraphics.lineWidth = 3
-      cardGraphics.strokeColor = new Color(205, 237, 240, 180)
-      cardGraphics.roundRect(-54, -54, 108, 108, 28)
-      cardGraphics.stroke()
-
-      this.ensureActionIcon(button, kind)
-    }
-
-    const transform = button.getComponent(UITransform)
-    if (transform) {
-      transform.setContentSize(124, 124)
-    }
-    const card = button.getChildByName('Card')
-    const cardTransform = card?.getComponent(UITransform)
-    const cardGraphics = card?.getComponent(Graphics)
-    if (card && cardTransform && cardGraphics) {
-      card.setPosition(0, 0, 0)
-      cardTransform.setContentSize(112, 112)
-      card.active = !this.getActionButtonSpriteFrame(kind)
-      cardGraphics.clear()
-      cardGraphics.fillColor = new Color(255, 255, 255, 238)
-      cardGraphics.roundRect(-56, -56, 112, 112, 30)
-      cardGraphics.fill()
-      cardGraphics.lineWidth = 3
-      cardGraphics.strokeColor = new Color(205, 237, 240, 180)
-      cardGraphics.roundRect(-54, -54, 108, 108, 28)
-      cardGraphics.stroke()
-    }
-    const legacyLabel = button.getChildByName('Label')
-    if (legacyLabel) {
-      // 旧版带文字按钮升级为图标按钮时隐藏文字，避免遮罩底部显得拥挤。
-      legacyLabel.active = false
-    }
-    this.ensureActionIcon(button, kind)
-    return button
-  }
-
-  // 优先使用图片资源作为暂停底部按钮，资源未绑定时才允许后续代码绘制兜底。
-  private getActionButtonSpriteFrame(kind: PauseActionKind) {
-    return kind === 'home' ? this.homeButtonSpriteFrame : this.rankButtonSpriteFrame
-  }
-
-  private ensureActionIcon(parent: Node, kind: PauseActionKind) {
-    let icon = parent.getChildByName('Icon')
-    if (!icon) {
-      icon = new Node('Icon')
-      icon.setParent(parent)
-    }
-    icon.setPosition(0, 0, 0)
-    const transform = icon.getComponent(UITransform) ?? icon.addComponent(UITransform)
-    transform.setContentSize(88, 88)
-
-    const sprite = icon.getComponent(Sprite) ?? icon.addComponent(Sprite)
-    const graphics = icon.getComponent(Graphics) ?? icon.addComponent(Graphics)
-    graphics.clear()
-    sprite.enabled = false
-    const actionSpriteFrame = this.getActionButtonSpriteFrame(kind)
-    if (actionSpriteFrame) {
-      // 暂停底部按钮直接使用图片素材，保证按钮本体不是代码绘制图形。
-      sprite.enabled = true
-      sprite.spriteFrame = actionSpriteFrame
-      sprite.sizeMode = Sprite.SizeMode.CUSTOM
-      graphics.enabled = false
-      transform.setContentSize(112, 116)
-      return
-    }
-
-    graphics.enabled = true
-    if (kind === 'home') {
-      this.drawHomeIcon(graphics)
-      return
-    }
-
-    this.drawRankIcon(graphics)
-  }
-
-  // 遮罩层底部按钮根据当前遮罩尺寸动态贴边，兼容不同屏幕和安全区高度。
-  private configureActionButtonLayout() {
-    const actionParent = this.pauseOverlayMask ?? this.node
-    const parentTransform = actionParent.getComponent(UITransform)
-    if (!parentTransform) {
-      return
-    }
-
-    const edgeInsetX = Math.max(96, Math.min(132, parentTransform.width * 0.15))
-    const bottomInsetY = Math.max(98, Math.min(132, parentTransform.height * 0.09))
-    const leftX = -parentTransform.width * 0.5 + edgeInsetX
-    const rightX = parentTransform.width * 0.5 - edgeInsetX
-    const bottomY = -parentTransform.height * 0.5 + bottomInsetY
-    this.homeButtonNode?.setPosition(leftX, bottomY, 0)
-    this.rankButtonNode?.setPosition(rightX, bottomY, 0)
-  }
-
-  // 返回首页没有现成贴图时用简单房子图标，避免用“重开”图标造成语义偏差。
-  private drawHomeIcon(graphics: Graphics) {
-    graphics.fillColor = new Color(73, 215, 164, 255)
-    graphics.circle(0, 0, 42)
-    graphics.fill()
-    graphics.fillColor = new Color(255, 255, 255, 255)
-    graphics.moveTo(0, 28)
-    graphics.lineTo(-34, 2)
-    graphics.lineTo(-24, 2)
-    graphics.lineTo(-24, -28)
-    graphics.lineTo(24, -28)
-    graphics.lineTo(24, 2)
-    graphics.lineTo(34, 2)
-    graphics.lineTo(0, 28)
-    graphics.fill()
-    graphics.fillColor = new Color(73, 215, 164, 255)
-    graphics.roundRect(-7, -28, 14, 22, 3)
-    graphics.fill()
-  }
-
-  // 排行榜图标用柱状榜单造型，和右下“排行榜”文字语义保持一致。
-  private drawRankIcon(graphics: Graphics) {
-    graphics.fillColor = new Color(255, 95, 147, 255)
-    graphics.circle(0, 0, 42)
-    graphics.fill()
-    graphics.fillColor = new Color(255, 255, 255, 255)
-    graphics.roundRect(-24, -24, 12, 34, 5)
-    graphics.roundRect(-6, -24, 12, 52, 5)
-    graphics.roundRect(12, -24, 12, 42, 5)
-    graphics.fill()
-    graphics.lineWidth = 5
-    graphics.strokeColor = new Color(255, 255, 255, 255)
-    graphics.moveTo(-30, -28)
-    graphics.lineTo(30, -28)
-    graphics.stroke()
   }
 
   // 读取本地保存的背景音乐和音效音量，保证玩家下次进入游戏时保持上次设置。

@@ -213,8 +213,10 @@ export class PlayController extends Component {
       pieceSize: this.pieceSize,
       spacing: this.spacing,
       onPauseTap: () => this.togglePauseFromUi(),
-      onReturnHomeTap: () => this.returnToStartPageFromPause(),
-      onRankTap: () => this.showRankFromPause(),
+      onPauseReplayTap: () => {
+        void this.restartGame()
+      },
+      onPauseHomeTap: () => this.returnToStartPageFromPause(),
       onBombSkillTap: () => this.toggleBombSkillFromUi(),
       onHammerSkillTap: () => this.toggleHammerSkillFromUi(),
       onSwapSkillTap: () => this.toggleSwapSkillFromUi(),
