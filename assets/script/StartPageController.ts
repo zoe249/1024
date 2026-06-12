@@ -6,6 +6,8 @@ import {
   Graphics,
   Label,
   Node,
+  Sprite,
+  SpriteFrame,
   tween,
   Tween,
   UITransform,
@@ -17,6 +19,11 @@ const { ccclass } = _decorator
 
 type StartPageOptions = {
   onStartTap: () => void
+  onShareTap?: () => void
+  backgroundSpriteFrame?: SpriteFrame | null
+  rankButtonSpriteFrame?: SpriteFrame | null
+  settingsButtonSpriteFrame?: SpriteFrame | null
+  shareButtonSpriteFrame?: SpriteFrame | null
 }
 
 type RankEntry = {
@@ -36,6 +43,10 @@ const LIGHT_TEXT = new Color(255, 255, 255, 255)
 const SUBTEXT_COLOR = new Color(105, 153, 164, 255)
 const YELLOW_COLOR = new Color(246, 231, 153, 205)
 const GREEN_CIRCLE = new Color(176, 223, 150, 158)
+const START_BUTTON_WIDTH = 332
+const START_BUTTON_HEIGHT = 90
+const ACTION_ICON_WIDTH = 80
+const ACTION_ICON_HEIGHT = 82
 // 首页排行榜需要轻雾化遮罩，暂停中复用排行榜时则保持透明，避免覆盖原有深色暂停蒙版。
 const RANK_MASK_HOME_COLOR = new Color(234, 246, 250, 212)
 const RANK_MASK_PAUSE_COLOR = new Color(0, 0, 0, 0)
@@ -60,6 +71,7 @@ const TIP_TEXTS = [
 @ccclass('StartPageController')
 export class StartPageController extends Component {
   private startHandler: (() => void) | null = null
+  private shareHandler: (() => void) | null = null
   private rootNode: Node | null = null
   private pageCardNode: Node | null = null
   private rankMaskNode: Node | null = null
@@ -68,15 +80,26 @@ export class StartPageController extends Component {
   private toastOpacity: UIOpacity | null = null
   private startButtonNode: Node | null = null
   private rankButtonNode: Node | null = null
+  private settingsButtonNode: Node | null = null
+  private shareButtonNode: Node | null = null
   private tipLabel: Label | null = null
   private tipOpacity: UIOpacity | null = null
   private currentTipIndex = -1
+  private backgroundSpriteFrame: SpriteFrame | null = null
+  private rankButtonSpriteFrame: SpriteFrame | null = null
+  private settingsButtonSpriteFrame: SpriteFrame | null = null
+  private shareButtonSpriteFrame: SpriteFrame | null = null
   // 暂停页打开排行榜时只借用榜单弹窗，不显示首页背景和首页卡片。
   private isRankOnlyMode = false
   private pageDecorNodes: Node[] = []
 
   setup(options: StartPageOptions) {
     this.startHandler = options.onStartTap
+    this.shareHandler = options.onShareTap ?? null
+    this.backgroundSpriteFrame = options.backgroundSpriteFrame ?? null
+    this.rankButtonSpriteFrame = options.rankButtonSpriteFrame ?? null
+    this.settingsButtonSpriteFrame = options.settingsButtonSpriteFrame ?? null
+    this.shareButtonSpriteFrame = options.shareButtonSpriteFrame ?? null
     this.ensurePage()
     this.syncLayout()
     this.show()
@@ -176,8 +199,10 @@ export class StartPageController extends Component {
   }
 
   onDestroy() {
-    this.startButtonNode?.off(Node.EventType.TOUCH_END, this.handleStartTap, this)
-    this.rankButtonNode?.off(Node.EventType.TOUCH_END, this.handleRankTap, this)
+    this.unbindPressableButton(this.startButtonNode, this.handleStartTap)
+    this.unbindPressableButton(this.rankButtonNode, this.handleRankTap)
+    this.unbindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
+    this.unbindPressableButton(this.shareButtonNode, this.handleShareTap)
     this.rankMaskNode?.off(Node.EventType.TOUCH_END, this.hideRankModal, this)
     this.toastNode?.off(Node.EventType.TOUCH_END, this.consumeTouch, this)
     if (this.tipOpacity) {
@@ -202,6 +227,12 @@ export class StartPageController extends Component {
     background.addComponent(UITransform)
     background.addComponent(Graphics)
 
+    // 首页背景图独立放在子节点上，父节点保留 Graphics 兜底，资源丢失时仍能绘制旧背景。
+    const backgroundImage = new Node('BackgroundImage')
+    backgroundImage.setParent(background)
+    backgroundImage.addComponent(UITransform)
+    backgroundImage.addComponent(Sprite)
+
     const card = new Node('PageCard')
     card.setParent(root)
     card.addComponent(UITransform)
@@ -215,10 +246,9 @@ export class StartPageController extends Component {
 
     this.buildTitleCard(card)
     this.buildFloatingTiles(card)
-    this.startButtonNode = this.createPrimaryButton(card, 'StartButton', '开始游戏', MINT_COLOR, 90)
-    this.rankButtonNode = this.createPrimaryButton(card, 'RankButton', '排行榜', BLUE_COLOR, 10)
-    this.startButtonNode.on(Node.EventType.TOUCH_END, this.handleStartTap, this)
-    this.rankButtonNode.on(Node.EventType.TOUCH_END, this.handleRankTap, this)
+    this.startButtonNode = this.createStartButton(card)
+    this.bindPressableButton(this.startButtonNode, this.handleStartTap)
+    this.buildActionButtons(card)
     this.buildTipText(card)
     this.buildRankModal(root)
     this.buildToast(root)
@@ -229,6 +259,9 @@ export class StartPageController extends Component {
     const background = this.rootNode?.getChildByName('Background')
     const backgroundTransform = background?.getComponent(UITransform) ?? null
     const graphics = background?.getComponent(Graphics) ?? null
+    const backgroundImage = background?.getChildByName('BackgroundImage') ?? null
+    const backgroundImageTransform = backgroundImage?.getComponent(UITransform) ?? null
+    const backgroundImageSprite = backgroundImage?.getComponent(Sprite) ?? null
     const rootTransform = this.rootNode?.getComponent(UITransform) ?? null
     if (!background || !backgroundTransform || !graphics || !rootTransform) {
       return
@@ -236,6 +269,17 @@ export class StartPageController extends Component {
 
     backgroundTransform.setContentSize(rootTransform.width, rootTransform.height)
     graphics.clear()
+    if (this.backgroundSpriteFrame && backgroundImage && backgroundImageTransform && backgroundImageSprite) {
+      backgroundImage.active = true
+      this.fitBackgroundImage(backgroundImageTransform, backgroundImageSprite, rootTransform.width, rootTransform.height)
+      return
+    }
+
+    if (backgroundImage) {
+      backgroundImage.active = false
+    }
+
+    // 未绑定图片时保留旧的低亮点阵背景，避免开发期或资源缺失时首页空白。
     graphics.fillColor = PAGE_BG_COLOR
     graphics.rect(-rootTransform.width / 2, -rootTransform.height / 2, rootTransform.width, rootTransform.height)
     graphics.fill()
@@ -248,6 +292,26 @@ export class StartPageController extends Component {
       }
     }
     graphics.fill()
+  }
+
+  /**
+   * 按 cover 规则铺满首页背景图。
+   *
+   * World_3_BG 是竖版大图，直接拉伸会在 Web 横屏预览时变形；这里使用较大的缩放比，
+   * 让图片始终保持原始比例并覆盖完整屏幕，多出的部分交给画布边界裁掉。
+   */
+  private fitBackgroundImage(backgroundTransform: UITransform, sprite: Sprite, screenWidth: number, screenHeight: number) {
+    const imageSize = this.backgroundSpriteFrame?.originalSize
+    const imageWidth = imageSize?.width ?? screenWidth
+    const imageHeight = imageSize?.height ?? screenHeight
+    const scale = Math.max(screenWidth / imageWidth, screenHeight / imageHeight)
+
+    backgroundTransform.setContentSize(Math.ceil(imageWidth * scale), Math.ceil(imageHeight * scale))
+    sprite.spriteFrame = this.backgroundSpriteFrame
+    sprite.type = Sprite.Type.SIMPLE
+    sprite.sizeMode = Sprite.SizeMode.CUSTOM
+    sprite.color = new Color(255, 255, 255, 255)
+    sprite.enabled = true
   }
 
   private redrawCard() {
@@ -265,49 +329,67 @@ export class StartPageController extends Component {
     }
 
     this.pageCardNode.getChildByName('TitleCard')?.setPosition(0, cardHeight * 0.31, 0)
-    this.pageCardNode.getChildByName('TileRow')?.setPosition(0, cardHeight * 0.12, 0)
+    this.pageCardNode.getChildByName('TileRow')?.setPosition(0, cardHeight * 0.08, 0)
     this.pageDecorNodes[0]?.setPosition(-cardWidth * 0.33, cardHeight * 0.34, 0)
     this.pageDecorNodes[1]?.setPosition(cardWidth * 0.28, cardHeight * 0.39, 0)
-    this.startButtonNode?.setPosition(0, -cardHeight * 0.06, 0)
-    this.rankButtonNode?.setPosition(0, -cardHeight * 0.19, 0)
-    this.pageCardNode.getChildByName('TipText')?.setPosition(0, -cardHeight * 0.37, 0)
+    this.startButtonNode?.setPosition(0, -cardHeight * 0.15, 0)
+    this.pageCardNode.getChildByName('ActionBar')?.setPosition(0, -cardHeight * 0.31, 0)
+    this.pageCardNode.getChildByName('TipText')?.setPosition(0, -cardHeight * 0.42, 0)
   }
 
   private buildTitleCard(parent: Node) {
     const card = new Node('TitleCard')
     card.setParent(parent)
-    card.addComponent(UITransform).setContentSize(420, 166)
+    card.addComponent(UITransform).setContentSize(560, 236)
     const graphics = card.addComponent(Graphics)
-    graphics.fillColor = new Color(70, 178, 160, 22)
-    graphics.roundRect(-194, -88, 388, 150, 34)
+    graphics.fillColor = new Color(60, 94, 126, 38)
+    graphics.roundRect(-246, -96, 492, 170, 42)
     graphics.fill()
-    graphics.fillColor = new Color(245, 251, 247, 232)
-    graphics.roundRect(-210, -78, 420, 156, 36)
+    graphics.fillColor = new Color(255, 255, 255, 106)
+    graphics.roundRect(-230, -84, 460, 164, 40)
     graphics.fill()
-    graphics.fillColor = new Color(190, 226, 228, 82)
-    graphics.roundRect(-120, 48, 240, 10, 5)
+    graphics.fillColor = new Color(255, 247, 219, 226)
+    graphics.roundRect(-124, -102, 248, 52, 26)
     graphics.fill()
 
-    this.createTitleAccent(card, 'TitleLeaf', -164, 30, 36, new Color(176, 223, 150, 120))
-    this.createTitleAccent(card, 'TitleSun', 168, 36, 44, new Color(246, 231, 153, 118))
-    this.createTitleAccent(card, 'TitleDotLeft', -136, -42, 9, new Color(MINT_COLOR.r, MINT_COLOR.g, MINT_COLOR.b, 178))
-    this.createTitleAccent(card, 'TitleDotRight', 134, -42, 9, new Color(BLUE_COLOR.r, BLUE_COLOR.g, BLUE_COLOR.b, 168))
+    this.createTitleAccent(card, 'TitleLeaf', -220, 66, 34, new Color(176, 223, 150, 116))
+    this.createTitleAccent(card, 'TitleSun', 220, 70, 42, new Color(246, 231, 153, 118))
+    this.createTitleAccent(card, 'TitleDotLeft', -178, -56, 8, new Color(MINT_COLOR.r, MINT_COLOR.g, MINT_COLOR.b, 170))
+    this.createTitleAccent(card, 'TitleDotRight', 178, -56, 8, new Color(BLUE_COLOR.r, BLUE_COLOR.g, BLUE_COLOR.b, 168))
 
-    // 主标题改成完整字标，避免拆成棋子后显得过碎。
-    const titleShadow = this.createLabel(card, 'TitleShadow', '1024', 78, new Color(47, 117, 128, 54), new Vec3(0, 10, 0))
-    titleShadow.isBold = true
-    titleShadow.lineHeight = 86
-    titleShadow.node.getComponent(UITransform)?.setContentSize(360, 92)
+    // 标题改为四颗数字块，呼应玩法里的数字合成，同时比单行字标更有首页记忆点。
+    this.createTitleDigit(card, '1', -156, 18, new Color(255, 105, 151, 255))
+    this.createTitleDigit(card, '0', -52, 26, new Color(255, 172, 84, 255))
+    this.createTitleDigit(card, '2', 52, 18, new Color(68, 194, 222, 255))
+    this.createTitleDigit(card, '4', 156, 26, new Color(103, 205, 116, 255))
 
-    const title = this.createLabel(card, 'Title', '1024', 78, TEAL_COLOR, new Vec3(0, 18, 0))
-    title.isBold = true
-    title.lineHeight = 86
-    title.node.getComponent(UITransform)?.setContentSize(360, 92)
-
-    const subtitle = this.createCapsule(card, 'SubtitleBadge', '数字花园', 0, -50, 176, 38, new Color(224, 244, 237, 238), SUBTEXT_COLOR)
-    subtitle.fontSize = 22
-    subtitle.lineHeight = 28
+    const subtitle = this.createCapsule(card, 'SubtitleBadge', '数字花园', 0, -76, 214, 42, new Color(255, 247, 219, 0), new Color(164, 78, 72, 255))
+    subtitle.fontSize = 25
+    subtitle.lineHeight = 32
     subtitle.isBold = true
+  }
+
+  private createTitleDigit(parent: Node, text: string, x: number, y: number, color: Color) {
+    const node = new Node(`TitleDigit${text}`)
+    node.setParent(parent)
+    node.setPosition(x, y, 0)
+    node.addComponent(UITransform).setContentSize(92, 104)
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = new Color(50, 88, 102, 50)
+    graphics.roundRect(-46, -58, 92, 104, 22)
+    graphics.fill()
+    graphics.fillColor = color
+    graphics.roundRect(-46, -48, 92, 104, 22)
+    graphics.fill()
+    graphics.lineWidth = 4
+    graphics.strokeColor = new Color(255, 255, 255, 150)
+    graphics.roundRect(-42, -44, 84, 96, 19)
+    graphics.stroke()
+
+    const label = this.createLabel(node, 'Value', text, 60, LIGHT_TEXT, new Vec3(0, 4, 0))
+    label.isBold = true
+    label.lineHeight = 66
+    label.node.getComponent(UITransform)?.setContentSize(92, 86)
   }
 
   private createTitleAccent(parent: Node, name: string, x: number, y: number, radius: number, color: Color) {
@@ -406,6 +488,96 @@ export class StartPageController extends Component {
     }
 
     return track
+  }
+
+  private createStartButton(parent: Node) {
+    const buttonNode = new Node('StartButton')
+    buttonNode.setParent(parent)
+    buttonNode.addComponent(UITransform).setContentSize(START_BUTTON_WIDTH, START_BUTTON_HEIGHT)
+    buttonNode.addComponent(UIOpacity)
+
+    // 开始按钮使用纯文字胶囊样式，不放图标，避免主入口和底部图片按钮抢视觉层级。
+    const graphics = buttonNode.addComponent(Graphics)
+    graphics.fillColor = new Color(105, 54, 90, 72)
+    graphics.roundRect(
+      -START_BUTTON_WIDTH / 2 + 2,
+      -START_BUTTON_HEIGHT / 2 - 8,
+      START_BUTTON_WIDTH - 4,
+      START_BUTTON_HEIGHT,
+      START_BUTTON_HEIGHT / 2
+    )
+    graphics.fill()
+    graphics.fillColor = new Color(255, 70, 115, 255)
+    graphics.roundRect(-START_BUTTON_WIDTH / 2, -START_BUTTON_HEIGHT / 2, START_BUTTON_WIDTH, START_BUTTON_HEIGHT, START_BUTTON_HEIGHT / 2)
+    graphics.fill()
+    graphics.fillColor = new Color(255, 103, 144, 255)
+    graphics.roundRect(-START_BUTTON_WIDTH / 2 + 18, 9, START_BUTTON_WIDTH - 36, 20, 10)
+    graphics.fill()
+
+    const shadow = this.createLabel(buttonNode, 'LabelShadow', '开始游戏', 38, new Color(128, 31, 58, 116), new Vec3(0, -4, 0))
+    shadow.isBold = true
+    shadow.node.getComponent(UITransform)?.setContentSize(START_BUTTON_WIDTH, 58)
+
+    const label = this.createLabel(buttonNode, 'Label', '开始游戏', 38, LIGHT_TEXT, new Vec3(0, 1, 0))
+    label.isBold = true
+    label.node.getComponent(UITransform)?.setContentSize(START_BUTTON_WIDTH, 58)
+
+    tween(buttonNode)
+      .repeatForever(
+        tween()
+          .sequence(
+            tween().to(1.15, { scale: new Vec3(1.025, 1.025, 1) }, { easing: 'sineInOut' }),
+            tween().to(1.15, { scale: Vec3.ONE }, { easing: 'sineInOut' })
+          )
+      )
+      .start()
+    return buttonNode
+  }
+
+  private buildActionButtons(parent: Node) {
+    const bar = new Node('ActionBar')
+    bar.setParent(parent)
+    bar.addComponent(UITransform).setContentSize(300, 96)
+
+    // 底部入口统一使用现成图片资源，减少文字按钮造成的视觉重量。
+    this.rankButtonNode = this.createActionIconButton(bar, 'RankButton', this.rankButtonSpriteFrame, '榜')
+    this.settingsButtonNode = this.createActionIconButton(bar, 'SettingsButton', this.settingsButtonSpriteFrame, '设')
+    this.shareButtonNode = this.createActionIconButton(bar, 'ShareButton', this.shareButtonSpriteFrame, '享')
+    this.rankButtonNode.setPosition(-100, 0, 0)
+    this.settingsButtonNode.setPosition(0, 0, 0)
+    this.shareButtonNode.setPosition(100, 0, 0)
+
+    this.bindPressableButton(this.rankButtonNode, this.handleRankTap)
+    this.bindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
+    this.bindPressableButton(this.shareButtonNode, this.handleShareTap)
+  }
+
+  private createActionIconButton(parent: Node, name: string, spriteFrame: SpriteFrame | null, fallbackText: string) {
+    const buttonNode = new Node(name)
+    buttonNode.setParent(parent)
+    const transform = buttonNode.addComponent(UITransform)
+    transform.setContentSize(ACTION_ICON_WIDTH, ACTION_ICON_HEIGHT)
+    buttonNode.addComponent(UIOpacity)
+
+    if (spriteFrame) {
+      const sprite = buttonNode.addComponent(Sprite)
+      sprite.type = Sprite.Type.SIMPLE
+      sprite.sizeMode = Sprite.SizeMode.CUSTOM
+      sprite.spriteFrame = spriteFrame
+      // 设置 SpriteFrame 后再同步一次尺寸，避免 Sprite 按原图尺寸覆盖图标按钮大小。
+      transform.setContentSize(ACTION_ICON_WIDTH, ACTION_ICON_HEIGHT)
+    } else {
+      // 图标资源缺失时给一个简化占位，避免按钮热区存在但没有可见内容。
+      const graphics = buttonNode.addComponent(Graphics)
+      graphics.fillColor = new Color(255, 93, 135, 235)
+      graphics.roundRect(-ACTION_ICON_WIDTH / 2, -ACTION_ICON_HEIGHT / 2, ACTION_ICON_WIDTH, ACTION_ICON_HEIGHT, 30)
+      graphics.fill()
+      const label = this.createLabel(buttonNode, 'FallbackLabel', fallbackText, 30, LIGHT_TEXT, Vec3.ZERO)
+      label.isBold = true
+      label.node.getComponent(UITransform)?.setContentSize(ACTION_ICON_WIDTH, ACTION_ICON_HEIGHT)
+    }
+
+    return buttonNode
   }
 
   private createPrimaryButton(parent: Node, name: string, text: string, fillColor: Color, y: number) {
@@ -799,6 +971,39 @@ export class StartPageController extends Component {
     return label
   }
 
+  private bindPressableButton(node: Node | null, endHandler: (event: EventTouch) => void) {
+    if (!node) {
+      return
+    }
+
+    node.on(Node.EventType.TOUCH_START, this.handleButtonPressStart, this)
+    node.on(Node.EventType.TOUCH_END, this.handleButtonPressEnd, this)
+    node.on(Node.EventType.TOUCH_CANCEL, this.handleButtonPressEnd, this)
+    node.on(Node.EventType.TOUCH_END, endHandler, this)
+  }
+
+  private unbindPressableButton(node: Node | null, endHandler: (event: EventTouch) => void) {
+    if (!node) {
+      return
+    }
+
+    node.off(Node.EventType.TOUCH_START, this.handleButtonPressStart, this)
+    node.off(Node.EventType.TOUCH_END, this.handleButtonPressEnd, this)
+    node.off(Node.EventType.TOUCH_CANCEL, this.handleButtonPressEnd, this)
+    node.off(Node.EventType.TOUCH_END, endHandler, this)
+  }
+
+  // 所有首页按钮共用轻微按压反馈，保证图片按钮和开始按钮的交互手感一致。
+  private handleButtonPressStart(event: EventTouch) {
+    const node = event.currentTarget as Node | null
+    node?.setScale(new Vec3(0.94, 0.94, 1))
+  }
+
+  private handleButtonPressEnd(event: EventTouch) {
+    const node = event.currentTarget as Node | null
+    node?.setScale(Vec3.ONE)
+  }
+
   private handleStartTap(event: EventTouch) {
     event.propagationStopped = true
     this.startHandler?.()
@@ -806,6 +1011,16 @@ export class StartPageController extends Component {
 
   private handleRankTap(event: EventTouch) {
     this.showRankModal(false, event)
+  }
+
+  private handleSettingsTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.showToast('设置功能请进入游戏后从暂停菜单调整')
+  }
+
+  private handleShareTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.shareHandler?.()
   }
 
   private hideRankModal(event?: EventTouch) {

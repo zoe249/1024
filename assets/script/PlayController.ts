@@ -119,6 +119,22 @@ export class PlayController extends Component {
   @property({ type: AudioClip, tooltip: 'Start page background music' })
   startPageBgmClip: AudioClip | null = null
 
+  // 首页背景图，场景里绑定 assets/images/World/World_3_BG.png 的 SpriteFrame。
+  @property({ type: SpriteFrame, tooltip: 'Start page background sprite frame' })
+  startPageBackgroundSpriteFrame: SpriteFrame | null = null
+
+  // 首页底部排行榜按钮贴图。
+  @property({ type: SpriteFrame, tooltip: 'Start page rank button sprite frame' })
+  startPageRankButtonSpriteFrame: SpriteFrame | null = null
+
+  // 首页底部设置按钮贴图。
+  @property({ type: SpriteFrame, tooltip: 'Start page settings button sprite frame' })
+  startPageSettingsButtonSpriteFrame: SpriteFrame | null = null
+
+  // 首页底部分享按钮贴图。
+  @property({ type: SpriteFrame, tooltip: 'Start page share button sprite frame' })
+  startPageShareButtonSpriteFrame: SpriteFrame | null = null
+
   // 游戏场景循环播放的背景音乐。
   @property({ type: AudioClip, tooltip: 'Gameplay background music' })
   gameplayBgmClip: AudioClip | null = null
@@ -228,7 +244,12 @@ export class PlayController extends Component {
     })
     this.startPageController = this.getComponent(StartPageController) ?? this.addComponent(StartPageController)
     this.startPageController.setup({
-      onStartTap: () => this.startSessionFromStartPage()
+      onStartTap: () => this.startSessionFromStartPage(),
+      onShareTap: () => this.shareGameFromStartPage(),
+      backgroundSpriteFrame: this.startPageBackgroundSpriteFrame,
+      rankButtonSpriteFrame: this.startPageRankButtonSpriteFrame,
+      settingsButtonSpriteFrame: this.startPageSettingsButtonSpriteFrame,
+      shareButtonSpriteFrame: this.startPageShareButtonSpriteFrame
     })
     this.bindInput()
   }
@@ -2119,6 +2140,11 @@ export class PlayController extends Component {
   // 分享入口只负责适配平台能力；没有平台 API 时保持静默降级，避免打断暂停弹窗。
   private shareGameFromPause() {
     this.shareAdapter.shareScore(this.scoreManager.getTotalScore(this.board), 'pause_share')
+  }
+
+  // 首页分享还没有本局分数，使用邀请挑战文案更符合入口语境。
+  private shareGameFromStartPage() {
+    this.shareAdapter.shareStartPage('start_share')
   }
 
   // 结算弹窗分享本局分数，和暂停分享共用平台适配逻辑。
