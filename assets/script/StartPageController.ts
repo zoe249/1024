@@ -15,7 +15,7 @@ import {
   Vec3
 } from 'cc'
 
-const { ccclass } = _decorator
+const { ccclass, property } = _decorator
 
 type StartPageOptions = {
   onStartTap: () => void
@@ -70,12 +70,61 @@ const TIP_TEXTS = [
 
 @ccclass('StartPageController')
 export class StartPageController extends Component {
+  // 首页根节点优先由层级管理器指定，未指定时再按 StartPageOverlay 名称查找。
+  @property({ type: Node, tooltip: '首页根节点，建议在 home.scene 层级中维护' })
+  private rootNodeRef: Node | null = null
+
+  // 首页内容容器优先从层级管理器读取，脚本只负责绑定事件和必要动画。
+  @property({ type: Node, tooltip: '首页内容容器，可选，默认查找 PageCard' })
+  private pageCardNodeRef: Node | null = null
+
+  // 首页背景节点可在层级管理器里摆好，脚本只在绑定背景图时做 cover 适配。
+  @property({ type: Node, tooltip: '首页背景节点，可选，默认查找 Background' })
+  private backgroundNodeRef: Node | null = null
+
+  // 首页背景图片节点可在层级管理器里拖入，未配置时保留代码兜底背景。
+  @property({ type: Node, tooltip: '首页背景图片节点，可选，默认查找 BackgroundImage' })
+  private backgroundImageNodeRef: Node | null = null
+
+  // 开始按钮建议在层级管理器里维护样式，脚本只绑定点击开始游戏。
+  @property({ type: Node, tooltip: '开始游戏按钮节点，可选，默认查找 StartButton' })
+  private startButtonNodeRef: Node | null = null
+
+  // 底部排行榜入口建议使用层级管理器中的图片按钮。
+  @property({ type: Node, tooltip: '排行榜按钮节点，可选，默认查找 RankButton' })
+  private rankButtonNodeRef: Node | null = null
+
+  // 底部设置入口建议使用层级管理器中的图片按钮。
+  @property({ type: Node, tooltip: '设置按钮节点，可选，默认查找 SettingsButton' })
+  private settingsButtonNodeRef: Node | null = null
+
+  // 底部分享入口建议使用层级管理器中的图片按钮。
+  @property({ type: Node, tooltip: '分享按钮节点，可选，默认查找 ShareButton' })
+  private shareButtonNodeRef: Node | null = null
+
+  // 排行榜遮罩和面板可由层级管理器搭好，脚本只负责显隐和数据兜底。
+  @property({ type: Node, tooltip: '排行榜遮罩节点，可选，默认查找 RankMask' })
+  private rankMaskNodeRef: Node | null = null
+
+  @property({ type: Node, tooltip: '排行榜面板节点，可选，默认查找 RankPanel' })
+  private rankPanelNodeRef: Node | null = null
+
+  // 首页提示文本和 Toast 都支持编辑器节点，避免运行时强行改层级。
+  @property({ type: Node, tooltip: '首页提示文本节点，可选，默认查找 TipText' })
+  private tipTextNodeRef: Node | null = null
+
+  @property({ type: Node, tooltip: 'Toast 节点，可选，默认查找 Toast' })
+  private toastNodeRef: Node | null = null
+
   private startHandler: (() => void) | null = null
   private shareHandler: (() => void) | null = null
   private rootNode: Node | null = null
   private pageCardNode: Node | null = null
   private rankMaskNode: Node | null = null
   private rankPanelNode: Node | null = null
+  private rankCloseButtonNode: Node | null = null
+  private backgroundNode: Node | null = null
+  private backgroundImageNode: Node | null = null
   private toastNode: Node | null = null
   private toastOpacity: UIOpacity | null = null
   private startButtonNode: Node | null = null
@@ -91,6 +140,8 @@ export class StartPageController extends Component {
   private shareButtonSpriteFrame: SpriteFrame | null = null
   // 暂停页打开排行榜时只借用榜单弹窗，不显示首页背景和首页卡片。
   private isRankOnlyMode = false
+  // 有层级节点时不再由脚本重新排版首页主体，避免覆盖编辑器里的 UI 调整。
+  private usesHierarchyNodes = false
   private pageDecorNodes: Node[] = []
 
   setup(options: StartPageOptions) {
@@ -118,14 +169,16 @@ export class StartPageController extends Component {
     }
 
     rootTransform.setContentSize(parentTransform.width, parentTransform.height)
-    this.pageCardNode.setPosition(0, 0, 0)
 
     const cardWidth = parentTransform.width
     const cardHeight = parentTransform.height
-    cardTransform.setContentSize(cardWidth, cardHeight)
     this.redrawBackground()
-    this.redrawCard()
-    this.layoutPageContents(cardWidth, cardHeight)
+    if (!this.usesHierarchyNodes) {
+      this.pageCardNode.setPosition(0, 0, 0)
+      cardTransform.setContentSize(cardWidth, cardHeight)
+      this.redrawCard()
+      this.layoutPageContents(cardWidth, cardHeight)
+    }
     this.layoutRankModal(parentTransform.width, parentTransform.height)
   }
 
@@ -136,7 +189,7 @@ export class StartPageController extends Component {
 
     const opacity = this.rootNode.getComponent(UIOpacity) ?? this.rootNode.addComponent(UIOpacity)
     this.rootNode.active = true
-    this.rootNode.setSiblingIndex(this.node.children.length - 1)
+    this.bringNodeToTop(this.rootNode)
     // 返回首页时要恢复上次隐藏动画压缩过的卡片比例，避免首页越显示越小。
     this.pageCardNode?.setScale(Vec3.ONE)
     opacity.opacity = 255
@@ -150,7 +203,9 @@ export class StartPageController extends Component {
 
     const opacity = this.rootNode.getComponent(UIOpacity) ?? this.rootNode.addComponent(UIOpacity)
     Tween.stopAllByTarget(opacity)
-    Tween.stopAllByTarget(this.pageCardNode)
+    if (this.pageCardNode) {
+      Tween.stopAllByTarget(this.pageCardNode)
+    }
     tween(opacity)
       .to(0.16, { opacity: 0 })
       .call(() => {
@@ -177,10 +232,10 @@ export class StartPageController extends Component {
     this.isRankOnlyMode = rankOnly
     if (rankOnly && this.rootNode) {
       this.rootNode.active = true
-      this.rootNode.setSiblingIndex(this.node.children.length - 1)
+      this.bringNodeToTop(this.rootNode)
       const rootOpacity = this.rootNode.getComponent(UIOpacity) ?? this.rootNode.addComponent(UIOpacity)
       rootOpacity.opacity = 255
-      const background = this.rootNode.getChildByName('Background')
+      const background = this.backgroundNode
       if (background) {
         background.active = false
       }
@@ -199,12 +254,15 @@ export class StartPageController extends Component {
   }
 
   onDestroy() {
+    this.unscheduleAllCallbacks()
     this.unbindPressableButton(this.startButtonNode, this.handleStartTap)
     this.unbindPressableButton(this.rankButtonNode, this.handleRankTap)
     this.unbindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
     this.unbindPressableButton(this.shareButtonNode, this.handleShareTap)
-    this.rankMaskNode?.off(Node.EventType.TOUCH_END, this.hideRankModal, this)
-    this.toastNode?.off(Node.EventType.TOUCH_END, this.consumeTouch, this)
+    this.safeOff(this.rankCloseButtonNode, Node.EventType.TOUCH_END, this.handleRankCloseTap)
+    this.safeOff(this.rankMaskNode, Node.EventType.TOUCH_END, this.hideRankModal)
+    this.safeOff(this.toastNode, Node.EventType.TOUCH_END, this.consumeTouch)
+    this.stopPageTweens()
     if (this.tipOpacity) {
       Tween.stopAllByTarget(this.tipOpacity)
     }
@@ -215,29 +273,128 @@ export class StartPageController extends Component {
       return
     }
 
+    const hierarchyRoot = this.resolveHierarchyRoot()
+    if (hierarchyRoot) {
+      this.bindHierarchyPage(hierarchyRoot)
+      this.ensureHierarchyFallbackNodes()
+      this.bindPageInteractions()
+      this.startTipRotation()
+      return
+    }
+
+    this.buildRuntimeFallbackPage()
+    this.bindPageInteractions()
+    this.startTipRotation()
+  }
+
+  // 首页场景优先使用层级管理器中的节点，便于后续直接在 Creator 里调整 UI 样式。
+  private resolveHierarchyRoot() {
+    if (this.rootNodeRef) {
+      return this.rootNodeRef
+    }
+
+    if (this.node.name === 'StartPageOverlay') {
+      return this.node
+    }
+
+    return this.node.getChildByName('StartPageOverlay')
+  }
+
+  // 绑定已有首页节点时只缓存引用，不主动重建视觉层级。
+  private bindHierarchyPage(root: Node) {
+    this.usesHierarchyNodes = true
+    this.rootNode = root
+    this.rootNode.getComponent(UITransform) ?? this.rootNode.addComponent(UITransform)
+    this.rootNode.getComponent(UIOpacity) ?? this.rootNode.addComponent(UIOpacity)
+    this.backgroundNode = this.backgroundNodeRef ?? this.findChildDeep(root, 'Background')
+    this.backgroundImageNode = this.backgroundImageNodeRef ?? this.findChildDeep(root, 'BackgroundImage')
+    this.pageCardNode = this.pageCardNodeRef ?? this.findChildDeep(root, 'PageCard')
+    this.startButtonNode = this.startButtonNodeRef ?? this.findChildDeep(root, 'StartButton')
+    this.rankButtonNode = this.rankButtonNodeRef ?? this.findChildDeep(root, 'RankButton')
+    this.settingsButtonNode = this.settingsButtonNodeRef ?? this.findChildDeep(root, 'SettingsButton')
+    this.shareButtonNode = this.shareButtonNodeRef ?? this.findChildDeep(root, 'ShareButton')
+    this.rankMaskNode = this.rankMaskNodeRef ?? this.findChildDeep(root, 'RankMask')
+    this.rankPanelNode = this.rankPanelNodeRef ?? (this.rankMaskNode ? this.findChildDeep(this.rankMaskNode, 'RankPanel') : this.findChildDeep(root, 'RankPanel'))
+    this.rankCloseButtonNode = this.rankPanelNode ? this.findChildDeep(this.rankPanelNode, 'CloseButton') : this.findChildDeep(root, 'CloseButton')
+    this.toastNode = this.toastNodeRef ?? this.findChildDeep(root, 'Toast')
+    const tipNode = this.tipTextNodeRef ?? this.findChildDeep(root, 'TipText')
+    this.tipLabel = tipNode?.getComponent(Label) ?? tipNode?.getChildByName('Label')?.getComponent(Label) ?? null
+    this.tipOpacity = tipNode?.getComponent(UIOpacity) ?? tipNode?.addComponent(UIOpacity) ?? null
+    if (this.tipLabel && !this.tipLabel.string) {
+      this.tipLabel.string = this.pickNextTip()
+    }
+    this.toastOpacity = this.toastNode?.getComponent(UIOpacity) ?? this.toastNode?.addComponent(UIOpacity) ?? null
+    this.pageDecorNodes = ['DecorLeft', 'DecorRight']
+      .map((name) => this.findChildDeep(root, name))
+      .filter((node): node is Node => !!node)
+  }
+
+  // 层级节点不完整时只补功能必需节点，避免因为少拖一个节点导致首页无法进入游戏。
+  private ensureHierarchyFallbackNodes() {
+    if (!this.rootNode) {
+      return
+    }
+
+    if (!this.backgroundNode) {
+      this.backgroundNode = new Node('Background')
+      this.backgroundNode.setParent(this.rootNode)
+      this.backgroundNode.addComponent(UITransform)
+      this.backgroundNode.addComponent(Graphics)
+    }
+    if (!this.backgroundImageNode && this.backgroundNode) {
+      this.backgroundImageNode = new Node('BackgroundImage')
+      this.backgroundImageNode.setParent(this.backgroundNode)
+      this.backgroundImageNode.addComponent(UITransform)
+      this.backgroundImageNode.addComponent(Sprite)
+    }
+    if (!this.pageCardNode) {
+      this.pageCardNode = new Node('PageCard')
+      this.pageCardNode.setParent(this.rootNode)
+      this.pageCardNode.addComponent(UITransform)
+      this.pageCardNode.addComponent(Graphics)
+    }
+    if (!this.startButtonNode && this.pageCardNode) {
+      this.startButtonNode = this.createStartButton(this.pageCardNode)
+    }
+    if (!this.rankButtonNode || !this.settingsButtonNode || !this.shareButtonNode) {
+      this.ensureFallbackActionButtons()
+    }
+    if (!this.rankMaskNode) {
+      this.buildRankModal(this.rootNode)
+    }
+    if (!this.toastNode) {
+      this.buildToast(this.rootNode)
+    }
+    if (!this.tipLabel && this.pageCardNode) {
+      this.buildTipText(this.pageCardNode)
+    }
+  }
+
+  // 旧场景没有首页节点时保留运行时兜底，方便 Web 预览和资源缺失排查。
+  private buildRuntimeFallbackPage() {
     const root = new Node('StartPageOverlay')
     root.setParent(this.node)
     root.addComponent(UITransform)
     root.addComponent(UIOpacity)
-    this.bindSwallowTouch(root)
     this.rootNode = root
 
     const background = new Node('Background')
     background.setParent(root)
     background.addComponent(UITransform)
     background.addComponent(Graphics)
+    this.backgroundNode = background
 
     // 首页背景图独立放在子节点上，父节点保留 Graphics 兜底，资源丢失时仍能绘制旧背景。
     const backgroundImage = new Node('BackgroundImage')
     backgroundImage.setParent(background)
     backgroundImage.addComponent(UITransform)
     backgroundImage.addComponent(Sprite)
+    this.backgroundImageNode = backgroundImage
 
     const card = new Node('PageCard')
     card.setParent(root)
     card.addComponent(UITransform)
     card.addComponent(Graphics)
-    this.bindSwallowTouch(card)
     this.pageCardNode = card
 
     const decorTopLeft = this.createCircleDecoration(card, 'DecorLeft', 78, GREEN_CIRCLE, 0.88)
@@ -247,28 +404,83 @@ export class StartPageController extends Component {
     this.buildTitleCard(card)
     this.buildFloatingTiles(card)
     this.startButtonNode = this.createStartButton(card)
-    this.bindPressableButton(this.startButtonNode, this.handleStartTap)
     this.buildActionButtons(card)
     this.buildTipText(card)
     this.buildRankModal(root)
     this.buildToast(root)
-    this.startTipRotation()
+  }
+
+  // 统一绑定首页交互，兼容编辑器节点和运行时兜底节点两种来源。
+  private bindPageInteractions() {
+    if (this.rootNode) {
+      this.bindSwallowTouch(this.rootNode)
+    }
+    if (this.pageCardNode && this.pageCardNode !== this.rootNode) {
+      this.bindSwallowTouch(this.pageCardNode)
+    }
+    if (this.rankPanelNode) {
+      this.bindSwallowTouch(this.rankPanelNode)
+    }
+    if (this.toastNode) {
+      this.safeOff(this.toastNode, Node.EventType.TOUCH_END, this.consumeTouch)
+      this.safeOn(this.toastNode, Node.EventType.TOUCH_END, this.consumeTouch)
+    }
+
+    this.unbindPressableButton(this.startButtonNode, this.handleStartTap)
+    this.unbindPressableButton(this.rankButtonNode, this.handleRankTap)
+    this.unbindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
+    this.unbindPressableButton(this.shareButtonNode, this.handleShareTap)
+    this.bindPressableButton(this.startButtonNode, this.handleStartTap)
+    this.bindPressableButton(this.rankButtonNode, this.handleRankTap)
+    this.bindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
+    this.bindPressableButton(this.shareButtonNode, this.handleShareTap)
+
+    this.safeOff(this.rankCloseButtonNode, Node.EventType.TOUCH_END, this.handleRankCloseTap)
+    this.safeOn(this.rankCloseButtonNode, Node.EventType.TOUCH_END, this.handleRankCloseTap)
+    this.safeOff(this.rankMaskNode, Node.EventType.TOUCH_END, this.hideRankModal)
+    this.safeOn(this.rankMaskNode, Node.EventType.TOUCH_END, this.hideRankModal)
+  }
+
+  // 层级里只缺少部分底部按钮时，在已有 ActionBar 下补齐，不覆盖已经摆好的按钮。
+  private ensureFallbackActionButtons() {
+    if (!this.pageCardNode) {
+      return
+    }
+
+    let bar = this.pageCardNode.getChildByName('ActionBar')
+    if (!bar) {
+      bar = new Node('ActionBar')
+      bar.setParent(this.pageCardNode)
+      bar.addComponent(UITransform).setContentSize(300, 96)
+    }
+
+    if (!this.rankButtonNode) {
+      this.rankButtonNode = this.createActionIconButton(bar, 'RankButton', this.rankButtonSpriteFrame, '榜')
+      this.rankButtonNode.setPosition(-100, 0, 0)
+    }
+    if (!this.settingsButtonNode) {
+      this.settingsButtonNode = this.createActionIconButton(bar, 'SettingsButton', this.settingsButtonSpriteFrame, '设')
+      this.settingsButtonNode.setPosition(0, 0, 0)
+    }
+    if (!this.shareButtonNode) {
+      this.shareButtonNode = this.createActionIconButton(bar, 'ShareButton', this.shareButtonSpriteFrame, '享')
+      this.shareButtonNode.setPosition(100, 0, 0)
+    }
   }
 
   private redrawBackground() {
-    const background = this.rootNode?.getChildByName('Background')
+    const background = this.backgroundNode ?? this.rootNode?.getChildByName('Background')
     const backgroundTransform = background?.getComponent(UITransform) ?? null
     const graphics = background?.getComponent(Graphics) ?? null
-    const backgroundImage = background?.getChildByName('BackgroundImage') ?? null
+    const backgroundImage = this.backgroundImageNode ?? background?.getChildByName('BackgroundImage') ?? null
     const backgroundImageTransform = backgroundImage?.getComponent(UITransform) ?? null
     const backgroundImageSprite = backgroundImage?.getComponent(Sprite) ?? null
     const rootTransform = this.rootNode?.getComponent(UITransform) ?? null
-    if (!background || !backgroundTransform || !graphics || !rootTransform) {
+    if (!background || !backgroundTransform || !rootTransform) {
       return
     }
 
     backgroundTransform.setContentSize(rootTransform.width, rootTransform.height)
-    graphics.clear()
     if (this.backgroundSpriteFrame && backgroundImage && backgroundImageTransform && backgroundImageSprite) {
       backgroundImage.active = true
       this.fitBackgroundImage(backgroundImageTransform, backgroundImageSprite, rootTransform.width, rootTransform.height)
@@ -279,7 +491,12 @@ export class StartPageController extends Component {
       backgroundImage.active = false
     }
 
+    if (!graphics) {
+      return
+    }
+
     // 未绑定图片时保留旧的低亮点阵背景，避免开发期或资源缺失时首页空白。
+    graphics.clear()
     graphics.fillColor = PAGE_BG_COLOR
     graphics.rect(-rootTransform.width / 2, -rootTransform.height / 2, rootTransform.width, rootTransform.height)
     graphics.fill()
@@ -546,10 +763,6 @@ export class StartPageController extends Component {
     this.rankButtonNode.setPosition(-100, 0, 0)
     this.settingsButtonNode.setPosition(0, 0, 0)
     this.shareButtonNode.setPosition(100, 0, 0)
-
-    this.bindPressableButton(this.rankButtonNode, this.handleRankTap)
-    this.bindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
-    this.bindPressableButton(this.shareButtonNode, this.handleShareTap)
   }
 
   private createActionIconButton(parent: Node, name: string, spriteFrame: SpriteFrame | null, fallbackText: string) {
@@ -757,11 +970,7 @@ export class StartPageController extends Component {
     this.bindSwallowTouch(panel)
     this.rankPanelNode = panel
 
-    const close = this.createCircleButton(panel, 'CloseButton', '×', 184, 322, 40)
-    close.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
-      event.propagationStopped = true
-      this.hideRankModal()
-    })
+    this.rankCloseButtonNode = this.createCircleButton(panel, 'CloseButton', '×', 184, 322, 40)
 
     const title = this.createLabel(panel, 'Title', '好友排行榜', 40, TEAL_COLOR, new Vec3(0, 282, 0))
     title.isBold = true
@@ -775,8 +984,6 @@ export class StartPageController extends Component {
       event.propagationStopped = true
       this.showToast('邀请功能待小游戏能力接入')
     })
-
-    mask.on(Node.EventType.TOUCH_END, this.hideRankModal, this)
   }
 
   private buildPodium(parent: Node) {
@@ -863,14 +1070,21 @@ export class StartPageController extends Component {
 
     const maskTransform = this.rankMaskNode.getComponent(UITransform)
     const panelTransform = this.rankPanelNode.getComponent(UITransform)
-    const maskGraphics = this.rankMaskNode.getComponent(Graphics)
     const panelGraphics = this.rankPanelNode.getComponent(Graphics)
-    if (!maskTransform || !panelTransform || !maskGraphics || !panelGraphics) {
+    if (!maskTransform) {
       return
     }
 
     maskTransform.setContentSize(width, height)
     this.refreshRankMaskStyle()
+
+    if (this.usesHierarchyNodes) {
+      return
+    }
+
+    if (!panelTransform || !panelGraphics) {
+      return
+    }
 
     panelTransform.setContentSize(Math.min(470, width - 90), Math.min(760, height - 180))
     panelGraphics.clear()
@@ -971,8 +1185,24 @@ export class StartPageController extends Component {
     return label
   }
 
+  // 层级管理器里的节点可能多包了一层容器，这里做递归查找来减少拖引用的硬性要求。
+  private findChildDeep(parent: Node, name: string): Node | null {
+    const directChild = parent.getChildByName(name)
+    if (directChild) {
+      return directChild
+    }
+
+    for (const child of parent.children) {
+      const matched = this.findChildDeep(child, name)
+      if (matched) {
+        return matched
+      }
+    }
+    return null
+  }
+
   private bindPressableButton(node: Node | null, endHandler: (event: EventTouch) => void) {
-    if (!node) {
+    if (!this.canUseNode(node)) {
       return
     }
 
@@ -983,7 +1213,7 @@ export class StartPageController extends Component {
   }
 
   private unbindPressableButton(node: Node | null, endHandler: (event: EventTouch) => void) {
-    if (!node) {
+    if (!this.canUseNode(node)) {
       return
     }
 
@@ -993,15 +1223,71 @@ export class StartPageController extends Component {
     node.off(Node.EventType.TOUCH_END, endHandler, this)
   }
 
+  // 切场景时节点可能已经进入销毁流程，解绑前先确认引用仍可安全使用。
+  private canUseNode(node: Node | null): node is Node {
+    return !!node && node.isValid
+  }
+
+  private safeOff(node: Node | null, eventType: string, handler: (event: EventTouch) => void) {
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    node.off(eventType, handler, this)
+  }
+
+  private safeOn(node: Node | null, eventType: string, handler: (event: EventTouch) => void) {
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    node.on(eventType, handler, this)
+  }
+
+  // setSiblingIndex 依赖节点仍在父节点下；场景切换时先判断，避免触发引擎内部空 parent。
+  private bringNodeToTop(node: Node | null) {
+    const parent = node?.parent ?? null
+    if (!this.canUseNode(node) || !parent?.isValid) {
+      return
+    }
+
+    node.setSiblingIndex(parent.children.length - 1)
+  }
+
+  // 首页离开或销毁时停止所有面板动画，避免 tween 在节点销毁后继续写属性。
+  private stopPageTweens() {
+    this.stopNodeTreeTweens(this.rootNode)
+  }
+
+  private stopNodeTreeTweens(node: Node | null) {
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    Tween.stopAllByTarget(node)
+    const opacity = node.getComponent(UIOpacity)
+    if (opacity) {
+      Tween.stopAllByTarget(opacity)
+    }
+
+    for (const child of [...node.children]) {
+      this.stopNodeTreeTweens(child)
+    }
+  }
+
   // 所有首页按钮共用轻微按压反馈，保证图片按钮和开始按钮的交互手感一致。
   private handleButtonPressStart(event: EventTouch) {
     const node = event.currentTarget as Node | null
-    node?.setScale(new Vec3(0.94, 0.94, 1))
+    if (this.canUseNode(node)) {
+      node.setScale(new Vec3(0.94, 0.94, 1))
+    }
   }
 
   private handleButtonPressEnd(event: EventTouch) {
     const node = event.currentTarget as Node | null
-    node?.setScale(Vec3.ONE)
+    if (this.canUseNode(node)) {
+      node.setScale(Vec3.ONE)
+    }
   }
 
   private handleStartTap(event: EventTouch) {
@@ -1011,6 +1297,11 @@ export class StartPageController extends Component {
 
   private handleRankTap(event: EventTouch) {
     this.showRankModal(false, event)
+  }
+
+  private handleRankCloseTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.hideRankModal()
   }
 
   private handleSettingsTap(event: EventTouch) {
@@ -1043,7 +1334,7 @@ export class StartPageController extends Component {
           // 暂停页借用排行榜后，关闭榜单时要把首页根节点重新隐藏，露出原来的暂停遮罩。
           this.isRankOnlyMode = false
           if (this.rootNode) {
-            const background = this.rootNode.getChildByName('Background')
+            const background = this.backgroundNode
             if (background) {
               background.active = true
             }
@@ -1098,6 +1389,14 @@ export class StartPageController extends Component {
   }
 
   private bindSwallowTouch(node: Node) {
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    node.off(Node.EventType.TOUCH_START, this.consumeTouch, this)
+    node.off(Node.EventType.TOUCH_MOVE, this.consumeTouch, this)
+    node.off(Node.EventType.TOUCH_END, this.consumeTouch, this)
+    node.off(Node.EventType.TOUCH_CANCEL, this.consumeTouch, this)
     node.on(Node.EventType.TOUCH_START, this.consumeTouch, this)
     node.on(Node.EventType.TOUCH_MOVE, this.consumeTouch, this)
     node.on(Node.EventType.TOUCH_END, this.consumeTouch, this)

@@ -1,4 +1,5 @@
 import { PieceController } from './PieceController'
+import { Tween, UIOpacity } from 'cc'
 
 export type BoardCell = PieceController | null
 
@@ -93,7 +94,21 @@ export class BoardModel {
   destroyBoardPieces(board: BoardCell[][], rowCount: number, columnCount: number) {
     for (let row = 0; row < rowCount; row++) {
       for (let column = 0; column < columnCount; column++) {
-        board[row][column]?.node.destroy()
+        const piece = board[row][column]
+        if (!piece) {
+          continue
+        }
+
+        if (piece.node.isValid) {
+          // 销毁棋子前先停掉节点动画，避免场景切换后 tween 回调继续访问已销毁节点。
+          Tween.stopAllByTarget(piece.node)
+          const opacity = piece.node.getComponent(UIOpacity)
+          if (opacity) {
+            Tween.stopAllByTarget(opacity)
+          }
+          piece.node.destroy()
+        }
+        board[row][column] = null
       }
     }
   }

@@ -77,10 +77,8 @@ export class GameOverOverlayController extends Component {
   renderState(isGameOver: boolean, score: number, highestValue: number) {
     this.refreshScore(score)
     this.refreshHighestValue(highestValue)
-    if (this.node.parent) {
-      // 结算层必须始终在棋子、特效、技能栏和暂停层之上。
-      this.node.setSiblingIndex(this.node.parent.children.length - 1)
-    }
+    // 结算层必须始终在棋子、特效、技能栏和暂停层之上。
+    this.bringNodeToTop(this.node)
 
     if (isGameOver) {
       this.show()
@@ -91,23 +89,17 @@ export class GameOverOverlayController extends Component {
   }
 
   onDestroy() {
-    this.maskNode?.off(Node.EventType.TOUCH_START, this.swallowTouch, this)
-    this.maskNode?.off(Node.EventType.TOUCH_MOVE, this.swallowTouch, this)
-    this.maskNode?.off(Node.EventType.TOUCH_END, this.swallowTouch, this)
-    this.maskNode?.off(Node.EventType.TOUCH_CANCEL, this.swallowTouch, this)
-    this.panelNode?.off(Node.EventType.TOUCH_START, this.swallowTouch, this)
-    this.panelNode?.off(Node.EventType.TOUCH_MOVE, this.swallowTouch, this)
-    this.panelNode?.off(Node.EventType.TOUCH_END, this.swallowTouch, this)
-    this.panelNode?.off(Node.EventType.TOUCH_CANCEL, this.swallowTouch, this)
+    this.safeOff(this.maskNode, Node.EventType.TOUCH_START, this.swallowTouch)
+    this.safeOff(this.maskNode, Node.EventType.TOUCH_MOVE, this.swallowTouch)
+    this.safeOff(this.maskNode, Node.EventType.TOUCH_END, this.swallowTouch)
+    this.safeOff(this.maskNode, Node.EventType.TOUCH_CANCEL, this.swallowTouch)
+    this.safeOff(this.panelNode, Node.EventType.TOUCH_START, this.swallowTouch)
+    this.safeOff(this.panelNode, Node.EventType.TOUCH_MOVE, this.swallowTouch)
+    this.safeOff(this.panelNode, Node.EventType.TOUCH_END, this.swallowTouch)
+    this.safeOff(this.panelNode, Node.EventType.TOUCH_CANCEL, this.swallowTouch)
     this.unbindButtonTouchEvents(this.replayButtonNode, this.onReplayButtonTap)
     this.unbindButtonTouchEvents(this.shareButtonNode, this.onShareButtonTap)
-    Tween.stopAllByTarget(this.node)
-    if (this.panelNode) {
-      Tween.stopAllByTarget(this.panelNode)
-    }
-    if (this.overlayOpacity) {
-      Tween.stopAllByTarget(this.overlayOpacity)
-    }
+    this.stopNodeTreeTweens(this.node)
   }
 
   private ensureOverlayStructure() {
@@ -283,41 +275,91 @@ export class GameOverOverlayController extends Component {
   }
 
   private bindTouchEvents() {
-    this.maskNode?.off(Node.EventType.TOUCH_START, this.swallowTouch, this)
-    this.maskNode?.off(Node.EventType.TOUCH_MOVE, this.swallowTouch, this)
-    this.maskNode?.off(Node.EventType.TOUCH_END, this.swallowTouch, this)
-    this.maskNode?.off(Node.EventType.TOUCH_CANCEL, this.swallowTouch, this)
-    this.maskNode?.on(Node.EventType.TOUCH_START, this.swallowTouch, this)
-    this.maskNode?.on(Node.EventType.TOUCH_MOVE, this.swallowTouch, this)
-    this.maskNode?.on(Node.EventType.TOUCH_END, this.swallowTouch, this)
-    this.maskNode?.on(Node.EventType.TOUCH_CANCEL, this.swallowTouch, this)
-
-    this.panelNode?.off(Node.EventType.TOUCH_START, this.swallowTouch, this)
-    this.panelNode?.off(Node.EventType.TOUCH_MOVE, this.swallowTouch, this)
-    this.panelNode?.off(Node.EventType.TOUCH_END, this.swallowTouch, this)
-    this.panelNode?.off(Node.EventType.TOUCH_CANCEL, this.swallowTouch, this)
-    this.panelNode?.on(Node.EventType.TOUCH_START, this.swallowTouch, this)
-    this.panelNode?.on(Node.EventType.TOUCH_MOVE, this.swallowTouch, this)
-    this.panelNode?.on(Node.EventType.TOUCH_END, this.swallowTouch, this)
-    this.panelNode?.on(Node.EventType.TOUCH_CANCEL, this.swallowTouch, this)
+    this.bindSwallowNode(this.maskNode)
+    this.bindSwallowNode(this.panelNode)
 
     this.bindButtonTouchEvents(this.replayButtonNode, this.onReplayButtonTap)
     this.bindButtonTouchEvents(this.shareButtonNode, this.onShareButtonTap)
   }
 
+  private bindSwallowNode(node: Node | null) {
+    this.safeOff(node, Node.EventType.TOUCH_START, this.swallowTouch)
+    this.safeOff(node, Node.EventType.TOUCH_MOVE, this.swallowTouch)
+    this.safeOff(node, Node.EventType.TOUCH_END, this.swallowTouch)
+    this.safeOff(node, Node.EventType.TOUCH_CANCEL, this.swallowTouch)
+    this.safeOn(node, Node.EventType.TOUCH_START, this.swallowTouch)
+    this.safeOn(node, Node.EventType.TOUCH_MOVE, this.swallowTouch)
+    this.safeOn(node, Node.EventType.TOUCH_END, this.swallowTouch)
+    this.safeOn(node, Node.EventType.TOUCH_CANCEL, this.swallowTouch)
+  }
+
   private bindButtonTouchEvents(node: Node | null, endHandler: (event: EventTouch) => void) {
     this.unbindButtonTouchEvents(node, endHandler)
-    node?.on(Node.EventType.TOUCH_START, this.swallowTouch, this)
-    node?.on(Node.EventType.TOUCH_MOVE, this.swallowTouch, this)
-    node?.on(Node.EventType.TOUCH_CANCEL, this.swallowTouch, this)
-    node?.on(Node.EventType.TOUCH_END, endHandler, this)
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    node.on(Node.EventType.TOUCH_START, this.swallowTouch, this)
+    node.on(Node.EventType.TOUCH_MOVE, this.swallowTouch, this)
+    node.on(Node.EventType.TOUCH_CANCEL, this.swallowTouch, this)
+    node.on(Node.EventType.TOUCH_END, endHandler, this)
   }
 
   private unbindButtonTouchEvents(node: Node | null, endHandler: (event: EventTouch) => void) {
-    node?.off(Node.EventType.TOUCH_START, this.swallowTouch, this)
-    node?.off(Node.EventType.TOUCH_MOVE, this.swallowTouch, this)
-    node?.off(Node.EventType.TOUCH_CANCEL, this.swallowTouch, this)
-    node?.off(Node.EventType.TOUCH_END, endHandler, this)
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    node.off(Node.EventType.TOUCH_START, this.swallowTouch, this)
+    node.off(Node.EventType.TOUCH_MOVE, this.swallowTouch, this)
+    node.off(Node.EventType.TOUCH_CANCEL, this.swallowTouch, this)
+    node.off(Node.EventType.TOUCH_END, endHandler, this)
+  }
+
+  private canUseNode(node: Node | null): node is Node {
+    return !!node && node.isValid
+  }
+
+  private safeOn(node: Node | null, eventType: string, handler: (event: EventTouch) => void) {
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    node.on(eventType, handler, this)
+  }
+
+  private safeOff(node: Node | null, eventType: string, handler: (event: EventTouch) => void) {
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    node.off(eventType, handler, this)
+  }
+
+  // setSiblingIndex 需要节点仍挂在父节点下，切场景销毁阶段必须先判断 parent。
+  private bringNodeToTop(node: Node | null) {
+    const parent = node?.parent ?? null
+    if (!this.canUseNode(node) || !parent?.isValid) {
+      return
+    }
+
+    node.setSiblingIndex(parent.children.length - 1)
+  }
+
+  private stopNodeTreeTweens(node: Node | null) {
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    Tween.stopAllByTarget(node)
+    const opacity = node.getComponent(UIOpacity)
+    if (opacity) {
+      Tween.stopAllByTarget(opacity)
+    }
+
+    for (const child of [...node.children]) {
+      this.stopNodeTreeTweens(child)
+    }
   }
 
   private swallowTouch(event: EventTouch) {

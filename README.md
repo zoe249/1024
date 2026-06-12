@@ -63,12 +63,16 @@ assets/
 ├─ prefab/                 预制体
 │  └─ piece.prefab         棋子预制体
 ├─ scence/                 场景文件
+│  ├─ home.scene           首页入口场景
+│  ├─ loading.scene        加载过渡场景
 │  ├─ game.scene           主游戏场景
 │  └─ particle.scene       粒子/测试场景
 ├─ script/                 主要脚本
+│  ├─ HomeSceneController.ts      首页场景入口与开始按钮切场景
+│  ├─ LoadingSceneController.ts   加载页背景、进度条与目标场景加载
 │  ├─ PlayController.ts          对局主流程调度
 │  ├─ PlayUIController.ts        UI 渲染与界面布局
-│  ├─ StartPageController.ts     首页覆盖层与排行榜弹窗
+│  ├─ StartPageController.ts     首页 UI 节点绑定与运行时兜底
 │  ├─ PauseOverlayController.ts  暂停遮罩
 │  ├─ GameOverOverlayController.ts 结算弹窗
 │  ├─ PieceController.ts         单个棋子的显示与数值表现
@@ -87,6 +91,23 @@ assets/
 - 目录名 `scence` 为当前项目现有命名，虽然不是标准拼写，但已被项目引用，修改前需要整体评估
 
 ## 脚本职责
+
+### [HomeSceneController.ts](D:\*\cocos\1024\assets\script\HomeSceneController.ts)
+
+负责首页场景入口：
+
+- 初始化首页 UI 控制器
+- 播放首页背景音乐
+- 点击开始后加载 `loading.scene`
+- 处理首页分享入口
+
+### [LoadingSceneController.ts](D:\*\cocos\1024\assets\script\LoadingSceneController.ts)
+
+负责加载过渡页：
+
+- 使用 `loading_bg_candy_shop` 作为加载页背景
+- 显示加载进度条与百分比
+- 加载完成后进入 `game.scene`
 
 ### [PlayController.ts](D:\*\cocos\1024\assets\script\PlayController.ts)
 
@@ -124,6 +145,8 @@ assets/
 ## 关键资源
 
 - 主场景：[game.scene](D:\*\cocos\1024\assets\scence\game.scene)
+- 首页场景：[home.scene](D:\*\cocos\1024\assets\scence\home.scene)
+- 加载场景：[loading.scene](D:\*\cocos\1024\assets\scence\loading.scene)
 - 棋子预制体：[piece.prefab](D:\*\cocos\1024\assets\prefab\piece.prefab)
 - 棋盘相关脚本：[PlayController.ts](D:\*\cocos\1024\assets\script\PlayController.ts)
 - UI 相关脚本：[PlayUIController.ts](D:\*\cocos\1024\assets\script\PlayUIController.ts)
@@ -132,10 +155,27 @@ assets/
 ## 当前实现说明
 
 - 棋盘主体视觉已改为 **代码绘制为主**
+- 首页已拆为独立 `home.scene`，首页 UI 优先通过层级管理器维护
+- 点击开始后先进入 `loading.scene`，由加载页加载 `game.scene`
+- `StartPageController` 会优先绑定 `StartPageOverlay`、`StartButton`、`RankButton` 等已有层级节点，缺失时才创建运行时兜底节点
 - `Controller` 底部控制栏当前尽量通过 **scene + Widget** 管理布局
 - 游戏逻辑和 UI 渲染已做职责拆分：
   - `PlayController` 负责逻辑
   - `PlayUIController` 负责渲染
+
+## 首页层级建议
+
+`home.scene` 的 `Main` 节点挂 `HomeSceneController` 与 `StartPageController`。如果要完全通过层级管理器维护首页 UI，建议在 `Main` 下创建这些节点名：
+
+- `StartPageOverlay`
+- `Background` / `BackgroundImage`
+- `PageCard` / `StartButton`
+- `ActionBar` / `RankButton` / `SettingsButton` / `ShareButton`
+- `TipText`
+- `RankMask` / `RankPanel` / `CloseButton`
+- `Toast` / `Label`
+
+这些节点也可以直接拖到 `StartPageController` 暴露的引用字段里；未拖引用时脚本会按名称递归查找。
 
 ## 修改约定
 

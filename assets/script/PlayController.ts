@@ -1,8 +1,7 @@
 ﻿import { _decorator, Color, Component, EventTouch, instantiate, Node, Prefab, Sprite, SpriteFrame, tween, Tween, UITransform, UIOpacity, Vec2, Vec3 } from 'cc'
 import { PieceController } from './PieceController'
-import { AudioClip } from 'cc'
+import { AudioClip, director } from 'cc'
 import { PlayUIController, type PlayUIState } from './PlayUIController'
-import { StartPageController } from './StartPageController'
 import { GameAudioManager } from './GameAudioManager'
 import { GameShareAdapter } from './GameShareAdapter'
 import { SkillStock } from './SkillStock'
@@ -111,33 +110,13 @@ export class PlayController extends Component {
   @property({ type: PlaySoundEffectClips, tooltip: 'Gameplay sound effect clips' })
   soundEffectClips = new PlaySoundEffectClips()
 
-  // Home 页专用背景音乐，进入首页或从暂停返回首页时循环播放。
-  @property({ type: AudioClip, tooltip: 'Home page background music' })
-  homeBgmClip: AudioClip | null = null
-
-  // 旧版首页背景音乐字段，保留用于兼容已经绑定过 startPageBgmClip 的场景。
-  @property({ type: AudioClip, tooltip: 'Start page background music' })
-  startPageBgmClip: AudioClip | null = null
-
-  // 首页背景图，场景里绑定 assets/images/World/World_3_BG.png 的 SpriteFrame。
-  @property({ type: SpriteFrame, tooltip: 'Start page background sprite frame' })
-  startPageBackgroundSpriteFrame: SpriteFrame | null = null
-
-  // 首页底部排行榜按钮贴图。
-  @property({ type: SpriteFrame, tooltip: 'Start page rank button sprite frame' })
-  startPageRankButtonSpriteFrame: SpriteFrame | null = null
-
-  // 首页底部设置按钮贴图。
-  @property({ type: SpriteFrame, tooltip: 'Start page settings button sprite frame' })
-  startPageSettingsButtonSpriteFrame: SpriteFrame | null = null
-
-  // 首页底部分享按钮贴图。
-  @property({ type: SpriteFrame, tooltip: 'Start page share button sprite frame' })
-  startPageShareButtonSpriteFrame: SpriteFrame | null = null
-
   // 游戏场景循环播放的背景音乐。
   @property({ type: AudioClip, tooltip: 'Gameplay background music' })
   gameplayBgmClip: AudioClip | null = null
+
+  // 暂停弹窗点击回首页时加载的首页场景名，默认对应 assets/scence/home.scene。
+  @property({ tooltip: 'Home scene name' })
+  homeSceneName = 'home'
 
   // 单元格之间的额外间距，步长 = 棋子尺寸 + 间距。
   @property({ tooltip: 'Cell spacing' })
@@ -202,10 +181,8 @@ export class PlayController extends Component {
   private readonly scoreManager = new ScoreManager()
   // UI 渲染组件，专门负责棋盘绘制、状态栏、控制栏和暂停遮罩。
   private uiController: PlayUIController | null = null
-  // 首页单独交给启动页组件管理，避免把展示逻辑散落在玩法代码里。
-  private startPageController: StartPageController | null = null
-  // 首次进入场景时先停在开始页，点击开始后才真正进入对局。
-  private hasStartedSession = false
+  // 首页已经拆到独立 home.scene；玩法场景加载后直接进入一局。
+  private hasStartedSession = true
   // 拖尾生成计时器，用来控制特效频率。
   private trailTimer = 0
   // 当前屏幕上仍未销毁的特效节点交给注册表统一管理，便于重开和回首页收口。
@@ -242,24 +219,19 @@ export class PlayController extends Component {
       onGameOverShareTap: () => this.shareGameFromGameOver(),
       counterNumberSpriteFrames: this.counterNumberSpriteFrames
     })
-    this.startPageController = this.getComponent(StartPageController) ?? this.addComponent(StartPageController)
-    this.startPageController.setup({
-      onStartTap: () => this.startSessionFromStartPage(),
-      onShareTap: () => this.shareGameFromStartPage(),
-      backgroundSpriteFrame: this.startPageBackgroundSpriteFrame,
-      rankButtonSpriteFrame: this.startPageRankButtonSpriteFrame,
-      settingsButtonSpriteFrame: this.startPageSettingsButtonSpriteFrame,
-      shareButtonSpriteFrame: this.startPageShareButtonSpriteFrame
-    })
     this.bindInput()
   }
   // 等场景节点初始化完成后再生成第一颗棋子，避免引用未准备好的节点。
   start() {
     // 某些平台会在启动后一帧才拿到稳定的安全区，这里让 UI 组件再补一次布局。
     this.uiController?.syncLayout()
-    this.startPageController?.syncLayout()
-    this.audioManager?.playStartPageBackgroundMusic(this.getHomeBgmClip())
+    this.audioManager?.playGameplayBackgroundMusic(this.gameplayBgmClip)
     this.refreshUiState()
+    if (!this.currentPiece && !this.isGameOver) {
+      this.spawnPiece()
+    }
+    // 玩法期间提前预加载首页，减少暂停返回首页时的场景切换等待。
+    director.preloadScene(this.homeSceneName)
   }
 
   onDestroy() {
@@ -268,7 +240,6 @@ export class PlayController extends Component {
     this.node.off(Node.EventType.TOUCH_END, this.handleTouchEnd, this)
     this.node.off(Node.EventType.TOUCH_CANCEL, this.handleTouchCancel, this)
     this.uiController = null
-    this.startPageController = null
   }
 
   // 所有玩法短音效统一从这里转给音频管理器，空资源会被安全忽略。
@@ -296,11 +267,6 @@ export class PlayController extends Component {
 
     this.lastMergeSoundTimeMs = Date.now()
     this.playSoundEffect(this.landingMergeAudioClip)
-  }
-
-  // Home 页优先使用新字段，旧字段只作为历史场景的兜底资源位。
-  private getHomeBgmClip() {
-    return this.homeBgmClip ?? this.startPageBgmClip
   }
 
   // 每帧更新当前下落棋子的目标位置，并在接近落点时触发落地结算。
@@ -496,7 +462,11 @@ export class PlayController extends Component {
     this.boardModel.destroyBoardPieces(this.board, this.boardheight, this.boardwidth)
 
     if (this.currentPiece) {
-      this.currentPiece.node.destroy()
+      if (this.currentPiece.node.isValid) {
+        // 当前下落棋子不在 board 数组里，销毁前也要单独停止动画。
+        Tween.stopAllByTarget(this.currentPiece.node)
+        this.currentPiece.node.destroy()
+      }
       this.currentPiece = null
     }
   }
@@ -2046,23 +2016,6 @@ export class PlayController extends Component {
     this.uiController?.renderState(this.buildUiState())
   }
 
-  // 首页点击开始后再生成第一颗棋子，让开始页和首局开场自然衔接。
-  private startSessionFromStartPage() {
-    if (this.hasStartedSession) {
-      return
-    }
-
-    this.hasStartedSession = true
-    this.skillStock.reset()
-    this.refreshUiState()
-    this.audioManager?.playGameplayBackgroundMusic(this.gameplayBgmClip)
-    this.startPageController?.hide(() => {
-      if (!this.currentPiece && !this.isGameOver) {
-        this.spawnPiece()
-      }
-    })
-  }
-
   // 逻辑层只暴露一份纯数据状态给 UI 层，保证职责边界清晰。
   private buildUiState(): PlayUIState {
     const boardScore = this.scoreManager.getBoardScore(this.board)
@@ -2107,12 +2060,14 @@ export class PlayController extends Component {
     this.refreshUiState()
   }
 
-  // 暂停弹窗点击返回首页时，清理当前对局但不生成新棋子，交回开始页接管。
+  // 暂停弹窗点击返回首页时，先清理当前对局，再加载独立首页场景。
   private returnToStartPageFromPause() {
     if (!this.hasStartedSession) {
       return
     }
 
+    // 回首页只保留本次切场景任务，取消之前用于动画等待的 scheduleOnce。
+    this.unscheduleAllCallbacks()
     this.clearBoardPieces()
     this.transientFx.clear()
     this.hasStartedSession = false
@@ -2126,25 +2081,13 @@ export class PlayController extends Component {
     this.swapDragState = null
     this.resetBoard()
     this.skillStock.reset()
-    this.audioManager?.playStartPageBackgroundMusic(this.getHomeBgmClip())
-    this.refreshUiState()
-    this.startPageController?.syncLayout()
-    this.startPageController?.show()
-  }
-
-  // 暂停遮罩右下角的排行榜按钮复用首页排行榜弹窗，只显示榜单本身，不恢复首页卡片。
-  private showRankFromPause() {
-    this.startPageController?.showRankModal(true)
+    // 即将离开游戏场景，不再刷新暂停 UI，避免触摸收尾时触发弹窗关闭动画和事件解绑。
+    this.scheduleOnce(() => director.loadScene(this.homeSceneName), 0)
   }
 
   // 分享入口只负责适配平台能力；没有平台 API 时保持静默降级，避免打断暂停弹窗。
   private shareGameFromPause() {
     this.shareAdapter.shareScore(this.scoreManager.getTotalScore(this.board), 'pause_share')
-  }
-
-  // 首页分享还没有本局分数，使用邀请挑战文案更符合入口语境。
-  private shareGameFromStartPage() {
-    this.shareAdapter.shareStartPage('start_share')
   }
 
   // 结算弹窗分享本局分数，和暂停分享共用平台适配逻辑。

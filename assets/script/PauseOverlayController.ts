@@ -76,8 +76,10 @@ export class PauseOverlayController extends Component {
   private pauseHandler: (() => void) | null = null
   // 暂停层重玩按钮只通知逻辑层重开当前对局。
   private replayHandler: (() => void) | null = null
-  // 暂停层回首页按钮只通知逻辑层清理对局并展示首页。
+  // 暂停层回首页按钮只通知逻辑层清理对局并切换到首页场景。
   private homeHandler: (() => void) | null = null
+  // 回首页会销毁当前游戏场景，点击后只派发一次，避免连续触摸重复触发解绑和切场景。
+  private isReturningHome = false
   // 关闭弹窗的按钮
   @property({ type: Node, tooltip: '关闭按钮节点' })
   private closeButtonNode: Node | null = null
@@ -99,6 +101,7 @@ export class PauseOverlayController extends Component {
     this.pauseHandler = options.pauseHandler
     this.replayHandler = options.replayHandler
     this.homeHandler = options.homeHandler
+    this.isReturningHome = false
     this.ensureOverlayStructure()
     this.ensurePauseOverlayMaskSprite()
     this.bindPauseOverlayMask()
@@ -109,12 +112,16 @@ export class PauseOverlayController extends Component {
     this.refreshPauseOverlay()
 
     // 绑定关闭按钮事件，点击后调用 pauseHandler 继续游戏
-    this.closeButtonNode?.off(Node.EventType.TOUCH_END, this.onCloseButtonTap, this)
-    this.closeButtonNode?.on(Node.EventType.TOUCH_END, this.onCloseButtonTap, this)
+    this.safeOff(this.closeButtonNode, Node.EventType.TOUCH_END, this.onCloseButtonTap)
+    this.safeOn(this.closeButtonNode, Node.EventType.TOUCH_END, this.onCloseButtonTap)
   }
 
   // 某些平台安全区和尺寸会在首帧后稳定，这里补一次遮罩和滑块布局收口。
   syncLayout() {
+    if (this.isReturningHome) {
+      return
+    }
+
     this.ensurePauseOverlayMaskSprite()
     this.configureAudioControlLayout()
     this.layoutPauseActionButtons()
@@ -124,21 +131,27 @@ export class PauseOverlayController extends Component {
 
   // 外部只需要告诉暂停层当前是否暂停，具体动画和显示细节全部交给弹窗脚本。
   renderState(isPaused: boolean) {
+    if (this.isReturningHome) {
+      return
+    }
+
     this.isPaused = isPaused
     this.refreshPauseOverlay()
   }
 
   onDestroy() {
-    this.pauseOverlayMask?.off(Node.EventType.TOUCH_START, this.swallowOverlayTouch, this)
-    this.pauseOverlayMask?.off(Node.EventType.TOUCH_MOVE, this.swallowOverlayTouch, this)
-    this.pauseOverlayMask?.off(Node.EventType.TOUCH_END, this.swallowOverlayTouch, this)
-    this.pauseOverlayMask?.off(Node.EventType.TOUCH_CANCEL, this.swallowOverlayTouch, this)
+    this.unscheduleAllCallbacks()
+    this.stopPauseOverlayTweens()
+    this.safeOff(this.pauseOverlayMask, Node.EventType.TOUCH_START, this.swallowOverlayTouch)
+    this.safeOff(this.pauseOverlayMask, Node.EventType.TOUCH_MOVE, this.swallowOverlayTouch)
+    this.safeOff(this.pauseOverlayMask, Node.EventType.TOUCH_END, this.swallowOverlayTouch)
+    this.safeOff(this.pauseOverlayMask, Node.EventType.TOUCH_CANCEL, this.swallowOverlayTouch)
     this.unbindSliderTouchEvents([this.bgMusicControl, this.bgMusicSlider, this.bgMusicController], this.onBgMusicControlTouch)
     this.unbindSliderTouchEvents(
       [this.soundEffectControl, this.soundEffectSlider, this.soundEffectController],
       this.onSoundEffectControlTouch
     )
-    this.closeButtonNode?.off(Node.EventType.TOUCH_END, this.onCloseButtonTap, this)
+    this.safeOff(this.closeButtonNode, Node.EventType.TOUCH_END, this.onCloseButtonTap)
     this.unbindPauseActionButton(this.playButtonNode, this.onCloseButtonTap)
     this.unbindPauseActionButton(this.replayButtonNode, this.onReplayButtonTap)
     this.unbindPauseActionButton(this.homeButtonNode, this.onHomeButtonTap)
@@ -147,10 +160,8 @@ export class PauseOverlayController extends Component {
   // PauseOverlay 节点优先复用 scene 中现成的 Mask 和 Panel，缺失时再补最小结构。
   private ensureOverlayStructure() {
     this.node.active = false
-    if (this.node.parent) {
-      // 暂停层必须压在棋子和特效上方，避免打开弹窗后仍被运行时节点遮挡。
-      this.node.setSiblingIndex(this.node.parent.children.length - 1)
-    }
+    // 暂停层必须压在棋子和特效上方，避免打开弹窗后仍被运行时节点遮挡。
+    this.bringNodeToTop(this.node)
 
     const overlayTransform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform)
     if (overlayTransform.width <= 0 || overlayTransform.height <= 0) {
@@ -197,7 +208,14 @@ export class PauseOverlayController extends Component {
 
   private onHomeButtonTap(event: EventTouch) {
     event.propagationStopped = true
-    this.homeHandler?.()
+    if (this.isReturningHome) {
+      return
+    }
+
+    this.isReturningHome = true
+    this.stopPauseOverlayTweens()
+    // 等当前 TOUCH_END 派发结束后再切场景，避免按钮节点被销毁时事件系统还在继续访问它。
+    this.scheduleOnce(() => this.homeHandler?.(), 0)
   }
 
   // Play 按钮是暂停面板里已有的继续按钮，兼容旧命名 Save 和 Continue。
@@ -229,8 +247,12 @@ export class PauseOverlayController extends Component {
     const bottomInsetY = Math.max(PAUSE_ACTION_SAFE_BOTTOM_PADDING, safeBottom + PAUSE_ACTION_SAFE_BOTTOM_PADDING)
     const buttonY = -overlayTransform.height * 0.5 + bottomInsetY
 
-    this.homeButtonNode?.setPosition(-overlayTransform.width * 0.5 + edgeInsetX, buttonY, 0)
-    this.replayButtonNode?.setPosition(overlayTransform.width * 0.5 - edgeInsetX, buttonY, 0)
+    if (this.canUseNode(this.homeButtonNode)) {
+      this.homeButtonNode.setPosition(-overlayTransform.width * 0.5 + edgeInsetX, buttonY, 0)
+    }
+    if (this.canUseNode(this.replayButtonNode)) {
+      this.replayButtonNode.setPosition(overlayTransform.width * 0.5 - edgeInsetX, buttonY, 0)
+    }
   }
 
   // 新按钮可能被放在 PauseOverlay 根节点、Panel 或 Mask 下，这里只做浅层兼容查找。
@@ -252,35 +274,96 @@ export class PauseOverlayController extends Component {
 
   // 按钮节点自己拦截触摸过程，避免事件继续传到底层棋盘或遮罩。
   private bindPauseActionButton(node: Node | null, endHandler: (event: EventTouch) => void) {
+    if (!this.canUseNode(node)) {
+      return
+    }
+
     this.unbindPauseActionButton(node, endHandler)
-    node?.on(Node.EventType.TOUCH_START, this.swallowOverlayTouch, this)
-    node?.on(Node.EventType.TOUCH_MOVE, this.swallowOverlayTouch, this)
-    node?.on(Node.EventType.TOUCH_CANCEL, this.swallowOverlayTouch, this)
-    node?.on(Node.EventType.TOUCH_END, endHandler, this)
+    node.on(Node.EventType.TOUCH_START, this.swallowOverlayTouch, this)
+    node.on(Node.EventType.TOUCH_MOVE, this.swallowOverlayTouch, this)
+    node.on(Node.EventType.TOUCH_CANCEL, this.swallowOverlayTouch, this)
+    node.on(Node.EventType.TOUCH_END, endHandler, this)
   }
 
   // 销毁或重复 setup 前统一解绑，避免一次点击触发多次回调。
   private unbindPauseActionButton(node: Node | null, endHandler: (event: EventTouch) => void) {
-    node?.off(Node.EventType.TOUCH_START, this.swallowOverlayTouch, this)
-    node?.off(Node.EventType.TOUCH_MOVE, this.swallowOverlayTouch, this)
-    node?.off(Node.EventType.TOUCH_CANCEL, this.swallowOverlayTouch, this)
-    node?.off(Node.EventType.TOUCH_END, endHandler, this)
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    node.off(Node.EventType.TOUCH_START, this.swallowOverlayTouch, this)
+    node.off(Node.EventType.TOUCH_MOVE, this.swallowOverlayTouch, this)
+    node.off(Node.EventType.TOUCH_CANCEL, this.swallowOverlayTouch, this)
+    node.off(Node.EventType.TOUCH_END, endHandler, this)
   }
 
   // 给蒙版补上统一的拦截事件绑定，避免重复绑定导致回调执行多次。
   private bindPauseOverlayMask() {
-    if (!this.pauseOverlayMask) {
+    const maskNode = this.pauseOverlayMask
+    if (!this.canUseNode(maskNode)) {
       return
     }
 
-    this.pauseOverlayMask.off(Node.EventType.TOUCH_START, this.swallowOverlayTouch, this)
-    this.pauseOverlayMask.off(Node.EventType.TOUCH_MOVE, this.swallowOverlayTouch, this)
-    this.pauseOverlayMask.off(Node.EventType.TOUCH_END, this.swallowOverlayTouch, this)
-    this.pauseOverlayMask.off(Node.EventType.TOUCH_CANCEL, this.swallowOverlayTouch, this)
-    this.pauseOverlayMask.on(Node.EventType.TOUCH_START, this.swallowOverlayTouch, this)
-    this.pauseOverlayMask.on(Node.EventType.TOUCH_MOVE, this.swallowOverlayTouch, this)
-    this.pauseOverlayMask.on(Node.EventType.TOUCH_END, this.swallowOverlayTouch, this)
-    this.pauseOverlayMask.on(Node.EventType.TOUCH_CANCEL, this.swallowOverlayTouch, this)
+    this.safeOff(maskNode, Node.EventType.TOUCH_START, this.swallowOverlayTouch)
+    this.safeOff(maskNode, Node.EventType.TOUCH_MOVE, this.swallowOverlayTouch)
+    this.safeOff(maskNode, Node.EventType.TOUCH_END, this.swallowOverlayTouch)
+    this.safeOff(maskNode, Node.EventType.TOUCH_CANCEL, this.swallowOverlayTouch)
+    maskNode.on(Node.EventType.TOUCH_START, this.swallowOverlayTouch, this)
+    maskNode.on(Node.EventType.TOUCH_MOVE, this.swallowOverlayTouch, this)
+    maskNode.on(Node.EventType.TOUCH_END, this.swallowOverlayTouch, this)
+    maskNode.on(Node.EventType.TOUCH_CANCEL, this.swallowOverlayTouch, this)
+  }
+
+  // 切场景销毁节点时，旧引用可能还没置空但已经不可用，所有事件解绑前都先走这里。
+  private canUseNode(node: Node | null): node is Node {
+    return !!node && node.isValid
+  }
+
+  private safeOn(node: Node | null, eventType: string, handler: (event: EventTouch) => void) {
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    node.on(eventType, handler, this)
+  }
+
+  private safeOff(node: Node | null, eventType: string, handler: (event: EventTouch) => void) {
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    node.off(eventType, handler, this)
+  }
+
+  // setSiblingIndex 只有在节点仍挂在父节点下时才安全，切场景销毁边界上必须先保护。
+  private bringNodeToTop(node: Node | null) {
+    const parent = node?.parent ?? null
+    if (!this.canUseNode(node) || !parent?.isValid) {
+      return
+    }
+
+    node.setSiblingIndex(parent.children.length - 1)
+  }
+
+  // 回首页和销毁时统一停止暂停层动画，避免 tween 在节点销毁后继续访问内部 parent。
+  private stopPauseOverlayTweens() {
+    this.stopNodeTreeTweens(this.node)
+  }
+
+  private stopNodeTreeTweens(node: Node | null) {
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    Tween.stopAllByTarget(node)
+    const opacity = node.getComponent(UIOpacity)
+    if (opacity) {
+      Tween.stopAllByTarget(opacity)
+    }
+
+    for (const child of [...node.children]) {
+      this.stopNodeTreeTweens(child)
+    }
   }
 
   // Mask 节点强制使用可显示的 SpriteFrame，避免空 SpriteFrame 导致蒙版完全不显示。
@@ -382,18 +465,26 @@ export class PauseOverlayController extends Component {
   private bindSliderTouchEvents(nodes: Array<Node | null>, handler: (event: EventTouch) => void) {
     this.unbindSliderTouchEvents(nodes, handler)
     for (const node of nodes) {
-      node?.on(Node.EventType.TOUCH_START, handler, this)
-      node?.on(Node.EventType.TOUCH_MOVE, handler, this)
-      node?.on(Node.EventType.TOUCH_END, handler, this)
+      if (!this.canUseNode(node)) {
+        continue
+      }
+
+      node.on(Node.EventType.TOUCH_START, handler, this)
+      node.on(Node.EventType.TOUCH_MOVE, handler, this)
+      node.on(Node.EventType.TOUCH_END, handler, this)
     }
   }
 
   // 销毁时统一解绑滑块触摸事件，避免界面关闭后残留回调。
   private unbindSliderTouchEvents(nodes: Array<Node | null>, handler: (event: EventTouch) => void) {
     for (const node of nodes) {
-      node?.off(Node.EventType.TOUCH_START, handler, this)
-      node?.off(Node.EventType.TOUCH_MOVE, handler, this)
-      node?.off(Node.EventType.TOUCH_END, handler, this)
+      if (!this.canUseNode(node)) {
+        continue
+      }
+
+      node.off(Node.EventType.TOUCH_START, handler, this)
+      node.off(Node.EventType.TOUCH_MOVE, handler, this)
+      node.off(Node.EventType.TOUCH_END, handler, this)
     }
   }
 
@@ -581,12 +672,14 @@ export class PauseOverlayController extends Component {
 
   // 根据 paused 状态播放暂停弹窗动画：蒙版淡入淡出，面板从右侧滑入滑出。
   private refreshPauseOverlay() {
-    if (this.node.parent) {
-      // 每次弹窗打开前都把暂停层提到最上面，避免被新生成的棋子或特效节点盖住。
-      this.node.setSiblingIndex(this.node.parent.children.length - 1)
-    }
+    // 每次弹窗打开前都把暂停层提到最上面，避免被新生成的棋子或特效节点盖住。
+    this.bringNodeToTop(this.node)
 
     const maskNode = this.pauseOverlayMask ?? this.node
+    if (!this.canUseNode(maskNode)) {
+      return
+    }
+
     const maskOpacity = maskNode.getComponent(UIOpacity) ?? maskNode.addComponent(UIOpacity)
     Tween.stopAllByTarget(maskOpacity)
     if (this.pauseOverlayPanel) {

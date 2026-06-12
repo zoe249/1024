@@ -28,6 +28,10 @@ export class TransientFxRegistry {
    */
   clear() {
     for (const node of this.activeNodes) {
+      if (!node.isValid) {
+        continue
+      }
+
       Tween.stopAllByTarget(node)
       const opacity = node.getComponent(UIOpacity)
       if (opacity) {
