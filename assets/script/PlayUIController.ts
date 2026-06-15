@@ -247,24 +247,26 @@ export class PlayUIController extends Component {
 
   onDestroy() {
     // UI 组件自己负责解绑按钮事件，避免逻辑层还要知道具体节点层级。
-    this.getControlContainer().getChildByName('PauseButton')?.off(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
-    this.bombSkillNode?.off(Node.EventType.TOUCH_END, this.onBombSkillButtonTap, this)
-    this.hammerSkillNode?.off(Node.EventType.TOUCH_END, this.onHammerSkillButtonTap, this)
-    this.swapSkillNode?.off(Node.EventType.TOUCH_END, this.onSwapSkillButtonTap, this)
+    const controlContainer = this.canUseNode(this.node) ? this.getControlContainer() : null
+    const pauseButtonNode = this.canUseNode(controlContainer) ? controlContainer.getChildByName('PauseButton') : null
+    this.safeOff(pauseButtonNode, Node.EventType.TOUCH_END, this.onPauseButtonTap)
+    this.safeOff(this.bombSkillNode, Node.EventType.TOUCH_END, this.onBombSkillButtonTap)
+    this.safeOff(this.hammerSkillNode, Node.EventType.TOUCH_END, this.onHammerSkillButtonTap)
+    this.safeOff(this.swapSkillNode, Node.EventType.TOUCH_END, this.onSwapSkillButtonTap)
     Tween.stopAllByTarget(this.scoreTweenState)
-    if (this.skillHintNode) {
+    if (this.canUseNode(this.skillHintNode)) {
       Tween.stopAllByTarget(this.skillHintNode)
     }
-    if (this.skillHintOpacity) {
+    if (this.skillHintOpacity?.isValid) {
       Tween.stopAllByTarget(this.skillHintOpacity)
     }
-    if (this.bombSkillNode) {
+    if (this.canUseNode(this.bombSkillNode)) {
       Tween.stopAllByTarget(this.bombSkillNode)
     }
-    if (this.hammerSkillNode) {
+    if (this.canUseNode(this.hammerSkillNode)) {
       Tween.stopAllByTarget(this.hammerSkillNode)
     }
-    if (this.swapSkillNode) {
+    if (this.canUseNode(this.swapSkillNode)) {
       Tween.stopAllByTarget(this.swapSkillNode)
     }
     this.scoreNumberLabel = null
@@ -1087,6 +1089,19 @@ export class PlayUIController extends Component {
   // 技能栏节点历史上有拼写错误，这里同时兼容新旧两个名字。
   private getSkillsContainer() {
     return this.node.getChildByName('SkliisController') ?? this.node.getChildByName('SkillsController')
+  }
+
+  // 切场景返回首页时，节点引用可能非空但已进入销毁态，调用事件接口前必须确认仍有效。
+  private canUseNode(node: Node | null): node is Node {
+    return !!node && node.isValid
+  }
+
+  private safeOff(node: Node | null, eventType: string, handler: (event: EventTouch) => void) {
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    node.off(eventType, handler, this)
   }
 
   // 优先复用 scene 中已有的 Controller 节点，方便继续在层级管理器里调样式。

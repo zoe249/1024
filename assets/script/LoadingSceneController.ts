@@ -13,6 +13,10 @@ export class LoadingSceneController extends Component {
   @property({ tooltip: 'Target scene name' })
   targetSceneName = 'game'
 
+  // 加载页最短停留时间，避免资源加载过快时一闪而过造成卡顿感。
+  @property({ tooltip: 'Minimum loading page duration in seconds' })
+  minimumDisplaySeconds = 0.8
+
   // 加载页背景图，当前绑定 loading_bg_candy_shop。
   @property({ type: SpriteFrame, tooltip: 'Loading page background sprite frame' })
   backgroundSpriteFrame: SpriteFrame | null = null
@@ -34,6 +38,8 @@ export class LoadingSceneController extends Component {
   private progressFillNode: Node | null = null
   private percentLabel: Label | null = null
   private hasRequestedLoadScene = false
+  // 记录 loading 开始时间，用来保证加载页至少展示 minimumDisplaySeconds。
+  private loadingStartedAtMs = 0
 
   onLoad() {
     this.ensureLoadingUi()
@@ -50,7 +56,7 @@ export class LoadingSceneController extends Component {
    * 加载目标场景并同步进度表现。
    *
    * Cocos 的 preloadScene 会分阶段回调 completedCount / totalCount；
-   * 加载完成后再 loadScene，避免直接切玩法场景时出现黑屏等待。
+   * 加载完成后再结合最短展示时间 loadScene，避免直接切玩法场景时出现黑屏等待或闪屏感。
    */
   private startLoadingTargetScene() {
     if (this.hasRequestedLoadScene) {
@@ -58,6 +64,7 @@ export class LoadingSceneController extends Component {
     }
 
     this.hasRequestedLoadScene = true
+    this.loadingStartedAtMs = Date.now()
     director.preloadScene(
       this.targetSceneName,
       (completedCount, totalCount) => {
@@ -65,7 +72,10 @@ export class LoadingSceneController extends Component {
       },
       () => {
         this.renderProgress(1)
-        this.scheduleOnce(() => director.loadScene(this.targetSceneName), 0)
+        const elapsedSeconds = (Date.now() - this.loadingStartedAtMs) / 1000
+        const remainingSeconds = Math.max(0, this.minimumDisplaySeconds - elapsedSeconds)
+        // 即使资源已加载完成，也等到最短停留时间后再切场景，让过渡节奏更稳定。
+        this.scheduleOnce(() => director.loadScene(this.targetSceneName), remainingSeconds)
       }
     )
   }
