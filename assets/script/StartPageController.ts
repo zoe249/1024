@@ -277,6 +277,7 @@ export class StartPageController extends Component {
     if (hierarchyRoot) {
       this.bindHierarchyPage(hierarchyRoot)
       this.ensureHierarchyFallbackNodes()
+      this.ensureHierarchyDynamicEffects()
       this.bindPageInteractions()
       this.startTipRotation()
       return
@@ -368,6 +369,115 @@ export class StartPageController extends Component {
     if (!this.tipLabel && this.pageCardNode) {
       this.buildTipText(this.pageCardNode)
     }
+  }
+
+  // 首页静态视觉由 home.scene 层级维护，这里只补充需要运行时 tween 的动效节点。
+  private ensureHierarchyDynamicEffects() {
+    if (!this.usesHierarchyNodes || !this.pageCardNode) {
+      return
+    }
+
+    this.ensureHierarchyOldLogo()
+    this.ensureHierarchyOldStartButton()
+    if (!this.pageCardNode.getChildByName('TileRow')) {
+      this.buildFloatingTiles(this.pageCardNode)
+    }
+    this.pageCardNode.getChildByName('TileRow')?.setPosition(0, 0, 0)
+    this.startHierarchyStartButtonBreathing()
+  }
+
+  // 首页旧版 logo 是代码绘制的数字块标题；层级里的图片 logo 只留给加载页使用。
+  private ensureHierarchyOldLogo() {
+    if (!this.pageCardNode) {
+      return
+    }
+
+    const imageLogoNode = this.pageCardNode.getChildByName('Logo')
+    if (imageLogoNode) {
+      imageLogoNode.active = false
+    }
+
+    if (!this.pageCardNode.getChildByName('TitleCard')) {
+      this.buildTitleCard(this.pageCardNode)
+    }
+    this.pageCardNode.getChildByName('TitleCard')?.setPosition(0, 414, 0)
+  }
+
+  // 旧版开始按钮由 Graphics 绘制，不依赖图片资源，方便保持原来的胶囊按钮观感。
+  private ensureHierarchyOldStartButton() {
+    if (!this.startButtonNode) {
+      return
+    }
+
+    const transform = this.startButtonNode.getComponent(UITransform) ?? this.startButtonNode.addComponent(UITransform)
+    transform.setContentSize(START_BUTTON_WIDTH, START_BUTTON_HEIGHT)
+    this.startButtonNode.setPosition(0, -214, 0)
+
+    const sprite = this.startButtonNode.getComponent(Sprite)
+    if (sprite) {
+      sprite.enabled = false
+    }
+
+    const graphics = this.startButtonNode.getComponent(Graphics) ?? this.startButtonNode.addComponent(Graphics)
+    graphics.clear()
+    graphics.fillColor = new Color(105, 54, 90, 72)
+    graphics.roundRect(
+      -START_BUTTON_WIDTH / 2 + 2,
+      -START_BUTTON_HEIGHT / 2 - 8,
+      START_BUTTON_WIDTH - 4,
+      START_BUTTON_HEIGHT,
+      START_BUTTON_HEIGHT / 2
+    )
+    graphics.fill()
+    graphics.fillColor = new Color(255, 70, 115, 255)
+    graphics.roundRect(-START_BUTTON_WIDTH / 2, -START_BUTTON_HEIGHT / 2, START_BUTTON_WIDTH, START_BUTTON_HEIGHT, START_BUTTON_HEIGHT / 2)
+    graphics.fill()
+    graphics.fillColor = new Color(255, 103, 144, 255)
+    graphics.roundRect(-START_BUTTON_WIDTH / 2 + 18, 9, START_BUTTON_WIDTH - 36, 20, 10)
+    graphics.fill()
+
+    const shadow = this.ensureButtonTextLabel(this.startButtonNode, 'LabelShadow', '开始游戏', 38, new Color(128, 31, 58, 116), new Vec3(0, -4, 0))
+    shadow.isBold = true
+    const label = this.ensureButtonTextLabel(this.startButtonNode, 'Label', '开始游戏', 38, LIGHT_TEXT, new Vec3(0, 1, 0))
+    label.isBold = true
+  }
+
+  private ensureButtonTextLabel(parent: Node, name: string, text: string, fontSize: number, color: Color, position: Vec3) {
+    let node = parent.getChildByName(name)
+    if (!node) {
+      node = new Node(name)
+      node.setParent(parent)
+    }
+    node.setPosition(position)
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform)
+    transform.setContentSize(START_BUTTON_WIDTH, 58)
+
+    const label = node.getComponent(Label) ?? node.addComponent(Label)
+    label.string = text
+    label.fontSize = fontSize
+    label.lineHeight = fontSize + 6
+    label.color = color
+    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    label.verticalAlign = Label.VerticalAlign.CENTER
+    return label
+  }
+
+  // 层级中已经摆好的开始按钮只追加呼吸动效，不再由脚本重建按钮节点。
+  private startHierarchyStartButtonBreathing() {
+    if (!this.startButtonNode) {
+      return
+    }
+
+    Tween.stopAllByTarget(this.startButtonNode)
+    tween(this.startButtonNode)
+      .repeatForever(
+        tween()
+          .sequence(
+            tween().to(1.15, { scale: new Vec3(1.025, 1.025, 1) }, { easing: 'sineInOut' }),
+            tween().to(1.15, { scale: Vec3.ONE }, { easing: 'sineInOut' })
+          )
+      )
+      .start()
   }
 
   // 旧场景没有首页节点时保留运行时兜底，方便 Web 预览和资源缺失排查。
