@@ -5,16 +5,13 @@ import { GameShareAdapter } from './GameShareAdapter'
 
 const { ccclass, property } = _decorator
 
-// 本次小游戏运行期间只让首次开始游戏进入 loading，后续从首页开始直接进入玩法场景。
-let hasShownLoadingSceneInCurrentSession = false
-
 @ccclass('HomeSceneController')
 export class HomeSceneController extends Component {
   // 首页点击开始后加载的轻量加载场景，默认对应 assets/scence/loading.scene。
   @property({ tooltip: 'Loading scene name' })
   loadingSceneName = 'loading'
 
-  // loading 只负责首次预加载，第二次及以后开始游戏时直接进入这个玩法场景。
+  // loading 预加载完成后进入的玩法场景名，loadingSceneName 为空时也会作为安全兜底。
   @property({ tooltip: 'Game scene name' })
   gameSceneName = 'game'
 
@@ -76,18 +73,13 @@ export class HomeSceneController extends Component {
     this.isLoadingGameScene = true
     const sceneName = this.getStartTargetSceneName()
     // 点击事件分发结束前直接切场景，部分平台会在销毁按钮节点时触发事件系统空引用。
-    // 这里只延后一帧进入目标场景，首次进 loading，后续直接进 game。
+    // 这里只延后一帧进入目标场景，每次从首页开始都先展示一条随机加载提示。
     this.scheduleOnce(() => director.loadScene(sceneName), 0)
   }
 
-  // 首次开始游戏走 loading 预加载资源；回到首页后再次开始，玩法场景通常已在内存或缓存中。
+  // 每次从首页进入游戏都走 loading；若场景名未配置，再直接进入玩法场景兜底。
   private getStartTargetSceneName() {
-    if (!hasShownLoadingSceneInCurrentSession && this.loadingSceneName) {
-      hasShownLoadingSceneInCurrentSession = true
-      return this.loadingSceneName
-    }
-
-    return this.gameSceneName
+    return this.loadingSceneName || this.gameSceneName
   }
 
   // Home 页优先使用新字段，旧字段只作为历史场景的兜底资源位。

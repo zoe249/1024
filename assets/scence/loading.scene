@@ -271,7 +271,7 @@
       "__id__": 5
     },
     "_children": [],
-    "_active": true,
+    "_active": false,
     "_components": [
       {
         "__id__": 7
@@ -352,10 +352,7 @@
       "b": 255,
       "a": 255
     },
-    "_spriteFrame": {
-      "__uuid__": "37cd2db8-eec4-4812-a7a9-2e17ba744611@f9941",
-      "__expectedType__": "cc.SpriteFrame"
-    },
+    "_spriteFrame": null,
     "_type": 0,
     "_fillType": 0,
     "_sizeMode": 0,
@@ -434,8 +431,17 @@
     "_enabled": true,
     "__prefab": null,
     "targetSceneName": "game",
-    "backgroundSpriteFrame": {
-      "__uuid__": "a2ecf37c-6066-40ed-8d5b-b256178e48e3@f9941",
+    "minimumDisplaySeconds": 1.8,
+    "bombSpriteFrame": {
+      "__uuid__": "27aac6ed-362d-4da1-94e0-99d98ed627e5@f9941",
+      "__expectedType__": "cc.SpriteFrame"
+    },
+    "hammerSpriteFrame": {
+      "__uuid__": "309b84ed-e372-49f1-9e91-c2002872bab6@f9941",
+      "__expectedType__": "cc.SpriteFrame"
+    },
+    "swapSpriteFrame": {
+      "__uuid__": "ca2c64ed-30e4-4bc5-8519-dee8744d9c3d@f9941",
       "__expectedType__": "cc.SpriteFrame"
     },
     "backgroundNodeRef": null,
