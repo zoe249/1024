@@ -95,10 +95,14 @@ const WEBGL_OPTIONS = {
     failIfMajorPerformanceCaveat: false
 };
 
-const BACKGROUND_FILE = 'background.png';
-const LOGO_FILE = 'logo.png';
+const BACKGROUND_FILE = 'startup-background.jpg';
+const LOGO_FILE = 'startup-logo.png';
 const LOADING_LABEL_FILE = 'loading-label.png';
 const HEALTH_ADVICE_FILE = 'health-advice.png';
+// Logo 上移到顶部天空留白区，避免覆盖糖果店屋顶和主体角色。
+const LOGO_CENTER_Y = 0.78;
+const LOGO_WIDTH_RATIO = 0.54;
+const MAX_LOGO_HEIGHT_RATIO = 0.18;
 // 进度条使用较纤细的高度，接近参考启动页的轻量胶囊样式。
 const BAR_HEIGHT_RATIO = 0.024;
 const MIN_BAR_HEIGHT_PIXELS = 24;
@@ -247,9 +251,9 @@ function buildRectVertices(centerX, centerY, width, height) {
  */
 function updateLayout(logoImage) {
     const logoAspect = logoImage.width / logoImage.height;
-    let logoWidthPixels = canvas.width * 0.72;
+    let logoWidthPixels = canvas.width * LOGO_WIDTH_RATIO;
     let logoHeightPixels = logoWidthPixels / logoAspect;
-    const maxLogoHeightPixels = canvas.height * 0.23;
+    const maxLogoHeightPixels = canvas.height * MAX_LOGO_HEIGHT_RATIO;
 
     if (logoHeightPixels > maxLogoHeightPixels) {
         logoHeightPixels = maxLogoHeightPixels;
@@ -258,8 +262,10 @@ function updateLayout(logoImage) {
 
     const logoWidth = logoWidthPixels * 2 / canvas.width;
     const logoHeight = logoHeightPixels * 2 / canvas.height;
-    const logoCenterY = 0.5;
-    updateBuffer(logoBuffer, buildRectVertices(0, logoCenterY, logoWidth, logoHeight));
+    updateBuffer(
+        logoBuffer,
+        buildRectVertices(0, LOGO_CENTER_Y, logoWidth, logoHeight)
+    );
 
     const barWidthPixels = canvas.width * 0.68;
     const barHeightPixels = Math.max(
@@ -450,7 +456,7 @@ function start(alpha, antialias, useWebgl2) {
     textureProgram = createProgram(TEXTURE_VERTEX_SHADER, TEXTURE_FRAGMENT_SHADER);
     barProgram = createProgram(BAR_VERTEX_SHADER, BAR_FRAGMENT_SHADER);
     backgroundBuffer = createBuffer(buildRectVertices(0, 0, 2, 2));
-    logoBuffer = createBuffer(buildRectVertices(0, 0.5, 1, 0.3));
+    logoBuffer = createBuffer(buildRectVertices(0, LOGO_CENTER_Y, 1, 0.3));
     barBuffer = createBuffer(buildRectVertices(0, -0.69, 1.36, 0.04));
     labelBuffer = createBuffer(buildRectVertices(0, -0.69, 0.5, 0.03));
     healthAdviceBuffer = createBuffer(buildRectVertices(0, -0.86, 1.84, 0.18));

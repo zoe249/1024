@@ -4,8 +4,8 @@
 
 页面内容：
 
-- 项目现有的 `loading_bg_candy_shop.png` 全屏背景
-- 项目现有的 `logo.png`
+- 由 `loading_bg_candy_shop.png` 生成的轻量 JPG 全屏背景
+- 由新版 Logo 裁边、缩放后生成的轻量透明 PNG
 - 深色半透明进度条底槽
 - 绿色胶囊进度
 - 白色“初始化中”文案
@@ -14,6 +14,9 @@
 
 “初始化中”和健康游戏忠告已经预渲染为透明 PNG。这样可以避免部分微信基础库或
 真机在引擎启动前无法将 `wx.createOffscreenCanvas` 中文内容上传到 WebGL，导致文字消失。
+
+背景和 Logo 使用发布专用轻量资源，避免两张高清原图直接进入微信主包。安装脚本还会
+自动删除旧版启动大图与 `startup-preview*.png` 调试预览，并输出安装后的主包文件体积。
 
 ## 构建后安装
 
@@ -38,10 +41,12 @@ node tools/wechat-startup-page/install.js /你的绝对路径/wechatgame
 安装脚本会：
 
 1. 替换构建产物中的 `first-screen.js`
-2. 将 loading 背景复制为 `background.png`
-3. 将项目 Logo 复制为 `logo.png`
+2. 复制轻量背景 `startup-background.jpg`
+3. 复制轻量 Logo `startup-logo.png`
 4. 复制 `loading-label.png` 和 `health-advice.png`
-5. 保留 Cocos 生成的 `game.js`、分包配置和游戏代码不变
+5. 清理旧版大图和启动页预览文件
+6. 统计主包体积，超过 4MB 时输出警告
+7. 保留 Cocos 生成的 `game.js`、分包配置和游戏代码不变
 
 ## 为什么要在每次构建后重新执行
 
@@ -55,11 +60,11 @@ node tools/wechat-startup-page/install.js /你的绝对路径/wechatgame
 tools/wechat-startup-page/first-screen.js
   → build/wechatgame/first-screen.js
 
-assets/images/Loading/loading_bg_candy_shop.png
-  → build/wechatgame/background.png
+tools/wechat-startup-page/startup-background.jpg
+  → build/wechatgame/startup-background.jpg
 
-assets/images/logo.png
-  → build/wechatgame/logo.png
+tools/wechat-startup-page/startup-logo.png
+  → build/wechatgame/startup-logo.png
 
 tools/wechat-startup-page/loading-label.png
   → build/wechatgame/loading-label.png
