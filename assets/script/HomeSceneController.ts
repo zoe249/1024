@@ -1,9 +1,14 @@
-import { _decorator, AudioClip, Component, director, SpriteFrame } from 'cc'
+import { _decorator, AudioClip, Component, director, Prefab, SpriteFrame } from 'cc'
 import { StartPageController } from './StartPageController'
 import { GameAudioManager } from './GameAudioManager'
 import { GameShareAdapter } from './GameShareAdapter'
 
 const { ccclass, property } = _decorator
+
+// 首页资源条按设计稿默认展示 3/4 体力和 99,999 金币，后续存档或商城系统可统一覆盖。
+const INITIAL_ENERGY = 3
+const MAX_ENERGY = 4
+const INITIAL_COINS = 99999
 
 @ccclass('HomeSceneController')
 export class HomeSceneController extends Component {
@@ -39,10 +44,21 @@ export class HomeSceneController extends Component {
   @property({ type: SpriteFrame, tooltip: 'Start page share button sprite frame' })
   startPageShareButtonSpriteFrame: SpriteFrame | null = null
 
+  // 体力条与金币条是首页大厅组件，不再进入 game.scene 的单局 HUD。
+  @property({ type: Prefab, tooltip: 'Home energy bar prefab' })
+  energyBarPrefab: Prefab | null = null
+
+  @property({ type: Prefab, tooltip: 'Home coin bar prefab' })
+  coinBarPrefab: Prefab | null = null
+
   private startPageController: StartPageController | null = null
   private audioManager: GameAudioManager | null = null
   private readonly shareAdapter = new GameShareAdapter()
   private isLoadingGameScene = false
+  // 玩家资源由首页逻辑层持有，StartPageController 只负责展示和发送加号点击意图。
+  private currentEnergy = INITIAL_ENERGY
+  private maxEnergy = MAX_ENERGY
+  private coinCount = INITIAL_COINS
 
   onLoad() {
     this.audioManager = new GameAudioManager(this.node)
@@ -54,7 +70,14 @@ export class HomeSceneController extends Component {
       backgroundSpriteFrame: this.startPageBackgroundSpriteFrame,
       rankButtonSpriteFrame: this.startPageRankButtonSpriteFrame,
       settingsButtonSpriteFrame: this.startPageSettingsButtonSpriteFrame,
-      shareButtonSpriteFrame: this.startPageShareButtonSpriteFrame
+      shareButtonSpriteFrame: this.startPageShareButtonSpriteFrame,
+      energyBarPrefab: this.energyBarPrefab,
+      coinBarPrefab: this.coinBarPrefab,
+      energy: this.currentEnergy,
+      maxEnergy: this.maxEnergy,
+      coins: this.coinCount,
+      onEnergyMoreTap: () => this.requestEnergyStoreFromUi(),
+      onCoinMoreTap: () => this.requestCoinStoreFromUi()
     })
   }
 
@@ -85,6 +108,28 @@ export class HomeSceneController extends Component {
   // Home 页优先使用新字段，旧字段只作为历史场景的兜底资源位。
   private getHomeBgmClip() {
     return this.homeBgmClip ?? this.startPageBgmClip
+  }
+
+  /**
+   * 由登录、商城或存档系统统一更新首页玩家资源。
+   *
+   * 这里完成整数化和边界收口，避免外部数据让体力槽或金币文本进入非法状态；
+   * 首页 UI 只接收整理后的纯数值，不直接修改资源。
+   */
+  public setPlayerResources(energy: number, maxEnergy: number, coins: number) {
+    this.maxEnergy = Math.max(1, Math.floor(maxEnergy))
+    this.currentEnergy = Math.min(this.maxEnergy, Math.max(0, Math.floor(energy)))
+    this.coinCount = Math.max(0, Math.floor(coins))
+    this.startPageController?.renderPlayerResources(this.currentEnergy, this.maxEnergy, this.coinCount)
+  }
+
+  // 加号只向外发送商城入口意图，避免在商城尚未接入时凭空赠送资源。
+  private requestEnergyStoreFromUi() {
+    this.node.emit('request-energy-store')
+  }
+
+  private requestCoinStoreFromUi() {
+    this.node.emit('request-coin-store')
   }
 
   // 首页分享还没有本局分数，使用邀请挑战文案更符合入口语境。

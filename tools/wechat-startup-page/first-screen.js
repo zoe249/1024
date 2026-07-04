@@ -97,8 +97,6 @@ const WEBGL_OPTIONS = {
 
 const BACKGROUND_FILE = 'startup-background.jpg';
 const LOGO_FILE = 'startup-logo.png';
-const LOADING_LABEL_FILE = 'loading-label.png';
-const HEALTH_ADVICE_FILE = 'health-advice.png';
 // Logo 上移到顶部天空留白区，避免覆盖糖果店屋顶和主体角色。
 const LOGO_CENTER_Y = 0.78;
 const LOGO_WIDTH_RATIO = 0.54;
@@ -188,6 +186,93 @@ function loadImage(path) {
         image.onerror = (error) => reject(error);
         image.src = path.replace('#', '%23');
     });
+}
+
+/**
+ * 创建可绘制中文的离屏 2D Canvas。
+ *
+ * 不同微信基础库暴露离屏 Canvas 的方式并不完全一致，因此依次尝试
+ * wx.createOffscreenCanvas、标准 OffscreenCanvas 和适配层 document.createElement。
+ */
+function createTextCanvas(width, height) {
+    const factories = [];
+
+    if (typeof wx !== 'undefined' && typeof wx.createOffscreenCanvas === 'function') {
+        factories.push(
+            () => wx.createOffscreenCanvas({ type: '2d', width, height }),
+            () => wx.createOffscreenCanvas({ width, height })
+        );
+    }
+    if (typeof OffscreenCanvas !== 'undefined') {
+        factories.push(() => new OffscreenCanvas(width, height));
+    }
+    if (typeof document !== 'undefined' && typeof document.createElement === 'function') {
+        factories.push(() => document.createElement('canvas'));
+    }
+
+    for (const createCanvas of factories) {
+        try {
+            const textCanvas = createCanvas();
+            textCanvas.width = width;
+            textCanvas.height = height;
+            const context = textCanvas.getContext('2d');
+            if (context) {
+                return { textCanvas, context };
+            }
+        } catch (error) {
+            console.warn('当前离屏 Canvas 创建方式不可用，继续尝试兼容方案。', error);
+        }
+    }
+
+    throw new Error('微信启动页无法创建离屏 2D Canvas，文字将无法绘制。');
+}
+
+function createLoadingLabelTexture() {
+    const { textCanvas, context } = createTextCanvas(512, 128);
+
+    context.clearRect(0, 0, textCanvas.width, textCanvas.height);
+    context.fillStyle = '#ffffff';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.shadowColor = 'rgba(0, 0, 0, 0.45)';
+    context.shadowBlur = 4;
+    context.font = '600 58px sans-serif';
+    context.fillText('初始化中', textCanvas.width * 0.5, textCanvas.height * 0.52);
+    return createTexture(textCanvas);
+}
+
+/**
+ * 绘制标准健康游戏忠告。
+ *
+ * 文字由微信系统字体实时绘制，不再依赖任何文字图片文件。
+ */
+function createHealthAdviceTexture() {
+    const { textCanvas, context } = createTextCanvas(1024, 256);
+
+    context.clearRect(0, 0, textCanvas.width, textCanvas.height);
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.shadowColor = 'rgba(0, 0, 0, 0.7)';
+    context.shadowBlur = 6;
+    context.shadowOffsetY = 2;
+
+    context.fillStyle = '#ffe39a';
+    context.font = '600 48px sans-serif';
+    context.fillText('健康游戏忠告', textCanvas.width * 0.5, 44);
+
+    context.fillStyle = '#ffffff';
+    context.font = '500 34px sans-serif';
+    context.fillText(
+        '抵制不良游戏　拒绝盗版游戏　注意自我保护　谨防受骗上当',
+        textCanvas.width * 0.5,
+        118
+    );
+    context.fillText(
+        '适度游戏益脑　沉迷游戏伤身　合理安排时间　享受健康生活',
+        textCanvas.width * 0.5,
+        174
+    );
+    return createTexture(textCanvas);
 }
 
 function createBuffer(values) {
@@ -461,6 +546,14 @@ function start(alpha, antialias, useWebgl2) {
     labelBuffer = createBuffer(buildRectVertices(0, -0.69, 0.5, 0.03));
     healthAdviceBuffer = createBuffer(buildRectVertices(0, -0.86, 1.84, 0.18));
 
+    try {
+        labelTexture = createLoadingLabelTexture();
+        healthAdviceTexture = createHealthAdviceTexture();
+    } catch (error) {
+        // 文字绘制失败不应阻断引擎启动，错误会保留在微信开发者工具控制台便于定位。
+        console.error('微信启动页文字绘制失败。', error);
+    }
+
     running = true;
     tick();
 
@@ -472,13 +565,6 @@ function start(alpha, antialias, useWebgl2) {
         loadImage(LOGO_FILE).then((image) => {
             logoTexture = createTexture(image);
             updateLayout(image);
-        }),
-        // 中文预渲染为透明 PNG，避免启动阶段依赖微信离屏 2D Canvas。
-        loadImage(LOADING_LABEL_FILE).then((image) => {
-            labelTexture = createTexture(image);
-        }),
-        loadImage(HEALTH_ADVICE_FILE).then((image) => {
-            healthAdviceTexture = createTexture(image);
         })
     ]).then(() => setProgress(0));
 }

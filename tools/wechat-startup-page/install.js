@@ -20,18 +20,16 @@ const generatedGameFile = path.join(buildDirectory, 'game.js');
 const targetFirstScreenFile = path.join(buildDirectory, 'first-screen.js');
 const targetBackgroundFile = path.join(buildDirectory, 'startup-background.jpg');
 const targetLogoFile = path.join(buildDirectory, 'startup-logo.png');
-const targetLoadingLabelFile = path.join(buildDirectory, 'loading-label.png');
-const targetHealthAdviceFile = path.join(buildDirectory, 'health-advice.png');
 const sourceFirstScreenFile = path.join(__dirname, 'first-screen.js');
 const sourceBackgroundFile = path.join(__dirname, 'startup-background.jpg');
 const sourceLogoFile = path.join(__dirname, 'startup-logo.png');
-const sourceLoadingLabelFile = path.join(__dirname, 'loading-label.png');
-const sourceHealthAdviceFile = path.join(__dirname, 'health-advice.png');
 // 清理旧版大图与调试预览，避免无用文件被微信开发者工具计入主包。
 const obsoleteBuildFiles = [
     'background.png',
     'logo.png',
     'slogan.png',
+    'loading-label.png',
+    'health-advice.png',
     'startup-preview.png',
     'startup-preview-top.png'
 ];
@@ -86,8 +84,6 @@ assertFile(generatedGameFile, '微信小游戏构建入口 game.js');
 assertFile(sourceFirstScreenFile, '启动页脚本');
 assertFile(sourceBackgroundFile, 'loading 背景图');
 assertFile(sourceLogoFile, '项目 Logo');
-assertFile(sourceLoadingLabelFile, '初始化中文字图片');
-assertFile(sourceHealthAdviceFile, '健康游戏忠告图片');
 
 const gameSource = fs.readFileSync(generatedGameFile, 'utf8');
 if (!gameSource.includes("require('./first-screen')")) {
@@ -101,13 +97,11 @@ obsoleteBuildFiles.forEach((fileName) => {
 fs.copyFileSync(sourceFirstScreenFile, targetFirstScreenFile);
 fs.copyFileSync(sourceBackgroundFile, targetBackgroundFile);
 fs.copyFileSync(sourceLogoFile, targetLogoFile);
-fs.copyFileSync(sourceLoadingLabelFile, targetLoadingLabelFile);
-fs.copyFileSync(sourceHealthAdviceFile, targetHealthAdviceFile);
 
 const mainPackageSize = calculateMainPackageSize(buildDirectory);
 console.log('[微信启动页] 安装完成。');
 console.log(`构建目录：${buildDirectory}`);
-console.log('已写入：first-screen.js、轻量背景、轻量 Logo、两张文字图片');
+console.log('已写入：first-screen.js、轻量背景、轻量 Logo；其余内容使用原生文字和 WebGL 绘制');
 console.log(`当前主包文件体积：${formatMegabytes(mainPackageSize)}`);
 if (mainPackageSize > MAIN_PACKAGE_LIMIT_BYTES) {
     console.warn(

@@ -4,8 +4,11 @@ import {
   Component,
   EventTouch,
   Graphics,
+  instantiate,
   Label,
   Node,
+  Prefab,
+  screen,
   Sprite,
   SpriteFrame,
   tween,
@@ -24,6 +27,28 @@ type StartPageOptions = {
   rankButtonSpriteFrame?: SpriteFrame | null
   settingsButtonSpriteFrame?: SpriteFrame | null
   shareButtonSpriteFrame?: SpriteFrame | null
+  energyBarPrefab?: Prefab | null
+  coinBarPrefab?: Prefab | null
+  energy?: number
+  maxEnergy?: number
+  coins?: number
+  onEnergyMoreTap?: () => void
+  onCoinMoreTap?: () => void
+}
+
+// 只读取首页胶囊避让所需字段，避免项目依赖额外的微信类型声明。
+type WechatMenuButtonRect = {
+  top: number
+  bottom: number
+  left: number
+  right: number
+  width: number
+  height: number
+}
+
+type WechatWindowInfo = {
+  windowHeight?: number
+  screenTop?: number
 }
 
 type RankEntry = {
@@ -47,6 +72,12 @@ const START_BUTTON_WIDTH = 332
 const START_BUTTON_HEIGHT = 90
 const ACTION_ICON_WIDTH = 80
 const ACTION_ICON_HEIGHT = 82
+// 资源条保持已经确认的小尺寸，以下常量统一用于胶囊避让和标题间距计算。
+const AMOUNT_BAR_SCALE = 0.55
+const AMOUNT_BAR_SOURCE_HEIGHT = 155
+const AMOUNT_BAR_DEFAULT_TOP_INSET = 92
+const AMOUNT_BAR_CAPSULE_GAP = 18
+const AMOUNT_BAR_TITLE_GAP = 20
 // 首页排行榜需要轻雾化遮罩，暂停中复用排行榜时则保持透明，避免覆盖原有深色暂停蒙版。
 const RANK_MASK_HOME_COLOR = new Color(234, 246, 250, 212)
 const RANK_MASK_PAUSE_COLOR = new Color(0, 0, 0, 0)
@@ -118,6 +149,8 @@ export class StartPageController extends Component {
 
   private startHandler: (() => void) | null = null
   private shareHandler: (() => void) | null = null
+  private energyMoreHandler: (() => void) | null = null
+  private coinMoreHandler: (() => void) | null = null
   private rootNode: Node | null = null
   private pageCardNode: Node | null = null
   private rankMaskNode: Node | null = null
@@ -131,6 +164,13 @@ export class StartPageController extends Component {
   private rankButtonNode: Node | null = null
   private settingsButtonNode: Node | null = null
   private shareButtonNode: Node | null = null
+  // 两个资源条由独立 Prefab 提供结构，首页 UI 只缓存渲染和交互所需节点。
+  private energyBarNode: Node | null = null
+  private coinBarNode: Node | null = null
+  private energyMoreButtonNode: Node | null = null
+  private coinMoreButtonNode: Node | null = null
+  private energyHeartNodes: Node[] = []
+  private coinAmountLabel: Label | null = null
   private tipLabel: Label | null = null
   private tipOpacity: UIOpacity | null = null
   private currentTipIndex = -1
@@ -151,7 +191,11 @@ export class StartPageController extends Component {
     this.rankButtonSpriteFrame = options.rankButtonSpriteFrame ?? null
     this.settingsButtonSpriteFrame = options.settingsButtonSpriteFrame ?? null
     this.shareButtonSpriteFrame = options.shareButtonSpriteFrame ?? null
+    this.energyMoreHandler = options.onEnergyMoreTap ?? null
+    this.coinMoreHandler = options.onCoinMoreTap ?? null
     this.ensurePage()
+    this.ensureAmountBars(options.energyBarPrefab ?? null, options.coinBarPrefab ?? null)
+    this.renderPlayerResources(options.energy ?? 0, options.maxEnergy ?? 4, options.coins ?? 0)
     this.syncLayout()
     this.show()
   }
@@ -179,7 +223,24 @@ export class StartPageController extends Component {
       this.redrawCard()
       this.layoutPageContents(cardWidth, cardHeight)
     }
+    this.layoutAmountBars(cardHeight)
     this.layoutRankModal(parentTransform.width, parentTransform.height)
+  }
+
+  // 首页逻辑层每次资源变化后只需要传入纯数值，Prefab 节点不持有经济状态。
+  public renderPlayerResources(energy: number, maxEnergy: number, coins: number) {
+    const visibleEnergy = Math.min(
+      this.energyHeartNodes.length,
+      Math.max(0, Math.floor(maxEnergy)),
+      Math.max(0, Math.floor(energy))
+    )
+    this.energyHeartNodes.forEach((heartNode, index) => {
+      heartNode.active = index < visibleEnergy
+    })
+
+    if (this.coinAmountLabel) {
+      this.coinAmountLabel.string = Math.max(0, Math.floor(coins)).toLocaleString('en-US')
+    }
   }
 
   show() {
@@ -259,6 +320,8 @@ export class StartPageController extends Component {
     this.unbindPressableButton(this.rankButtonNode, this.handleRankTap)
     this.unbindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
     this.unbindPressableButton(this.shareButtonNode, this.handleShareTap)
+    this.unbindPressableButton(this.energyMoreButtonNode, this.handleEnergyMoreTap)
+    this.unbindPressableButton(this.coinMoreButtonNode, this.handleCoinMoreTap)
     this.safeOff(this.rankCloseButtonNode, Node.EventType.TOUCH_END, this.handleRankCloseTap)
     this.safeOff(this.rankMaskNode, Node.EventType.TOUCH_END, this.hideRankModal)
     this.safeOff(this.toastNode, Node.EventType.TOUCH_END, this.consumeTouch)
@@ -384,6 +447,140 @@ export class StartPageController extends Component {
     }
     this.pageCardNode.getChildByName('TileRow')?.setPosition(0, 0, 0)
     this.startHierarchyStartButtonBreathing()
+  }
+
+  /**
+   * 把体力和金币 Prefab 挂到首页 PageCard 顶部。
+   *
+   * Prefab 负责内部美术结构，首页控制器只负责整体布局、数值刷新和按钮回调；
+   * 重复 setup 时优先复用已有节点，避免热重载产生重复资源条。
+   */
+  private ensureAmountBars(energyBarPrefab: Prefab | null, coinBarPrefab: Prefab | null) {
+    if (!this.pageCardNode) {
+      return
+    }
+
+    this.energyBarNode = this.pageCardNode.getChildByName('EnergyBar')
+    if (!this.energyBarNode && energyBarPrefab) {
+      this.energyBarNode = instantiate(energyBarPrefab)
+      this.energyBarNode.setParent(this.pageCardNode)
+    }
+    this.coinBarNode = this.pageCardNode.getChildByName('CoinBar')
+    if (!this.coinBarNode && coinBarPrefab) {
+      this.coinBarNode = instantiate(coinBarPrefab)
+      this.coinBarNode.setParent(this.pageCardNode)
+    }
+
+    this.energyHeartNodes = this.energyBarNode
+      ? [1, 2, 3, 4]
+          .map(index => this.energyBarNode?.getChildByName(`Heart${index}`) ?? null)
+          .filter((node): node is Node => !!node)
+      : []
+    this.coinAmountLabel = this.coinBarNode?.getChildByName('Amount')?.getComponent(Label) ?? null
+    this.energyMoreButtonNode = this.energyBarNode?.getChildByName('MoreButton') ?? null
+    this.coinMoreButtonNode = this.coinBarNode?.getChildByName('MoreButton') ?? null
+
+    this.unbindPressableButton(this.energyMoreButtonNode, this.handleEnergyMoreTap)
+    this.unbindPressableButton(this.coinMoreButtonNode, this.handleCoinMoreTap)
+    this.bindPressableButton(this.energyMoreButtonNode, this.handleEnergyMoreTap)
+    this.bindPressableButton(this.coinMoreButtonNode, this.handleCoinMoreTap)
+  }
+
+  /**
+   * 布局首页资源条并避让微信原生胶囊。
+   *
+   * Web 和编辑器沿用设计稿顶部间距；微信端把胶囊 bottom 换算到 Cocos 画布，
+   * 再把资源条整体放到胶囊下方。资源条下移时标题同步让位，避免两个区域互相遮挡。
+   */
+  private layoutAmountBars(cardHeight: number) {
+    const menuMetrics = this.getWechatMenuMetrics()
+    const amountBarHalfHeight = AMOUNT_BAR_SOURCE_HEIGHT * AMOUNT_BAR_SCALE * 0.5
+    let centerTopInset = AMOUNT_BAR_DEFAULT_TOP_INSET
+
+    if (menuMetrics) {
+      const sourceWindowHeight = menuMetrics.windowHeight > 0
+        ? menuMetrics.windowHeight
+        : screen.windowSize.height
+      const heightScale = cardHeight / Math.max(1, sourceWindowHeight)
+      const capsuleBottomFromTop =
+        Math.max(0, menuMetrics.menuRect.bottom - menuMetrics.screenTop) * heightScale
+      centerTopInset = Math.max(
+        centerTopInset,
+        capsuleBottomFromTop + AMOUNT_BAR_CAPSULE_GAP + amountBarHalfHeight
+      )
+    }
+
+    const y = cardHeight / 2 - centerTopInset
+    this.configureAmountBarNode(this.energyBarNode, -190, y)
+    this.configureAmountBarNode(this.coinBarNode, 190, y)
+    this.layoutTitleBelowAmountBars(cardHeight, y, amountBarHalfHeight, !!menuMetrics)
+  }
+
+  private configureAmountBarNode(amountBarNode: Node | null, x: number, y: number) {
+    if (!amountBarNode) {
+      return
+    }
+
+    amountBarNode.setPosition(x, y, 0)
+    amountBarNode.setScale(AMOUNT_BAR_SCALE, AMOUNT_BAR_SCALE, 1)
+  }
+
+  // 微信端资源条下移后给标题腾出固定间距；非微信平台恢复首页原始标题位置。
+  private layoutTitleBelowAmountBars(
+    cardHeight: number,
+    amountBarY: number,
+    amountBarHalfHeight: number,
+    shouldAvoidCapsule: boolean
+  ) {
+    const titleCard = this.pageCardNode?.getChildByName('TitleCard') ?? null
+    const titleTransform = titleCard?.getComponent(UITransform) ?? null
+    if (!titleCard || !titleTransform) {
+      return
+    }
+
+    const defaultTitleY = cardHeight * 0.31
+    const titleY = shouldAvoidCapsule
+      ? Math.min(
+          defaultTitleY,
+          amountBarY - amountBarHalfHeight - AMOUNT_BAR_TITLE_GAP - titleTransform.height * 0.5
+        )
+      : defaultTitleY
+    titleCard.setPosition(titleCard.position.x, titleY, titleCard.position.z)
+  }
+
+  // 微信小游戏的胶囊坐标需结合窗口高度和 screenTop，才能正确换算到 Creator 画布。
+  private getWechatMenuMetrics(): {
+    menuRect: WechatMenuButtonRect
+    windowHeight: number
+    screenTop: number
+  } | null {
+    const wxApi = (globalThis as {
+      wx?: {
+        getMenuButtonBoundingClientRect?: () => WechatMenuButtonRect
+        getWindowInfo?: () => WechatWindowInfo
+        getSystemInfoSync?: () => WechatWindowInfo
+      }
+    }).wx
+    if (!wxApi || typeof wxApi.getMenuButtonBoundingClientRect !== 'function') {
+      return null
+    }
+
+    const menuRect = wxApi.getMenuButtonBoundingClientRect()
+    if (!menuRect || menuRect.width <= 0 || menuRect.height <= 0) {
+      return null
+    }
+
+    const windowInfo = typeof wxApi.getWindowInfo === 'function'
+      ? wxApi.getWindowInfo()
+      : typeof wxApi.getSystemInfoSync === 'function'
+        ? wxApi.getSystemInfoSync()
+        : null
+
+    return {
+      menuRect,
+      windowHeight: windowInfo?.windowHeight ?? 0,
+      screenTop: windowInfo?.screenTop ?? 0
+    }
   }
 
   // 首页旧版 logo 是代码绘制的数字块标题；层级里的图片 logo 只留给加载页使用。
@@ -1422,6 +1619,16 @@ export class StartPageController extends Component {
   private handleShareTap(event: EventTouch) {
     event.propagationStopped = true
     this.shareHandler?.()
+  }
+
+  private handleEnergyMoreTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.energyMoreHandler?.()
+  }
+
+  private handleCoinMoreTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.coinMoreHandler?.()
   }
 
   private hideRankModal(event?: EventTouch) {
