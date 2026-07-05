@@ -2216,25 +2216,14 @@ export class PlayController extends Component {
     this.refreshUiState()
   }
 
-  /**
-   * 技能数量为 0 时，当前点击只负责用金币购买，不立即进入施放状态。
-   *
-   * 购买与使用拆成两次点击可以避免玩家误触加号后立刻消耗新买的技能；
-   * 金币不足时同样由逻辑层生成结果，UI 层只显示提示。
-   */
+  // 技能统一在开局前购买；对局中库存不足时只提示，不临时扣金币打断玩法节奏。
   private ensureSkillAvailable(skill: SkillKind) {
     if (this.economy.hasSkill(skill)) {
       return true
     }
 
-    const result = this.economy.purchaseSkill(skill)
-    this.refreshUiState()
     const skillName = skill === 'bomb' ? '炸弹' : skill === 'hammer' ? '锤子' : '交换'
-    this.uiController?.showTransientMessage(
-      result.purchased
-        ? `已用 ${result.price} 金币购买${skillName}，再点一次使用`
-        : `金币不足，购买${skillName}需要 ${result.price} 金币`
-    )
+    this.uiController?.showTransientMessage(`${skillName}数量不足，请在下一局开始前购买`)
     return false
   }
 

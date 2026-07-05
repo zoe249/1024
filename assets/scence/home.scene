@@ -353,6 +353,10 @@
       "__uuid__": "fff98721-8940-486a-b3a2-cb091a0873ca",
       "__expectedType__": "cc.Prefab"
     },
+    "skillShopPopupPrefab": {
+      "__uuid__": "35502ab1-26b6-4b64-b4be-cd402e21136f",
+      "__expectedType__": "cc.Prefab"
+    },
     "_id": "homeSceneController"
   },
   {

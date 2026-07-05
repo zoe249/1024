@@ -1,8 +1,10 @@
-import { _decorator, AudioClip, Component, director, Prefab, SpriteFrame } from 'cc'
+import { _decorator, AudioClip, Component, director, instantiate, Node, Prefab, SpriteFrame } from 'cc'
 import { StartPageController } from './StartPageController'
 import { GameAudioManager } from './GameAudioManager'
 import { GameShareAdapter } from './GameShareAdapter'
 import { PlayerEconomyStore } from './PlayerEconomyStore'
+import { SkillShopPopupController } from './SkillShopPopupController'
+import type { SkillKind } from './SkillStock'
 
 const { ccclass, property } = _decorator
 
@@ -44,7 +46,13 @@ export class HomeSceneController extends Component {
   @property({ type: Prefab, tooltip: 'Home energy bar prefab' })
   energyBarPrefab: Prefab | null = null
 
+  // 开始游戏前展示的技能购买弹窗，布局和素材封装在独立 Prefab 中。
+  @property({ type: Prefab, tooltip: 'Pre-game skill shop popup prefab' })
+  skillShopPopupPrefab: Prefab | null = null
+
   private startPageController: StartPageController | null = null
+  private skillShopNode: Node | null = null
+  private skillShopController: SkillShopPopupController | null = null
   private audioManager: GameAudioManager | null = null
   private readonly shareAdapter = new GameShareAdapter()
   private readonly economy = PlayerEconomyStore.getInstance()
@@ -59,7 +67,7 @@ export class HomeSceneController extends Component {
     const resources = this.economy.getSnapshot()
     this.startPageController = this.getComponent(StartPageController) ?? this.addComponent(StartPageController)
     this.startPageController.setup({
-      onStartTap: () => this.enterGameScene(),
+      onStartTap: () => this.openSkillShop(),
       onShareTap: () => this.shareGameFromStartPage(),
       backgroundSpriteFrame: this.startPageBackgroundSpriteFrame,
       rankButtonSpriteFrame: this.startPageRankButtonSpriteFrame,
@@ -75,10 +83,66 @@ export class HomeSceneController extends Component {
   start() {
     // 首帧后再同步一次布局，兼容微信安全区和 Creator 预览尺寸变化。
     this.startPageController?.syncLayout()
+    this.skillShopController?.syncLayout()
     this.audioManager?.playStartPageBackgroundMusic(this.getHomeBgmClip())
     if (this.dailyLoginReward > 0) {
       this.startPageController?.showMessage(`每日登录奖励：金币 +${this.dailyLoginReward}`)
     }
+  }
+
+  onDestroy() {
+    this.skillShopController = null
+    this.skillShopNode = null
+  }
+
+  /**
+   * 首页开始按钮只负责打开购买弹窗，真正扣体力和切场景由弹窗“开始游戏”回调触发。
+   */
+  private openSkillShop() {
+    if (this.isLoadingGameScene) {
+      return
+    }
+
+    if (!this.skillShopNode?.isValid || !this.skillShopController?.isValid) {
+      if (!this.skillShopPopupPrefab) {
+        this.startPageController?.showMessage('技能购买弹窗资源未配置')
+        return
+      }
+
+      this.skillShopNode = instantiate(this.skillShopPopupPrefab)
+      this.skillShopNode.setParent(this.node)
+      this.skillShopNode.setPosition(0, 0, 0)
+      this.skillShopController = this.skillShopNode.getComponent(SkillShopPopupController)
+        ?? this.skillShopNode.addComponent(SkillShopPopupController)
+      this.skillShopController.setup({
+        hostNode: this.node,
+        onPurchase: (skill) => this.purchaseSkill(skill),
+        onStart: () => this.enterGameScene(),
+        onClose: () => this.closeSkillShop()
+      })
+    }
+
+    this.skillShopController.renderState(this.economy.getSnapshot())
+    this.skillShopController.showMessage('可在开始前补充技能')
+    this.skillShopController.syncLayout()
+    this.skillShopController.show()
+  }
+
+  // 购买结果由经济仓库生成，弹窗只渲染最新余额并展示反馈。
+  private purchaseSkill(skill: SkillKind) {
+    const result = this.economy.purchaseSkill(skill)
+    const skillName = skill === 'bomb' ? '炸弹' : skill === 'hammer' ? '锤子' : '交换'
+    this.skillShopController?.renderState(this.economy.getSnapshot())
+    this.skillShopController?.showMessage(
+      result.purchased
+        ? `购买成功：${skillName} +1`
+        : `金币不足，购买${skillName}需要 ${result.price} 金币`,
+      !result.purchased
+    )
+  }
+
+  private closeSkillShop() {
+    this.skillShopController?.hide()
   }
 
   // 开始游戏前由经济层统一扣除体力，扣除失败时停留首页并给出补充入口提示。
@@ -87,12 +151,13 @@ export class HomeSceneController extends Component {
       return
     }
     if (!this.economy.tryConsumeEnergy()) {
-      this.startPageController?.showMessage('体力不足，点击体力条分享补充')
+      this.skillShopController?.showMessage('体力不足，请关闭弹窗后点击体力条补充', true)
       return
     }
 
     this.isLoadingGameScene = true
     this.refreshPlayerResources()
+    this.skillShopController?.hide()
     const sceneName = this.getStartTargetSceneName()
     // 点击事件分发结束前直接切场景，部分平台会在销毁按钮节点时触发事件系统空引用。
     // 这里只延后一帧进入目标场景，每次从首页开始都先展示一条随机加载提示。

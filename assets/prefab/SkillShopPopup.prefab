@@ -1,0 +1,126 @@
+[
+  {
+    "__type__": "cc.Prefab",
+    "_name": "SkillShopPopup",
+    "_objFlags": 0,
+    "__editorExtras__": {},
+    "_native": "",
+    "data": {
+      "__id__": 1
+    },
+    "optimizationPolicy": 0,
+    "persistent": false
+  },
+  {
+    "__type__": "cc.Node",
+    "_name": "SkillShopPopup",
+    "_objFlags": 0,
+    "__editorExtras__": {},
+    "_parent": null,
+    "_children": [],
+    "_active": true,
+    "_components": [
+      {
+        "__id__": 2
+      },
+      {
+        "__id__": 3
+      }
+    ],
+    "_prefab": null,
+    "_lpos": {
+      "__type__": "cc.Vec3",
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "_lrot": {
+      "__type__": "cc.Quat",
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+    },
+    "_lscale": {
+      "__type__": "cc.Vec3",
+      "x": 1,
+      "y": 1,
+      "z": 1
+    },
+    "_mobility": 0,
+    "_layer": 33554432,
+    "_euler": {
+      "__type__": "cc.Vec3",
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "_id": ""
+  },
+  {
+    "__type__": "cc.UITransform",
+    "_name": "",
+    "_objFlags": 0,
+    "__editorExtras__": {},
+    "node": {
+      "__id__": 1
+    },
+    "_enabled": true,
+    "__prefab": null,
+    "_contentSize": {
+      "__type__": "cc.Size",
+      "width": 750,
+      "height": 1334
+    },
+    "_anchorPoint": {
+      "__type__": "cc.Vec2",
+      "x": 0.5,
+      "y": 0.5
+    },
+    "_id": ""
+  },
+  {
+    "__type__": "338eb0hOI1LVq1nggKGgX+4",
+    "_name": "",
+    "_objFlags": 0,
+    "__editorExtras__": {},
+    "node": {
+      "__id__": 1
+    },
+    "_enabled": true,
+    "__prefab": null,
+    "popupSpriteFrame": {
+      "__uuid__": "d692014e-fdd9-4814-a436-ab0bde9da2db@f9941",
+      "__expectedType__": "cc.SpriteFrame"
+    },
+    "closeButtonSpriteFrame": {
+      "__uuid__": "9774c462-22c3-400f-be7b-092981444597@f9941",
+      "__expectedType__": "cc.SpriteFrame"
+    },
+    "greenButtonSpriteFrame": {
+      "__uuid__": "560fe052-db7a-4208-8b4b-5d21dd40199c@f9941",
+      "__expectedType__": "cc.SpriteFrame"
+    },
+    "blueButtonSpriteFrame": {
+      "__uuid__": "8528d67b-63ff-41fd-ac98-ab07f6fd02d2@f9941",
+      "__expectedType__": "cc.SpriteFrame"
+    },
+    "bombSpriteFrame": {
+      "__uuid__": "27aac6ed-362d-4da1-94e0-99d98ed627e5@f9941",
+      "__expectedType__": "cc.SpriteFrame"
+    },
+    "hammerSpriteFrame": {
+      "__uuid__": "309b84ed-e372-49f1-9e91-c2002872bab6@f9941",
+      "__expectedType__": "cc.SpriteFrame"
+    },
+    "swapSpriteFrame": {
+      "__uuid__": "ca2c64ed-30e4-4bc5-8519-dee8744d9c3d@f9941",
+      "__expectedType__": "cc.SpriteFrame"
+    },
+    "coinSpriteFrame": {
+      "__uuid__": "ce900237-cc02-496d-9271-5cef5af25751@f9941",
+      "__expectedType__": "cc.SpriteFrame"
+    },
+    "_id": ""
+  }
+]
