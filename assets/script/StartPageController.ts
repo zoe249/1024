@@ -28,12 +28,9 @@ type StartPageOptions = {
   settingsButtonSpriteFrame?: SpriteFrame | null
   shareButtonSpriteFrame?: SpriteFrame | null
   energyBarPrefab?: Prefab | null
-  coinBarPrefab?: Prefab | null
   energy?: number
   maxEnergy?: number
-  coins?: number
   onEnergyMoreTap?: () => void
-  onCoinMoreTap?: () => void
 }
 
 // 只读取首页胶囊避让所需字段，避免项目依赖额外的微信类型声明。
@@ -73,11 +70,12 @@ const START_BUTTON_HEIGHT = 90
 const ACTION_ICON_WIDTH = 80
 const ACTION_ICON_HEIGHT = 82
 // 资源条保持已经确认的小尺寸，以下常量统一用于胶囊避让和标题间距计算。
-const AMOUNT_BAR_SCALE = 0.55
+const AMOUNT_BAR_SCALE = 0.36
 const AMOUNT_BAR_SOURCE_HEIGHT = 155
 const AMOUNT_BAR_DEFAULT_TOP_INSET = 92
-const AMOUNT_BAR_CAPSULE_GAP = 18
 const AMOUNT_BAR_TITLE_GAP = 20
+// 固定资源条左边缘，数值取自最初确认的 0.55 缩放布局，后续缩放不会再向中间漂移。
+const AMOUNT_BAR_LEFT_INSET = 57
 // 首页排行榜需要轻雾化遮罩，暂停中复用排行榜时则保持透明，避免覆盖原有深色暂停蒙版。
 const RANK_MASK_HOME_COLOR = new Color(234, 246, 250, 212)
 const RANK_MASK_PAUSE_COLOR = new Color(0, 0, 0, 0)
@@ -150,7 +148,6 @@ export class StartPageController extends Component {
   private startHandler: (() => void) | null = null
   private shareHandler: (() => void) | null = null
   private energyMoreHandler: (() => void) | null = null
-  private coinMoreHandler: (() => void) | null = null
   private rootNode: Node | null = null
   private pageCardNode: Node | null = null
   private rankMaskNode: Node | null = null
@@ -164,13 +161,10 @@ export class StartPageController extends Component {
   private rankButtonNode: Node | null = null
   private settingsButtonNode: Node | null = null
   private shareButtonNode: Node | null = null
-  // 两个资源条由独立 Prefab 提供结构，首页 UI 只缓存渲染和交互所需节点。
+  // 首页只展示体力 Prefab；金币 Prefab 移到玩法场景，避免顶部信息重复。
   private energyBarNode: Node | null = null
-  private coinBarNode: Node | null = null
   private energyMoreButtonNode: Node | null = null
-  private coinMoreButtonNode: Node | null = null
   private energyHeartNodes: Node[] = []
-  private coinAmountLabel: Label | null = null
   private tipLabel: Label | null = null
   private tipOpacity: UIOpacity | null = null
   private currentTipIndex = -1
@@ -192,10 +186,9 @@ export class StartPageController extends Component {
     this.settingsButtonSpriteFrame = options.settingsButtonSpriteFrame ?? null
     this.shareButtonSpriteFrame = options.shareButtonSpriteFrame ?? null
     this.energyMoreHandler = options.onEnergyMoreTap ?? null
-    this.coinMoreHandler = options.onCoinMoreTap ?? null
     this.ensurePage()
-    this.ensureAmountBars(options.energyBarPrefab ?? null, options.coinBarPrefab ?? null)
-    this.renderPlayerResources(options.energy ?? 0, options.maxEnergy ?? 4, options.coins ?? 0)
+    this.ensureEnergyBar(options.energyBarPrefab ?? null)
+    this.renderPlayerResources(options.energy ?? 0, options.maxEnergy ?? 4)
     this.syncLayout()
     this.show()
   }
@@ -228,7 +221,7 @@ export class StartPageController extends Component {
   }
 
   // 首页逻辑层每次资源变化后只需要传入纯数值，Prefab 节点不持有经济状态。
-  public renderPlayerResources(energy: number, maxEnergy: number, coins: number) {
+  public renderPlayerResources(energy: number, maxEnergy: number) {
     const visibleEnergy = Math.min(
       this.energyHeartNodes.length,
       Math.max(0, Math.floor(maxEnergy)),
@@ -238,9 +231,11 @@ export class StartPageController extends Component {
       heartNode.active = index < visibleEnergy
     })
 
-    if (this.coinAmountLabel) {
-      this.coinAmountLabel.string = Math.max(0, Math.floor(coins)).toLocaleString('en-US')
-    }
+  }
+
+  // 首页逻辑层统一通过这个入口展示领取、分享和体力不足提示。
+  public showMessage(message: string) {
+    this.showToast(message)
   }
 
   show() {
@@ -320,8 +315,7 @@ export class StartPageController extends Component {
     this.unbindPressableButton(this.rankButtonNode, this.handleRankTap)
     this.unbindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
     this.unbindPressableButton(this.shareButtonNode, this.handleShareTap)
-    this.unbindPressableButton(this.energyMoreButtonNode, this.handleEnergyMoreTap)
-    this.unbindPressableButton(this.coinMoreButtonNode, this.handleCoinMoreTap)
+    this.unbindAmountBar(this.energyMoreButtonNode, this.handleEnergyMoreTap)
     this.safeOff(this.rankCloseButtonNode, Node.EventType.TOUCH_END, this.handleRankCloseTap)
     this.safeOff(this.rankMaskNode, Node.EventType.TOUCH_END, this.hideRankModal)
     this.safeOff(this.toastNode, Node.EventType.TOUCH_END, this.consumeTouch)
@@ -450,12 +444,12 @@ export class StartPageController extends Component {
   }
 
   /**
-   * 把体力和金币 Prefab 挂到首页 PageCard 顶部。
+   * 把体力 Prefab 挂到首页 PageCard 顶部。
    *
    * Prefab 负责内部美术结构，首页控制器只负责整体布局、数值刷新和按钮回调；
    * 重复 setup 时优先复用已有节点，避免热重载产生重复资源条。
    */
-  private ensureAmountBars(energyBarPrefab: Prefab | null, coinBarPrefab: Prefab | null) {
+  private ensureEnergyBar(energyBarPrefab: Prefab | null) {
     if (!this.pageCardNode) {
       return
     }
@@ -465,32 +459,23 @@ export class StartPageController extends Component {
       this.energyBarNode = instantiate(energyBarPrefab)
       this.energyBarNode.setParent(this.pageCardNode)
     }
-    this.coinBarNode = this.pageCardNode.getChildByName('CoinBar')
-    if (!this.coinBarNode && coinBarPrefab) {
-      this.coinBarNode = instantiate(coinBarPrefab)
-      this.coinBarNode.setParent(this.pageCardNode)
-    }
-
     this.energyHeartNodes = this.energyBarNode
       ? [1, 2, 3, 4]
           .map(index => this.energyBarNode?.getChildByName(`Heart${index}`) ?? null)
           .filter((node): node is Node => !!node)
       : []
-    this.coinAmountLabel = this.coinBarNode?.getChildByName('Amount')?.getComponent(Label) ?? null
-    this.energyMoreButtonNode = this.energyBarNode?.getChildByName('MoreButton') ?? null
-    this.coinMoreButtonNode = this.coinBarNode?.getChildByName('MoreButton') ?? null
+    // 整个体力 Prefab 都是分享入口，加号只是视觉提示。
+    this.energyMoreButtonNode = this.energyBarNode
 
-    this.unbindPressableButton(this.energyMoreButtonNode, this.handleEnergyMoreTap)
-    this.unbindPressableButton(this.coinMoreButtonNode, this.handleCoinMoreTap)
-    this.bindPressableButton(this.energyMoreButtonNode, this.handleEnergyMoreTap)
-    this.bindPressableButton(this.coinMoreButtonNode, this.handleCoinMoreTap)
+    this.unbindAmountBar(this.energyMoreButtonNode, this.handleEnergyMoreTap)
+    this.bindAmountBar(this.energyMoreButtonNode, this.handleEnergyMoreTap)
   }
 
   /**
-   * 布局首页资源条并避让微信原生胶囊。
+   * 布局首页体力条并与微信原生胶囊水平对齐。
    *
-   * Web 和编辑器沿用设计稿顶部间距；微信端把胶囊 bottom 换算到 Cocos 画布，
-   * 再把资源条整体放到胶囊下方。资源条下移时标题同步让位，避免两个区域互相遮挡。
+   * Web 和编辑器沿用设计稿顶部间距；微信端把胶囊中心换算到 Cocos 画布，
+   * 体力条放在左侧并共享同一条水平中线，不与右侧原生胶囊重叠。
    */
   private layoutAmountBars(cardHeight: number) {
     const menuMetrics = this.getWechatMenuMetrics()
@@ -502,17 +487,25 @@ export class StartPageController extends Component {
         ? menuMetrics.windowHeight
         : screen.windowSize.height
       const heightScale = cardHeight / Math.max(1, sourceWindowHeight)
-      const capsuleBottomFromTop =
-        Math.max(0, menuMetrics.menuRect.bottom - menuMetrics.screenTop) * heightScale
-      centerTopInset = Math.max(
-        centerTopInset,
-        capsuleBottomFromTop + AMOUNT_BAR_CAPSULE_GAP + amountBarHalfHeight
+      const capsuleCenterFromTop =
+        Math.max(
+          0,
+          (menuMetrics.menuRect.top + menuMetrics.menuRect.bottom) * 0.5 - menuMetrics.screenTop
+        ) * heightScale
+      centerTopInset = Math.min(
+        cardHeight - amountBarHalfHeight,
+        Math.max(amountBarHalfHeight, capsuleCenterFromTop)
       )
     }
 
     const y = cardHeight / 2 - centerTopInset
-    this.configureAmountBarNode(this.energyBarNode, -190, y)
-    this.configureAmountBarNode(this.coinBarNode, 190, y)
+    const cardWidth = this.pageCardNode?.getComponent(UITransform)?.width ?? 750
+    const amountBarWidth = this.energyBarNode?.getComponent(UITransform)?.width ?? 466
+    const x =
+      -cardWidth * 0.5 +
+      AMOUNT_BAR_LEFT_INSET +
+      amountBarWidth * AMOUNT_BAR_SCALE * 0.5
+    this.configureAmountBarNode(this.energyBarNode, x, y)
     this.layoutTitleBelowAmountBars(cardHeight, y, amountBarHalfHeight, !!menuMetrics)
   }
 
@@ -1530,6 +1523,29 @@ export class StartPageController extends Component {
     node.off(Node.EventType.TOUCH_END, endHandler, this)
   }
 
+  // 资源条本身已有 0.55 缩放，使用独立按压动画避免复用普通按钮时被恢复成 1 倍。
+  private bindAmountBar(node: Node | null, endHandler: (event: EventTouch) => void) {
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    node.on(Node.EventType.TOUCH_START, this.handleAmountBarPressStart, this)
+    node.on(Node.EventType.TOUCH_END, this.handleAmountBarPressEnd, this)
+    node.on(Node.EventType.TOUCH_CANCEL, this.handleAmountBarPressEnd, this)
+    node.on(Node.EventType.TOUCH_END, endHandler, this)
+  }
+
+  private unbindAmountBar(node: Node | null, endHandler: (event: EventTouch) => void) {
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    node.off(Node.EventType.TOUCH_START, this.handleAmountBarPressStart, this)
+    node.off(Node.EventType.TOUCH_END, this.handleAmountBarPressEnd, this)
+    node.off(Node.EventType.TOUCH_CANCEL, this.handleAmountBarPressEnd, this)
+    node.off(Node.EventType.TOUCH_END, endHandler, this)
+  }
+
   // 切场景时节点可能已经进入销毁流程，解绑前先确认引用仍可安全使用。
   private canUseNode(node: Node | null): node is Node {
     return !!node && node.isValid
@@ -1597,6 +1613,20 @@ export class StartPageController extends Component {
     }
   }
 
+  private handleAmountBarPressStart(event: EventTouch) {
+    const node = event.currentTarget as Node | null
+    if (this.canUseNode(node)) {
+      node.setScale(AMOUNT_BAR_SCALE * 0.94, AMOUNT_BAR_SCALE * 0.94, 1)
+    }
+  }
+
+  private handleAmountBarPressEnd(event: EventTouch) {
+    const node = event.currentTarget as Node | null
+    if (this.canUseNode(node)) {
+      node.setScale(AMOUNT_BAR_SCALE, AMOUNT_BAR_SCALE, 1)
+    }
+  }
+
   private handleStartTap(event: EventTouch) {
     event.propagationStopped = true
     this.startHandler?.()
@@ -1624,11 +1654,6 @@ export class StartPageController extends Component {
   private handleEnergyMoreTap(event: EventTouch) {
     event.propagationStopped = true
     this.energyMoreHandler?.()
-  }
-
-  private handleCoinMoreTap(event: EventTouch) {
-    event.propagationStopped = true
-    this.coinMoreHandler?.()
   }
 
   private hideRankModal(event?: EventTouch) {

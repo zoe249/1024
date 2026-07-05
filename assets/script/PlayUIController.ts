@@ -4,9 +4,11 @@
   Component,
   EventTouch,
   Graphics,
+  instantiate,
   Label,
   LabelOutline,
   Node,
+  Prefab,
   screen,
   Sprite,
   SpriteFrame,
@@ -15,6 +17,7 @@
   UIOpacity,
   UITransform,
   Vec3,
+  Widget,
   sys
 } from 'cc'
 import { PauseOverlayController } from './PauseOverlayController'
@@ -31,6 +34,7 @@ export type PlayUIState = {
   isPaused: boolean
   isResolving: boolean
   activeSkill: 'bomb' | 'hammer' | 'swap' | null
+  coins: number
   skillCounts: {
     bomb: number
     hammer: number
@@ -50,6 +54,7 @@ type WechatMenuButtonRect = {
 
 // 微信环境里还需要读取窗口高度和顶部原生偏移，才能把胶囊坐标稳定换算到 Cocos 坐标系。
 type WechatWindowInfo = {
+  windowWidth?: number
   windowHeight?: number
   screenTop?: number
 }
@@ -93,6 +98,13 @@ const SKILL_AMOUNT_BG_HEIGHT_SCALE = 0.6
 // 数字层按 scene 里 Count 小图的视觉尺寸收口，避免有次数时数字显得过大。
 const SKILL_COUNT_WIDTH = 10
 const SKILL_COUNT_HEIGHT = 20
+// 首页和游戏资源条统一缩放，游戏内再根据设置按钮位置单独布局。
+const PLAYER_AMOUNT_BAR_SCALE = 0.36
+const PLAYER_AMOUNT_BAR_SOURCE_HEIGHT = 155
+const PLAYER_AMOUNT_BAR_DEFAULT_TOP_INSET = 92
+const PLAYER_AMOUNT_BAR_FALLBACK_X = -190
+const PLAYER_AMOUNT_BAR_SETTINGS_GAP = 18
+const PLAYER_AMOUNT_BAR_CAPSULE_GAP = 18
 
 @ccclass('PlayUIController')
 export class PlayUIController extends Component {
@@ -131,6 +143,7 @@ export class PlayUIController extends Component {
     isPaused: false,
     isResolving: false,
     activeSkill: null,
+    coins: 0,
     skillCounts: {
       bomb: 1,
       hammer: 1,
@@ -175,6 +188,10 @@ export class PlayUIController extends Component {
   private skillHintOpacity: UIOpacity | null = null
   // 记录提示当前是否显示，避免每帧刷新状态时重复重启动画。
   private isSkillHintVisible = false
+  // 游戏场景顶部只显示金币 Prefab，数值由 PlayUIState 单向渲染。
+  private coinBarNode: Node | null = null
+  private coinAmountLabel: Label | null = null
+  private coinMoreHandler: (() => void) | null = null
 
   // 由逻辑层在启动时调用，把棋盘尺寸和交互回调交给 UI 层管理。
   setup(options: {
@@ -190,6 +207,8 @@ export class PlayUIController extends Component {
     onSwapSkillTap: () => void
     onGameOverReplayTap: () => void
     onGameOverShareTap: () => void
+    coinBarPrefab?: Prefab | null
+    onCoinMoreTap?: () => void
     counterNumberSpriteFrames?: SpriteFrame[]
   }) {
     this.boardwidth = options.boardwidth
@@ -204,9 +223,11 @@ export class PlayUIController extends Component {
     this.swapSkillHandler = options.onSwapSkillTap
     this.gameOverReplayHandler = options.onGameOverReplayTap
     this.gameOverShareHandler = options.onGameOverShareTap
+    this.coinMoreHandler = options.onCoinMoreTap ?? null
     this.counterNumberSpriteFrames = options.counterNumberSpriteFrames ?? []
 
     this.fitBackgroundToScreen()
+    this.ensureCoinBar(options.coinBarPrefab ?? null)
     this.ensureBoardDecorations()
     this.ensureScoreDisplay()
     this.ensureSkillButtons()
@@ -217,6 +238,7 @@ export class PlayUIController extends Component {
     this.ensureGameOverOverlay()
     this.configureControlBar()
     this.configureStatusBar()
+    this.configureCoinBar()
     this.updateSkillHintLayout()
     this.renderState(this.currentState)
   }
@@ -225,6 +247,7 @@ export class PlayUIController extends Component {
   syncLayout() {
     this.configureControlBar()
     this.configureStatusBar()
+    this.configureCoinBar()
     this.updateSkillHintLayout()
     this.pauseOverlayController?.syncLayout()
     this.gameOverOverlayController?.syncLayout()
@@ -234,6 +257,7 @@ export class PlayUIController extends Component {
   renderState(state: PlayUIState) {
     this.currentState = state
     this.refreshScoreDisplay()
+    this.refreshCoinDisplay()
     this.refreshSkillButtonState()
     // this.refreshStatus()
     // this.refreshPauseButton()
@@ -245,6 +269,40 @@ export class PlayUIController extends Component {
     )
   }
 
+  /**
+   * 显示由逻辑层传入的一次性提示，例如技能购买结果或体力不足。
+   * 提示复用技能模式气泡，避免 UI 层再维护一套重复的节点和动画。
+   */
+  showTransientMessage(message: string) {
+    if (!this.skillHintNode || !this.skillHintOpacity) {
+      return
+    }
+
+    const label = this.skillHintNode.getComponent(Label)
+    if (!label) {
+      return
+    }
+
+    this.isSkillHintVisible = false
+    Tween.stopAllByTarget(this.skillHintNode)
+    Tween.stopAllByTarget(this.skillHintOpacity)
+    this.updateSkillHintLayout()
+    this.skillHintNode.setSiblingIndex(this.node.children.length - 1)
+    this.skillHintNode.active = true
+    this.skillHintNode.setScale(Vec3.ONE)
+    this.skillHintOpacity.opacity = 255
+    label.string = message
+    tween(this.skillHintOpacity)
+      .delay(1.5)
+      .to(0.16, { opacity: 0 }, { easing: 'quadIn' })
+      .call(() => {
+        if (this.skillHintNode) {
+          this.skillHintNode.active = false
+        }
+      })
+      .start()
+  }
+
   onDestroy() {
     // UI 组件自己负责解绑按钮事件，避免逻辑层还要知道具体节点层级。
     const controlContainer = this.canUseNode(this.node) ? this.getControlContainer() : null
@@ -253,6 +311,7 @@ export class PlayUIController extends Component {
     this.safeOff(this.bombSkillNode, Node.EventType.TOUCH_END, this.onBombSkillButtonTap)
     this.safeOff(this.hammerSkillNode, Node.EventType.TOUCH_END, this.onHammerSkillButtonTap)
     this.safeOff(this.swapSkillNode, Node.EventType.TOUCH_END, this.onSwapSkillButtonTap)
+    this.unbindCoinBar()
     Tween.stopAllByTarget(this.scoreTweenState)
     if (this.canUseNode(this.skillHintNode)) {
       Tween.stopAllByTarget(this.skillHintNode)
@@ -278,6 +337,8 @@ export class PlayUIController extends Component {
     this.skillCountSprites.swap = null
     this.skillHintNode = null
     this.skillHintOpacity = null
+    this.coinBarNode = null
+    this.coinAmountLabel = null
     this.pauseOverlayController = null
     this.gameOverOverlayController = null
   }
@@ -602,6 +663,85 @@ export class PlayUIController extends Component {
       .start()
   }
 
+  /**
+   * 将金币 Prefab 挂到玩法根节点，整条资源条都作为分享领金币入口。
+   * 节点只负责显示和发送点击意图，不直接修改玩家金币。
+   */
+  private ensureCoinBar(coinBarPrefab: Prefab | null) {
+    this.coinBarNode = this.node.getChildByName('CoinBar')
+    if (!this.coinBarNode && coinBarPrefab) {
+      this.coinBarNode = instantiate(coinBarPrefab)
+      this.coinBarNode.setParent(this.node)
+    }
+    if (!this.coinBarNode) {
+      return
+    }
+
+    this.coinAmountLabel = this.coinBarNode.getChildByName('Amount')?.getComponent(Label) ?? null
+    this.unbindCoinBar()
+    this.coinBarNode.on(Node.EventType.TOUCH_START, this.handleCoinBarPressStart, this)
+    this.coinBarNode.on(Node.EventType.TOUCH_END, this.handleCoinBarPressEnd, this)
+    this.coinBarNode.on(Node.EventType.TOUCH_CANCEL, this.handleCoinBarPressEnd, this)
+    this.coinBarNode.on(Node.EventType.TOUCH_END, this.handleCoinMoreTap, this)
+  }
+
+  private unbindCoinBar() {
+    if (!this.coinBarNode?.isValid) {
+      return
+    }
+
+    this.coinBarNode.off(Node.EventType.TOUCH_START, this.handleCoinBarPressStart, this)
+    this.coinBarNode.off(Node.EventType.TOUCH_END, this.handleCoinBarPressEnd, this)
+    this.coinBarNode.off(Node.EventType.TOUCH_CANCEL, this.handleCoinBarPressEnd, this)
+    this.coinBarNode.off(Node.EventType.TOUCH_END, this.handleCoinMoreTap, this)
+    Tween.stopAllByTarget(this.coinBarNode)
+  }
+
+  private handleCoinBarPressStart(event: EventTouch) {
+    event.propagationStopped = true
+    if (!this.coinBarNode) {
+      return
+    }
+
+    Tween.stopAllByTarget(this.coinBarNode)
+    tween(this.coinBarNode)
+      .to(0.06, {
+        scale: new Vec3(
+          PLAYER_AMOUNT_BAR_SCALE * 0.94,
+          PLAYER_AMOUNT_BAR_SCALE * 0.94,
+          1
+        )
+      })
+      .start()
+  }
+
+  private handleCoinBarPressEnd(event: EventTouch) {
+    event.propagationStopped = true
+    if (!this.coinBarNode) {
+      return
+    }
+
+    Tween.stopAllByTarget(this.coinBarNode)
+    tween(this.coinBarNode)
+      .to(0.08, {
+        scale: new Vec3(PLAYER_AMOUNT_BAR_SCALE, PLAYER_AMOUNT_BAR_SCALE, 1)
+      }, { easing: 'backOut' })
+      .start()
+  }
+
+  private handleCoinMoreTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.coinMoreHandler?.()
+  }
+
+  // 金币数值完全来自逻辑层快照，购买技能或领取奖励后会随 renderState 自动刷新。
+  private refreshCoinDisplay() {
+    if (this.coinAmountLabel) {
+      this.coinAmountLabel.string = Math.max(0, Math.floor(this.currentState.coins))
+        .toLocaleString('en-US')
+    }
+  }
+
   // 底部控制栏的视觉样式尽量交给 scene，这里只做异形屏安全区补偿。
   private configureControlBar() {
     const container = this.getControlContainer()
@@ -622,6 +762,67 @@ export class PlayUIController extends Component {
 
     // 控制栏的贴底位置交给 scene 里的 Widget 处理，这里只根据安全区补高度。
     controlTransform.setContentSize(controlTransform.width, totalHeight)
+  }
+
+  /**
+   * 游戏金币条跟随左侧设置按钮布局。
+   * 金币条放在设置按钮右侧并共享水平中线；微信端额外限制右边界，避免侵入原生胶囊。
+   */
+  private configureCoinBar() {
+    const rootTransform = this.node.getComponent(UITransform)
+    if (!this.coinBarNode || !rootTransform) {
+      return
+    }
+
+    const coinTransform = this.coinBarNode.getComponent(UITransform)
+    const amountBarHalfHeight =
+      PLAYER_AMOUNT_BAR_SOURCE_HEIGHT * PLAYER_AMOUNT_BAR_SCALE * 0.5
+    const amountBarHalfWidth =
+      (coinTransform?.width ?? 0) * PLAYER_AMOUNT_BAR_SCALE * 0.5
+    let x = PLAYER_AMOUNT_BAR_FALLBACK_X
+    let y = rootTransform.height * 0.5 - PLAYER_AMOUNT_BAR_DEFAULT_TOP_INSET
+    const settingsNode = this.node
+      .getChildByName('Status')
+      ?.getChildByName('Content')
+      ?.getChildByName('SettingsBtn') ?? null
+    const settingsTransform = settingsNode?.getComponent(UITransform) ?? null
+    if (settingsNode && settingsTransform) {
+      // 主动刷新 Widget，确保首帧读取到的就是异形屏适配后的设置按钮坐标。
+      settingsNode.getComponent(Widget)?.updateAlignment()
+      const settingsPosition = rootTransform.convertToNodeSpaceAR(settingsNode.worldPosition)
+      x =
+        settingsPosition.x +
+        settingsTransform.width * settingsNode.worldScale.x * 0.5 +
+        PLAYER_AMOUNT_BAR_SETTINGS_GAP +
+        amountBarHalfWidth
+      y = settingsPosition.y
+    }
+
+    const menuMetrics = this.getWechatMenuMetrics()
+    if (menuMetrics) {
+      const sourceWindowWidth = menuMetrics.windowWidth > 0
+        ? menuMetrics.windowWidth
+        : screen.windowSize.width
+      const widthScale = rootTransform.width / Math.max(1, sourceWindowWidth)
+      const capsuleLeft =
+        -rootTransform.width * 0.5 + menuMetrics.menuRect.left * widthScale
+      x = Math.min(
+        x,
+        capsuleLeft - PLAYER_AMOUNT_BAR_CAPSULE_GAP - amountBarHalfWidth
+      )
+    }
+
+    // 兜底时仍保证资源条不会超出画布上下边界。
+    y = Math.min(
+      rootTransform.height * 0.5 - amountBarHalfHeight,
+      Math.max(-rootTransform.height * 0.5 + amountBarHalfHeight, y)
+    )
+    this.coinBarNode.setPosition(x, y, 0)
+    this.coinBarNode.setScale(
+      PLAYER_AMOUNT_BAR_SCALE,
+      PLAYER_AMOUNT_BAR_SCALE,
+      1
+    )
   }
 
   // 顶部 Status 只在微信小程序里对齐胶囊按钮，其他平台继续使用 scene 中的原始布局。
@@ -692,7 +893,12 @@ export class PlayUIController extends Component {
   }
 
   // 微信小程序和小游戏里，胶囊矩形需要和窗口信息一起读取，才能消掉真机顶部原生偏移。
-  private getWechatMenuMetrics(): { menuRect: WechatMenuButtonRect; windowHeight: number; screenTop: number } | null {
+  private getWechatMenuMetrics(): {
+    menuRect: WechatMenuButtonRect
+    windowWidth: number
+    windowHeight: number
+    screenTop: number
+  } | null {
     const wxApi = (globalThis as {
       wx?: {
         getMenuButtonBoundingClientRect?: () => WechatMenuButtonRect
@@ -717,6 +923,7 @@ export class PlayUIController extends Component {
 
     return {
       menuRect,
+      windowWidth: windowInfo?.windowWidth ?? 0,
       windowHeight: windowInfo?.windowHeight ?? 0,
       screenTop: windowInfo?.screenTop ?? 0
     }

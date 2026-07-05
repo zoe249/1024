@@ -4,7 +4,8 @@ import { AudioClip, director } from 'cc'
 import { PlayUIController, type PlayUIState } from './PlayUIController'
 import { GameAudioManager } from './GameAudioManager'
 import { GameShareAdapter } from './GameShareAdapter'
-import { SkillStock } from './SkillStock'
+import type { SkillKind } from './SkillStock'
+import { PlayerEconomyStore } from './PlayerEconomyStore'
 import { BoardGeometry } from './BoardGeometry'
 import { ScoreManager, type ScoreRewardEvent } from './ScoreManager'
 import { BoardModel, type BoardCell } from './BoardModel'
@@ -48,8 +49,6 @@ type SwapDragState = {
 
 // 控制同屏特效节点上限，避免频繁创建粒子导致卡顿。
 const MAX_ACTIVE_FX = 18
-// 每局开始时三个技能都给 1 次，后续奖励或商店扩展可以从这里统一调整初始值。
-const INITIAL_SKILL_COUNT = 1
 // 连续消除音效之间保留最小听感间隔，避免连锁时音效糊成一片。
 const MERGE_SOUND_MIN_INTERVAL = 0.46
 
@@ -114,6 +113,10 @@ export class PlayController extends Component {
   @property({ type: AudioClip, tooltip: 'Gameplay background music' })
   gameplayBgmClip: AudioClip | null = null
 
+  // 游戏场景顶部金币条，和首页体力条使用同一位置及缩放。
+  @property({ type: Prefab, tooltip: 'Gameplay coin bar prefab' })
+  coinBarPrefab: Prefab | null = null
+
   // 暂停弹窗点击回首页时加载的首页场景名，默认对应 assets/scence/home.scene。
   @property({ tooltip: 'Home scene name' })
   homeSceneName = 'home'
@@ -173,8 +176,8 @@ export class PlayController extends Component {
   private isBombSkillActive = false
   // 当前正在被拖拽的棋子信息，释放后用于判断是否可以交换。
   private swapDragState: SwapDragState | null = null
-  // 本局技能库存交给独立对象管理，玩法层只判断能否施放和何时扣减。
-  private readonly skillStock = new SkillStock(INITIAL_SKILL_COUNT)
+  // 技能库存和金币来自跨场景经济仓库，重开或返回首页都不会重置玩家资产。
+  private readonly economy = PlayerEconomyStore.getInstance()
   // 棋盘坐标和分数规则都交给独立模块，PlayController 保留对局流程调度。
   private readonly boardModel = new BoardModel()
   private boardGeometry: BoardGeometry | null = null
@@ -217,6 +220,8 @@ export class PlayController extends Component {
         void this.restartGame()
       },
       onGameOverShareTap: () => this.shareGameFromGameOver(),
+      coinBarPrefab: this.coinBarPrefab,
+      onCoinMoreTap: () => void this.shareForCoinReward(),
       counterNumberSpriteFrames: this.counterNumberSpriteFrames
     })
     this.bindInput()
@@ -775,7 +780,7 @@ export class PlayController extends Component {
       return
     }
 
-    this.skillStock.consume('swap')
+    this.economy.consumeSkill('swap')
     this.playSoundEffect(this.soundEffectClips.swapSkillAudioClip)
     this.refreshUiState()
     await this.settleBoard(sourcePiece)
@@ -904,7 +909,7 @@ export class PlayController extends Component {
   private async executeHammerSkill(target: CellPosition, piece: PieceController) {
     this.isResolving = true
     this.board[target.row][target.column] = null
-    this.skillStock.consume('hammer')
+    this.economy.consumeSkill('hammer')
     this.playSoundEffect(this.soundEffectClips.hammerSkillAudioClip)
     this.refreshUiState()
 
@@ -953,7 +958,7 @@ export class PlayController extends Component {
     }
 
     this.isResolving = true
-    this.skillStock.consume('bomb')
+    this.economy.consumeSkill('bomb')
     this.playSoundEffect(this.soundEffectClips.bombSkillAudioClip)
     this.refreshUiState()
     const centerPosition = this.getCellPosition(center.row, center.column)
@@ -2019,6 +2024,7 @@ export class PlayController extends Component {
   // 逻辑层只暴露一份纯数据状态给 UI 层，保证职责边界清晰。
   private buildUiState(): PlayUIState {
     const boardScore = this.scoreManager.getBoardScore(this.board)
+    const economy = this.economy.getSnapshot()
     return {
       currentValue: this.currentPiece?.getValue() ?? null,
       score: boardScore + this.scoreManager.getBonusScore(),
@@ -2027,7 +2033,8 @@ export class PlayController extends Component {
       isPaused: this.isPaused,
       isResolving: this.isResolving,
       activeSkill: this.isBombSkillActive ? 'bomb' : this.isHammerSkillActive ? 'hammer' : this.isSwapSkillActive ? 'swap' : null,
-      skillCounts: this.skillStock.toUiState()
+      coins: economy.coins,
+      skillCounts: economy.skills
     }
   }
 
@@ -2080,7 +2087,6 @@ export class PlayController extends Component {
     this.isBombSkillActive = false
     this.swapDragState = null
     this.resetBoard()
-    this.skillStock.reset()
     // 即将离开游戏场景，不再刷新暂停 UI，避免触摸收尾时触发弹窗关闭动画和事件解绑。
     this.scheduleOnce(() => director.loadScene(this.homeSceneName), 0)
   }
@@ -2093,6 +2099,34 @@ export class PlayController extends Component {
   // 结算弹窗分享本局分数，和暂停分享共用平台适配逻辑。
   private shareGameFromGameOver() {
     this.shareAdapter.shareScore(this.scoreManager.getTotalScore(this.board), 'game_over_share')
+  }
+
+  /**
+   * 游戏顶部金币 Prefab 的分享奖励入口。
+   * 分享适配层只报告流程结果，每次成功分享都会由经济仓库发放并持久化金币。
+   */
+  private async shareForCoinReward() {
+    const result = await this.shareAdapter.shareReward('coins')
+    if (!this.node.isValid) {
+      return
+    }
+    if (result === 'cancelled') {
+      this.uiController?.showTransientMessage('分享未完成，未发放奖励')
+      return
+    }
+    if (result === 'unsupported') {
+      this.uiController?.showTransientMessage('当前平台暂不支持分享奖励')
+      return
+    }
+
+    const claim = this.economy.claimShareReward('coins')
+    if (!claim.claimed) {
+      this.uiController?.showTransientMessage('金币奖励发放失败，请稍后重试')
+      return
+    }
+
+    this.refreshUiState()
+    this.uiController?.showTransientMessage(`分享奖励：金币 +${claim.amount}`)
   }
 
   // UI 层第三技能按钮通过这个入口切换交换技能，技能态只冻结下落，不打开暂停弹窗。
@@ -2110,7 +2144,7 @@ export class PlayController extends Component {
       return
     }
 
-    if (!this.skillStock.has('swap')) {
+    if (!this.ensureSkillAvailable('swap')) {
       return
     }
 
@@ -2135,7 +2169,7 @@ export class PlayController extends Component {
       return
     }
 
-    if (!this.skillStock.has('hammer')) {
+    if (!this.ensureSkillAvailable('hammer')) {
       return
     }
 
@@ -2160,7 +2194,7 @@ export class PlayController extends Component {
       return
     }
 
-    if (!this.skillStock.has('bomb')) {
+    if (!this.ensureSkillAvailable('bomb')) {
       return
     }
 
@@ -2181,6 +2215,29 @@ export class PlayController extends Component {
     this.isBombSkillActive = false
     this.refreshUiState()
   }
+
+  /**
+   * 技能数量为 0 时，当前点击只负责用金币购买，不立即进入施放状态。
+   *
+   * 购买与使用拆成两次点击可以避免玩家误触加号后立刻消耗新买的技能；
+   * 金币不足时同样由逻辑层生成结果，UI 层只显示提示。
+   */
+  private ensureSkillAvailable(skill: SkillKind) {
+    if (this.economy.hasSkill(skill)) {
+      return true
+    }
+
+    const result = this.economy.purchaseSkill(skill)
+    this.refreshUiState()
+    const skillName = skill === 'bomb' ? '炸弹' : skill === 'hammer' ? '锤子' : '交换'
+    this.uiController?.showTransientMessage(
+      result.purchased
+        ? `已用 ${result.price} 金币购买${skillName}，再点一次使用`
+        : `金币不足，购买${skillName}需要 ${result.price} 金币`
+    )
+    return false
+  }
+
   // 进入游戏结束流程
   private endGame() {
     if (this.isGameOver) {
@@ -2203,6 +2260,10 @@ export class PlayController extends Component {
     if (this.isResolving) {
       return
     }
+    if (!this.economy.tryConsumeEnergy()) {
+      this.uiController?.showTransientMessage('体力不足，请返回首页分享补充')
+      return
+    }
 
     this.clearBoardPieces()
     this.transientFx.clear()
@@ -2215,7 +2276,6 @@ export class PlayController extends Component {
     this.isBombSkillActive = false
     this.swapDragState = null
     this.resetBoard()
-    this.skillStock.reset()
     this.audioManager?.playGameplayBackgroundMusic(this.gameplayBgmClip)
     this.spawnPiece()
   }

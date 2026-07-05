@@ -2,13 +2,9 @@ import { _decorator, AudioClip, Component, director, Prefab, SpriteFrame } from 
 import { StartPageController } from './StartPageController'
 import { GameAudioManager } from './GameAudioManager'
 import { GameShareAdapter } from './GameShareAdapter'
+import { PlayerEconomyStore } from './PlayerEconomyStore'
 
 const { ccclass, property } = _decorator
-
-// 首页资源条按设计稿默认展示 3/4 体力和 99,999 金币，后续存档或商城系统可统一覆盖。
-const INITIAL_ENERGY = 3
-const MAX_ENERGY = 4
-const INITIAL_COINS = 99999
 
 @ccclass('HomeSceneController')
 export class HomeSceneController extends Component {
@@ -44,25 +40,23 @@ export class HomeSceneController extends Component {
   @property({ type: SpriteFrame, tooltip: 'Start page share button sprite frame' })
   startPageShareButtonSpriteFrame: SpriteFrame | null = null
 
-  // 体力条与金币条是首页大厅组件，不再进入 game.scene 的单局 HUD。
+  // 首页只展示体力条；金币条由 game.scene 的单局 HUD 负责。
   @property({ type: Prefab, tooltip: 'Home energy bar prefab' })
   energyBarPrefab: Prefab | null = null
-
-  @property({ type: Prefab, tooltip: 'Home coin bar prefab' })
-  coinBarPrefab: Prefab | null = null
 
   private startPageController: StartPageController | null = null
   private audioManager: GameAudioManager | null = null
   private readonly shareAdapter = new GameShareAdapter()
+  private readonly economy = PlayerEconomyStore.getInstance()
   private isLoadingGameScene = false
-  // 玩家资源由首页逻辑层持有，StartPageController 只负责展示和发送加号点击意图。
-  private currentEnergy = INITIAL_ENERGY
-  private maxEnergy = MAX_ENERGY
-  private coinCount = INITIAL_COINS
+  private dailyLoginReward = 0
 
   onLoad() {
     this.audioManager = new GameAudioManager(this.node)
     this.audioManager.setup()
+    const dailyResult = this.economy.claimDailyLogin()
+    this.dailyLoginReward = dailyResult.claimed ? dailyResult.amount : 0
+    const resources = this.economy.getSnapshot()
     this.startPageController = this.getComponent(StartPageController) ?? this.addComponent(StartPageController)
     this.startPageController.setup({
       onStartTap: () => this.enterGameScene(),
@@ -72,12 +66,9 @@ export class HomeSceneController extends Component {
       settingsButtonSpriteFrame: this.startPageSettingsButtonSpriteFrame,
       shareButtonSpriteFrame: this.startPageShareButtonSpriteFrame,
       energyBarPrefab: this.energyBarPrefab,
-      coinBarPrefab: this.coinBarPrefab,
-      energy: this.currentEnergy,
-      maxEnergy: this.maxEnergy,
-      coins: this.coinCount,
-      onEnergyMoreTap: () => this.requestEnergyStoreFromUi(),
-      onCoinMoreTap: () => this.requestCoinStoreFromUi()
+      energy: resources.energy,
+      maxEnergy: resources.maxEnergy,
+      onEnergyMoreTap: () => void this.shareForEnergyReward()
     })
   }
 
@@ -85,15 +76,23 @@ export class HomeSceneController extends Component {
     // 首帧后再同步一次布局，兼容微信安全区和 Creator 预览尺寸变化。
     this.startPageController?.syncLayout()
     this.audioManager?.playStartPageBackgroundMusic(this.getHomeBgmClip())
+    if (this.dailyLoginReward > 0) {
+      this.startPageController?.showMessage(`每日登录奖励：金币 +${this.dailyLoginReward}`)
+    }
   }
 
-  // 首页只负责切场景，真正的玩法状态由 game.scene 里的 PlayController 初始化。
+  // 开始游戏前由经济层统一扣除体力，扣除失败时停留首页并给出补充入口提示。
   private enterGameScene() {
     if (this.isLoadingGameScene) {
       return
     }
+    if (!this.economy.tryConsumeEnergy()) {
+      this.startPageController?.showMessage('体力不足，点击体力条分享补充')
+      return
+    }
 
     this.isLoadingGameScene = true
+    this.refreshPlayerResources()
     const sceneName = this.getStartTargetSceneName()
     // 点击事件分发结束前直接切场景，部分平台会在销毁按钮节点时触发事件系统空引用。
     // 这里只延后一帧进入目标场景，每次从首页开始都先展示一条随机加载提示。
@@ -111,29 +110,49 @@ export class HomeSceneController extends Component {
   }
 
   /**
-   * 由登录、商城或存档系统统一更新首页玩家资源。
-   *
-   * 这里完成整数化和边界收口，避免外部数据让体力槽或金币文本进入非法状态；
-   * 首页 UI 只接收整理后的纯数值，不直接修改资源。
+   * 点击顶部资源 Prefab 后完成分享并领取对应资源。
+   * 分享不限制每日次数；经济层只负责体力上限校验和成功后的持久化。
    */
-  public setPlayerResources(energy: number, maxEnergy: number, coins: number) {
-    this.maxEnergy = Math.max(1, Math.floor(maxEnergy))
-    this.currentEnergy = Math.min(this.maxEnergy, Math.max(0, Math.floor(energy)))
-    this.coinCount = Math.max(0, Math.floor(coins))
-    this.startPageController?.renderPlayerResources(this.currentEnergy, this.maxEnergy, this.coinCount)
+  private async shareForEnergyReward() {
+    if (!this.economy.canClaimShareReward('energy')) {
+      this.startPageController?.showMessage('体力已满，无需补充')
+      return
+    }
+
+    const result = await this.shareAdapter.shareReward('energy')
+    if (!this.node.isValid) {
+      return
+    }
+    if (result === 'cancelled') {
+      this.startPageController?.showMessage('分享未完成，未发放奖励')
+      return
+    }
+    if (result === 'unsupported') {
+      this.startPageController?.showMessage('当前平台暂不支持分享奖励')
+      return
+    }
+
+    const claim = this.economy.claimShareReward('energy')
+    if (!claim.claimed) {
+      this.startPageController?.showMessage('体力已满，无需补充')
+      return
+    }
+
+    this.refreshPlayerResources()
+    this.startPageController?.showMessage(`分享奖励：体力 +${claim.amount}`)
   }
 
-  // 加号只向外发送商城入口意图，避免在商城尚未接入时凭空赠送资源。
-  private requestEnergyStoreFromUi() {
-    this.node.emit('request-energy-store')
-  }
-
-  private requestCoinStoreFromUi() {
-    this.node.emit('request-coin-store')
+  // 每次资源发生变化后，从仓库快照重新渲染，首页 UI 不缓存也不修改玩家数据。
+  private refreshPlayerResources() {
+    const snapshot = this.economy.getSnapshot()
+    this.startPageController?.renderPlayerResources(
+      snapshot.energy,
+      snapshot.maxEnergy
+    )
   }
 
   // 首页分享还没有本局分数，使用邀请挑战文案更符合入口语境。
   private shareGameFromStartPage() {
-    this.shareAdapter.shareStartPage('start_share')
+    void this.shareAdapter.shareStartPage('start_share')
   }
 }

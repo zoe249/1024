@@ -6064,6 +6064,10 @@
       "__uuid__": "41c3b3be-ba55-4356-9a73-d1c487e10901",
       "__expectedType__": "cc.AudioClip"
     },
+    "coinBarPrefab": {
+      "__uuid__": "52360ea8-01e9-434e-a97a-23cd0f7573a4",
+      "__expectedType__": "cc.Prefab"
+    },
     "homeSceneName": "home",
     "spacing": 10,
     "x": -244,

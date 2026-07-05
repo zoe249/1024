@@ -353,10 +353,6 @@
       "__uuid__": "fff98721-8940-486a-b3a2-cb091a0873ca",
       "__expectedType__": "cc.Prefab"
     },
-    "coinBarPrefab": {
-      "__uuid__": "52360ea8-01e9-434e-a97a-23cd0f7573a4",
-      "__expectedType__": "cc.Prefab"
-    },
     "_id": "homeSceneController"
   },
   {
