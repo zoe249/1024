@@ -76,7 +76,7 @@ export class PauseOverlayController extends Component {
   private pauseHandler: (() => void) | null = null
   // 暂停层重玩按钮只通知逻辑层重开当前对局。
   private replayHandler: (() => void) | null = null
-  // 暂停层回首页按钮只通知逻辑层清理对局并切换到首页场景。
+  // 暂停层回首页按钮只通知逻辑层保存对局并切换到首页场景。
   private homeHandler: (() => void) | null = null
   // 回首页会销毁当前游戏场景，点击后只派发一次，避免连续触摸重复触发解绑和切场景。
   private isReturningHome = false

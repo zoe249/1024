@@ -5,6 +5,7 @@ import { GameShareAdapter } from './GameShareAdapter'
 import { PlayerEconomyStore } from './PlayerEconomyStore'
 import { SkillShopPopupController } from './SkillShopPopupController'
 import type { SkillKind } from './SkillStock'
+import { OngoingGameSession } from './PlayController'
 
 const { ccclass, property } = _decorator
 
@@ -96,10 +97,15 @@ export class HomeSceneController extends Component {
   }
 
   /**
-   * 首页开始按钮只负责打开购买弹窗，真正扣体力和切场景由弹窗“开始游戏”回调触发。
+   * 有未结束对局时直接续局；只有新开一局才展示技能购买弹窗。
    */
   private openSkillShop() {
     if (this.isLoadingGameScene) {
+      return
+    }
+
+    if (OngoingGameSession.hasActiveGame()) {
+      this.enterOngoingGameScene()
       return
     }
 
@@ -156,11 +162,24 @@ export class HomeSceneController extends Component {
     }
 
     this.isLoadingGameScene = true
+    OngoingGameSession.beginNewGame()
     this.refreshPlayerResources()
     this.skillShopController?.hide()
     const sceneName = this.getStartTargetSceneName()
     // 点击事件分发结束前直接切场景，部分平台会在销毁按钮节点时触发事件系统空引用。
     // 这里只延后一帧进入目标场景，每次从首页开始都先展示一条随机加载提示。
+    this.scheduleOnce(() => director.loadScene(sceneName), 0)
+  }
+
+  // 续局不重复扣体力，也不经过开始前的技能购买弹窗和 loading 提示页。
+  private enterOngoingGameScene() {
+    if (this.isLoadingGameScene) {
+      return
+    }
+
+    this.isLoadingGameScene = true
+    this.skillShopController?.hide()
+    const sceneName = this.gameSceneName || this.getStartTargetSceneName()
     this.scheduleOnce(() => director.loadScene(sceneName), 0)
   }
 

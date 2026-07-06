@@ -210,6 +210,9 @@ export class PlayUIController extends Component {
     coinBarPrefab?: Prefab | null
     onCoinMoreTap?: () => void
     counterNumberSpriteFrames?: SpriteFrame[]
+    gameOverPopupSpriteFrame?: SpriteFrame | null
+    gameOverReplayButtonSpriteFrame?: SpriteFrame | null
+    gameOverShareButtonSpriteFrame?: SpriteFrame | null
   }) {
     this.boardwidth = options.boardwidth
     this.boardheight = options.boardheight
@@ -235,7 +238,11 @@ export class PlayUIController extends Component {
     // this.ensureStatusLabel()
     // this.ensurePauseButton()
     this.ensurePauseOverlay()
-    this.ensureGameOverOverlay()
+    this.ensureGameOverOverlay(
+      options.gameOverPopupSpriteFrame ?? null,
+      options.gameOverReplayButtonSpriteFrame ?? null,
+      options.gameOverShareButtonSpriteFrame ?? null
+    )
     this.configureControlBar()
     this.configureStatusBar()
     this.configureCoinBar()
@@ -598,7 +605,11 @@ export class PlayUIController extends Component {
   }
 
   // 游戏结束层运行时生成，避免为了结算弹窗再要求手动维护一套 scene 层级。
-  private ensureGameOverOverlay() {
+  private ensureGameOverOverlay(
+    popupSpriteFrame: SpriteFrame | null,
+    replayButtonSpriteFrame: SpriteFrame | null,
+    shareButtonSpriteFrame: SpriteFrame | null
+  ) {
     let overlay = this.node.getChildByName('GameOverOverlay')
     if (!overlay) {
       overlay = new Node('GameOverOverlay')
@@ -611,7 +622,10 @@ export class PlayUIController extends Component {
     this.gameOverOverlayController.setup({
       hostNode: this.node,
       replayHandler: this.gameOverReplayHandler,
-      shareHandler: this.gameOverShareHandler
+      shareHandler: this.gameOverShareHandler,
+      popupSpriteFrame,
+      replayButtonSpriteFrame,
+      shareButtonSpriteFrame
     })
   }
 

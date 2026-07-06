@@ -20,6 +20,12 @@ export class ScoreManager {
     this.highestPieceValue = 0
   }
 
+  // 从跨场景快照恢复累计奖励和历史最高值，续局时不重新计算已发生的合并奖励。
+  restore(bonusScore: number, highestPieceValue: number) {
+    this.bonusScore = Math.max(0, Math.floor(bonusScore))
+    this.highestPieceValue = Math.max(0, Math.floor(highestPieceValue))
+  }
+
   getBonusScore() {
     return this.bonusScore
   }

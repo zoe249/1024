@@ -6045,6 +6045,18 @@
       "__uuid__": "c2bd34f2-a783-4855-8af8-fa07fe942dc1@f9941",
       "__expectedType__": "cc.SpriteFrame"
     },
+    "gameOverPopupSpriteFrame": {
+      "__uuid__": "d692014e-fdd9-4814-a436-ab0bde9da2db@f9941",
+      "__expectedType__": "cc.SpriteFrame"
+    },
+    "gameOverReplayButtonSpriteFrame": {
+      "__uuid__": "560fe052-db7a-4208-8b4b-5d21dd40199c@f9941",
+      "__expectedType__": "cc.SpriteFrame"
+    },
+    "gameOverShareButtonSpriteFrame": {
+      "__uuid__": "8528d67b-63ff-41fd-ac98-ab07f6fd02d2@f9941",
+      "__expectedType__": "cc.SpriteFrame"
+    },
     "collisionAudioClip": {
       "__uuid__": "bf9e398d-109e-43e4-86cd-071fe3e92c69",
       "__expectedType__": "cc.AudioClip"

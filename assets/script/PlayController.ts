@@ -33,6 +33,49 @@ type DirectedMergeResult = {
   changed: boolean
 }
 
+export type OngoingGameSnapshot = {
+  boardValues: Array<Array<number | null>>
+  currentPieceValue: number | null
+  currentPieceY: number | null
+  currentColumn: number
+  bonusScore: number
+  highestPieceValue: number
+}
+
+/**
+ * 首页与玩法场景之间只传递纯数据快照，不让首页直接持有棋盘节点。
+ * 模块状态会在 director.loadScene 切场景时保留，结束游戏后统一清空。
+ */
+export const OngoingGameSession = {
+  active: false,
+  snapshot: null as OngoingGameSnapshot | null,
+
+  hasActiveGame() {
+    return this.active
+  },
+
+  beginNewGame() {
+    this.active = true
+    this.snapshot = null
+  },
+
+  save(snapshot: OngoingGameSnapshot) {
+    this.active = true
+    this.snapshot = snapshot
+  },
+
+  consumeSnapshot() {
+    const snapshot = this.snapshot
+    this.snapshot = null
+    return snapshot
+  },
+
+  finishGame() {
+    this.active = false
+    this.snapshot = null
+  }
+}
+
 // 交换技能拖拽时需要记录起点和原始表现，方便无效释放时回到原位。
 type SwapDragState = {
   source: CellPosition
@@ -92,6 +135,18 @@ export class PlayController extends Component {
   // 炸弹技能使用的贴图，场景里绑定 assets/images/Skills/Bomb.png 的 SpriteFrame。
   @property({ type: SpriteFrame, tooltip: 'Bomb skill sprite frame' })
   bombSkillSpriteFrame: SpriteFrame | null = null
+
+  // 游戏结束弹窗直接复用项目中的活页面板素材，避免运行时 Graphics 风格脱节。
+  @property({ type: SpriteFrame, tooltip: 'Game over popup sprite frame' })
+  gameOverPopupSpriteFrame: SpriteFrame | null = null
+
+  // 游戏结束主按钮复用项目现有绿色胶囊按钮。
+  @property({ type: SpriteFrame, tooltip: 'Game over replay button sprite frame' })
+  gameOverReplayButtonSpriteFrame: SpriteFrame | null = null
+
+  // 游戏结束分享按钮复用项目现有蓝色胶囊按钮。
+  @property({ type: SpriteFrame, tooltip: 'Game over share button sprite frame' })
+  gameOverShareButtonSpriteFrame: SpriteFrame | null = null
 
   // 棋子落地触碰时播放的音效。
   @property({ type: AudioClip, tooltip: 'Piece collision sound effect' })
@@ -197,6 +252,11 @@ export class PlayController extends Component {
   private lastMergeSoundTimeMs = -Infinity
   // 生命周期入口：先准备棋盘数据，再把界面初始化交给独立的 UI 组件。
   onLoad() {
+    const ongoingSnapshot = OngoingGameSession.consumeSnapshot()
+    if (!OngoingGameSession.hasActiveGame()) {
+      // 兼容 Creator 直接预览 game.scene 的开发入口。
+      OngoingGameSession.beginNewGame()
+    }
     this.resetBoard()
     this.boardGeometry = new BoardGeometry(this.node, this.buildBoardGeometryOptions())
     this.audioManager = new GameAudioManager(this.node)
@@ -222,8 +282,14 @@ export class PlayController extends Component {
       onGameOverShareTap: () => this.shareGameFromGameOver(),
       coinBarPrefab: this.coinBarPrefab,
       onCoinMoreTap: () => void this.shareForCoinReward(),
-      counterNumberSpriteFrames: this.counterNumberSpriteFrames
+      counterNumberSpriteFrames: this.counterNumberSpriteFrames,
+      gameOverPopupSpriteFrame: this.gameOverPopupSpriteFrame,
+      gameOverReplayButtonSpriteFrame: this.gameOverReplayButtonSpriteFrame,
+      gameOverShareButtonSpriteFrame: this.gameOverShareButtonSpriteFrame
     })
+    if (ongoingSnapshot) {
+      this.restoreOngoingGame(ongoingSnapshot)
+    }
     this.bindInput()
   }
   // 等场景节点初始化完成后再生成第一颗棋子，避免引用未准备好的节点。
@@ -460,6 +526,94 @@ export class PlayController extends Component {
     this.scoreManager.reset()
     this.currentColumn = Math.floor(this.boardwidth / 2)
     this.lastMergeSoundTimeMs = -Infinity
+  }
+
+  // 返回首页前生成纯数据快照，节点和组件不会跨场景泄漏。
+  private buildOngoingGameSnapshot(): OngoingGameSnapshot {
+    return {
+      boardValues: this.board.map((row) => row.map((piece) => piece?.getValue() ?? null)),
+      currentPieceValue: this.currentPiece?.getValue() ?? null,
+      currentPieceY: this.currentPiece?.node.position.y ?? null,
+      currentColumn: this.currentColumn,
+      bonusScore: this.scoreManager.getBonusScore(),
+      highestPieceValue: this.scoreManager.getHighestPieceValue()
+    }
+  }
+
+  /**
+   * 从首页续局时重建棋盘节点。
+   *
+   * 快照只保存数字和当前落子位置；所有节点仍由 piece.prefab 重新实例化，
+   * 因此不会破坏棋子生命周期、棋盘查询或 UI 单向渲染边界。
+   */
+  private restoreOngoingGame(snapshot: OngoingGameSnapshot) {
+    if (!this.basePieceController) {
+      OngoingGameSession.finishGame()
+      return
+    }
+
+    for (let row = 0; row < this.boardheight; row += 1) {
+      for (let column = 0; column < this.boardwidth; column += 1) {
+        const value = snapshot.boardValues[row]?.[column] ?? null
+        if (value === null) {
+          continue
+        }
+
+        const piece = this.instantiateSnapshotPiece(value)
+        if (!piece) {
+          continue
+        }
+
+        this.board[row][column] = piece
+        piece.node.setPosition(this.getCellPosition(row, column))
+        piece.stopParticle()
+      }
+    }
+
+    this.scoreManager.restore(snapshot.bonusScore, snapshot.highestPieceValue)
+    const requestedColumn = Math.max(0, Math.min(this.boardwidth - 1, Math.floor(snapshot.currentColumn)))
+    const availableColumn = this.getNearestAvailableColumn(requestedColumn)
+    if (snapshot.currentPieceValue !== null && availableColumn >= 0) {
+      const piece = this.instantiateSnapshotPiece(snapshot.currentPieceValue)
+      const dropRow = this.getDropRow(availableColumn)
+      if (piece && dropRow >= 0) {
+        const spawnPosition = this.getSpawnPosition(availableColumn)
+        const targetPosition = this.getCellPosition(dropRow, availableColumn)
+        const restoredY = Math.max(
+          targetPosition.y,
+          Math.min(spawnPosition.y, snapshot.currentPieceY ?? spawnPosition.y)
+        )
+        piece.node.setPosition(spawnPosition.x, restoredY, spawnPosition.z)
+        this.currentColumn = availableColumn
+        this.currentPiece = piece
+      }
+    }
+
+    this.isFastDropping = false
+    this.isResolving = false
+    this.isPaused = false
+    this.refreshUiState()
+  }
+
+  // 续局棋子统一从原 Prefab 创建，避免快照恢复产生另一套棋子表现。
+  private instantiateSnapshotPiece(value: number) {
+    if (!this.basePieceController) {
+      return null
+    }
+
+    const pieceNode = instantiate(this.basePieceController)
+    const pieceController = pieceNode.getComponent(PieceController)
+    if (!pieceController) {
+      pieceNode.destroy()
+      return null
+    }
+
+    pieceNode.getComponent(UITransform)?.setContentSize(this.pieceSize, this.pieceSize)
+    pieceController.setValue(value)
+    pieceNode.setScale(Vec3.ONE)
+    this.node.addChild(pieceNode)
+    pieceController.syncTrailEffect()
+    return pieceController
   }
 
   // 清理棋盘中已经实例化的棋子节点，返回首页和重新开始都复用这套收口逻辑。
@@ -2067,12 +2221,13 @@ export class PlayController extends Component {
     this.refreshUiState()
   }
 
-  // 暂停弹窗点击返回首页时，先清理当前对局，再加载独立首页场景。
+  // 暂停弹窗点击返回首页时先保存对局快照，再清理场景节点并加载首页。
   private returnToStartPageFromPause() {
     if (!this.hasStartedSession) {
       return
     }
 
+    OngoingGameSession.save(this.buildOngoingGameSnapshot())
     // 回首页只保留本次切场景任务，取消之前用于动画等待的 scheduleOnce。
     this.unscheduleAllCallbacks()
     this.clearBoardPieces()
@@ -2234,6 +2389,7 @@ export class PlayController extends Component {
     }
 
     this.isGameOver = true
+    OngoingGameSession.finishGame()
     this.isSwapSkillActive = false
     this.isHammerSkillActive = false
     this.isBombSkillActive = false
@@ -2254,6 +2410,7 @@ export class PlayController extends Component {
       return
     }
 
+    OngoingGameSession.beginNewGame()
     this.clearBoardPieces()
     this.transientFx.clear()
     this.isGameOver = false

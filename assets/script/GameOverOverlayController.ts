@@ -7,6 +7,8 @@ import {
   Label,
   LabelOutline,
   Node,
+  Sprite,
+  SpriteFrame,
   tween,
   Tween,
   UIOpacity,
@@ -16,51 +18,57 @@ import {
 
 const { ccclass } = _decorator
 
-// 结算弹窗的进入和退出动画统一控制在较短时间，避免盖住游戏结束反馈太久。
+// 结算弹窗使用短促的缩放与淡入动画，避免打断游戏结束反馈。
 const GAME_OVER_ANIM_DURATION = 0.18
-// 弹窗面板尺寸固定，布局位置再根据根节点尺寸居中适配。
-const GAME_OVER_PANEL_WIDTH = 540
-const GAME_OVER_PANEL_HEIGHT = 520
+// 面板尺寸与项目现有 Popup 素材比例接近，同时为纵向信息和双按钮留足空间。
+const GAME_OVER_PANEL_WIDTH = 610
+const GAME_OVER_PANEL_HEIGHT = 790
+const GAME_OVER_PANEL_EDGE_INSET = 32
+const GAME_OVER_PANEL_VERTICAL_INSET = 64
+const GAME_OVER_BUTTON_WIDTH = 350
+const GAME_OVER_BUTTON_HEIGHT = 112
+
+type GameOverOverlayOptions = {
+  hostNode: Node
+  replayHandler: (() => void) | null
+  shareHandler: (() => void) | null
+  popupSpriteFrame?: SpriteFrame | null
+  replayButtonSpriteFrame?: SpriteFrame | null
+  shareButtonSpriteFrame?: SpriteFrame | null
+}
 
 @ccclass('GameOverOverlayController')
 export class GameOverOverlayController extends Component {
-  // 持有 play 根节点，用于读取当前画布尺寸并保证遮罩铺满屏幕。
+  // 持有 play 根节点，用于同步画布尺寸并铺满遮罩。
   private hostNode: Node | null = null
-  // 全屏蒙版节点，只负责压暗背景和拦截触摸。
   private maskNode: Node | null = null
-  // 中央结算面板节点。
   private panelNode: Node | null = null
-  // 本次分数数字文本，renderState 时跟随逻辑层传入的分数刷新。
   private scoreValueLabel: Label | null = null
-  // 最高合成数字文本，只在逻辑层传入后刷新显示。
   private highestValueLabel: Label | null = null
-  // 重玩按钮节点，销毁时需要解绑触摸事件。
   private replayButtonNode: Node | null = null
-  // 分享按钮节点，销毁时需要解绑触摸事件。
   private shareButtonNode: Node | null = null
-  // 透明度组件单独缓存，方便做整层淡入淡出。
   private overlayOpacity: UIOpacity | null = null
-  // 当前是否已经展示，避免每帧 renderState 都重复启动弹窗动画。
   private isVisible = false
-  // 重玩只通知逻辑层处理，UI 层不直接清棋盘。
   private replayHandler: (() => void) | null = null
-  // 分享只通知逻辑层适配平台 API。
   private shareHandler: (() => void) | null = null
+  private popupSpriteFrame: SpriteFrame | null = null
+  private replayButtonSpriteFrame: SpriteFrame | null = null
+  private shareButtonSpriteFrame: SpriteFrame | null = null
+  private panelLayoutScale = 1
 
-  setup(options: {
-    hostNode: Node
-    replayHandler: (() => void) | null
-    shareHandler: (() => void) | null
-  }) {
+  setup(options: GameOverOverlayOptions) {
     this.hostNode = options.hostNode
     this.replayHandler = options.replayHandler
     this.shareHandler = options.shareHandler
+    this.popupSpriteFrame = options.popupSpriteFrame ?? null
+    this.replayButtonSpriteFrame = options.replayButtonSpriteFrame ?? null
+    this.shareButtonSpriteFrame = options.shareButtonSpriteFrame ?? null
     this.ensureOverlayStructure()
     this.bindTouchEvents()
     this.syncLayout()
   }
 
-  // 屏幕尺寸变化或首帧安全区稳定后，重新铺满遮罩并保持面板居中。
+  // 屏幕尺寸变化时同步遮罩，并在安全边距内等比缩放结算面板。
   syncLayout() {
     const hostTransform = this.hostNode?.getComponent(UITransform)
     const overlayTransform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform)
@@ -69,15 +77,20 @@ export class GameOverOverlayController extends Component {
     overlayTransform.setContentSize(width, height)
 
     this.drawMask(width, height)
+    this.panelLayoutScale = Math.min(
+      1,
+      Math.max(0.58, (width - GAME_OVER_PANEL_EDGE_INSET * 2) / GAME_OVER_PANEL_WIDTH),
+      Math.max(0.58, (height - GAME_OVER_PANEL_VERTICAL_INSET * 2) / GAME_OVER_PANEL_HEIGHT)
+    )
     this.panelNode?.setPosition(0, 0, 0)
-    this.drawPanel()
+    this.panelNode?.setScale(this.getPanelScale())
+    this.drawPanelFallback()
   }
 
-  // 外部只传入是否结束和最终分数，弹窗自己负责显隐和动画。
+  // 外部只传入纯状态，弹窗自身负责显示、隐藏和文本刷新。
   renderState(isGameOver: boolean, score: number, highestValue: number) {
     this.refreshScore(score)
     this.refreshHighestValue(highestValue)
-    // 结算层必须始终在棋子、特效、技能栏和暂停层之上。
     this.bringNodeToTop(this.node)
 
     if (isGameOver) {
@@ -107,55 +120,123 @@ export class GameOverOverlayController extends Component {
     this.overlayOpacity = this.node.getComponent(UIOpacity) ?? this.node.addComponent(UIOpacity)
     this.overlayOpacity.opacity = 0
 
-    let mask = this.node.getChildByName('Mask')
-    if (!mask) {
-      mask = new Node('Mask')
-      mask.setParent(this.node)
-      mask.addComponent(UITransform)
-      mask.addComponent(Graphics)
-    }
-    this.maskNode = mask
+    this.maskNode = this.getOrCreateNode(this.node, 'Mask')
+    this.maskNode.getComponent(Graphics) ?? this.maskNode.addComponent(Graphics)
 
-    let panel = this.node.getChildByName('Panel')
-    if (!panel) {
-      panel = new Node('Panel')
-      panel.setParent(this.node)
-      panel.addComponent(UITransform).setContentSize(GAME_OVER_PANEL_WIDTH, GAME_OVER_PANEL_HEIGHT)
-      panel.addComponent(Graphics)
-    }
-    this.panelNode = panel
+    this.panelNode = this.getOrCreateNode(this.node, 'Panel')
+    this.panelNode.getComponent(UITransform)?.setContentSize(GAME_OVER_PANEL_WIDTH, GAME_OVER_PANEL_HEIGHT)
+    this.configurePanelSprite(this.panelNode)
 
-    this.ensureLabels(panel)
-    this.replayButtonNode = this.ensureActionButton(panel, 'ReplayButton', '重玩', new Color(73, 215, 164, 255), -116)
-    this.shareButtonNode = this.ensureActionButton(panel, 'ShareButton', '分享', new Color(70, 161, 218, 255), 116)
+    this.ensureLabels(this.panelNode)
+    this.replayButtonNode = this.ensureActionButton(
+      this.panelNode,
+      'ReplayButton',
+      '再来一局',
+      this.replayButtonSpriteFrame,
+      new Color(18, 217, 117, 255),
+      -150
+    )
+    this.shareButtonNode = this.ensureActionButton(
+      this.panelNode,
+      'ShareButton',
+      '分享成绩',
+      this.shareButtonSpriteFrame,
+      new Color(16, 188, 232, 255),
+      -275
+    )
   }
 
+  private configurePanelSprite(panel: Node) {
+    const sprite = panel.getComponent(Sprite) ?? panel.addComponent(Sprite)
+    sprite.spriteFrame = this.popupSpriteFrame
+    sprite.sizeMode = Sprite.SizeMode.CUSTOM
+    panel.getComponent(UITransform)?.setContentSize(GAME_OVER_PANEL_WIDTH, GAME_OVER_PANEL_HEIGHT)
+
+    const graphics = panel.getComponent(Graphics) ?? panel.addComponent(Graphics)
+    graphics.enabled = !this.popupSpriteFrame
+  }
+
+  /**
+   * 信息层级按“最高合成 → 本次得分 → 行动按钮”纵向展开。
+   * 只刷新数值节点，标题和提示保持为静态展示文案。
+   */
   private ensureLabels(panel: Node) {
-    this.ensureLabel(panel, 'Title', '游戏结束', 44, new Color(46, 108, 121, 255), new Vec3(0, 160, 0), 420, 68, true)
-    this.ensureLabel(panel, 'ScoreTitle', '本次分数', 26, new Color(105, 153, 164, 255), new Vec3(0, 78, 0), 360, 42, false)
+    this.ensureLabel(
+      panel,
+      'Title',
+      '游戏结束',
+      48,
+      new Color(255, 255, 255, 255),
+      new Vec3(18, 330, 0),
+      430,
+      72,
+      true,
+      new Color(183, 39, 68, 230),
+      3
+    )
+
+    const highestTile = this.getOrCreateNode(panel, 'HighestTile')
+    highestTile.setPosition(18, 196, 0)
+    highestTile.getComponent(UITransform)?.setContentSize(120, 104)
+    this.drawHighestTile(highestTile)
+    this.highestValueLabel = this.ensureLabel(
+      highestTile,
+      'Value',
+      '0',
+      39,
+      new Color(255, 255, 255, 255),
+      Vec3.ZERO,
+      108,
+      80,
+      true,
+      new Color(191, 105, 31, 210),
+      2
+    )
+
+    this.ensureLabel(
+      panel,
+      'HighestTitle',
+      '最高合成数字',
+      24,
+      new Color(92, 147, 154, 255),
+      new Vec3(18, 122, 0),
+      380,
+      42,
+      false
+    )
+    this.ensureLabel(
+      panel,
+      'ScoreTitle',
+      '本次得分',
+      25,
+      new Color(54, 110, 119, 255),
+      new Vec3(18, 76, 0),
+      360,
+      42,
+      true
+    )
     this.scoreValueLabel = this.ensureLabel(
       panel,
       'ScoreValue',
       '0',
       58,
-      new Color(255, 179, 79, 255),
-      new Vec3(0, 18, 0),
-      420,
-      82,
+      new Color(40, 103, 117, 255),
+      new Vec3(18, 18, 0),
+      430,
+      78,
       true
     )
-    this.highestValueLabel = this.ensureLabel(
+    this.ensureLabel(
       panel,
-      'HighestValue',
-      '最高合成：0',
-      28,
-      new Color(46, 108, 121, 255),
-      new Vec3(0, -60, 0),
-      420,
-      46,
-      true
+      'Tip',
+      '再接再厉，继续冲击 1024',
+      22,
+      new Color(166, 119, 76, 255),
+      new Vec3(18, -48, 0),
+      430,
+      42,
+      false
     )
-    this.ensureLabel(panel, 'Tip', '再来一局，继续冲 1024', 24, new Color(105, 153, 164, 255), new Vec3(0, -104, 0), 420, 44, false)
   }
 
   private ensureLabel(
@@ -167,15 +248,11 @@ export class GameOverOverlayController extends Component {
     position: Vec3,
     width: number,
     height: number,
-    isBold: boolean
+    isBold: boolean,
+    outlineColor = new Color(255, 255, 255, 0),
+    outlineWidth = 0
   ) {
-    let labelNode = parent.getChildByName(name)
-    if (!labelNode) {
-      labelNode = new Node(name)
-      labelNode.setParent(parent)
-      labelNode.addComponent(UITransform)
-    }
-
+    const labelNode = this.getOrCreateNode(parent, name)
     labelNode.setPosition(position)
     labelNode.getComponent(UITransform)?.setContentSize(width, height)
     const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label)
@@ -187,43 +264,53 @@ export class GameOverOverlayController extends Component {
     label.color = color
     label.isBold = isBold
     const outline = labelNode.getComponent(LabelOutline) ?? labelNode.addComponent(LabelOutline)
-    outline.color = new Color(255, 255, 255, isBold ? 210 : 0)
-    outline.width = isBold ? 2 : 0
+    outline.color = outlineColor
+    outline.width = outlineWidth
     return label
   }
 
-  private ensureActionButton(parent: Node, name: string, text: string, color: Color, x: number) {
-    let button = parent.getChildByName(name)
-    if (!button) {
-      button = new Node(name)
-      button.setParent(parent)
-      button.addComponent(UITransform).setContentSize(196, 86)
-      button.addComponent(Graphics)
+  private ensureActionButton(
+    parent: Node,
+    name: string,
+    text: string,
+    spriteFrame: SpriteFrame | null,
+    fallbackColor: Color,
+    y: number
+  ) {
+    const button = this.getOrCreateNode(parent, name)
+    button.setPosition(18, y, 0)
+    button.getComponent(UITransform)?.setContentSize(GAME_OVER_BUTTON_WIDTH, GAME_OVER_BUTTON_HEIGHT)
+
+    const sprite = button.getComponent(Sprite) ?? button.addComponent(Sprite)
+    sprite.spriteFrame = spriteFrame
+    sprite.sizeMode = Sprite.SizeMode.CUSTOM
+    button.getComponent(UITransform)?.setContentSize(GAME_OVER_BUTTON_WIDTH, GAME_OVER_BUTTON_HEIGHT)
+
+    const graphics = button.getComponent(Graphics) ?? button.addComponent(Graphics)
+    graphics.enabled = !spriteFrame
+    if (!spriteFrame) {
+      this.drawButtonFallback(button, fallbackColor)
     }
 
-    button.setPosition(x, -166, 0)
-    this.drawButton(button, color)
     this.ensureButtonLabel(button, text)
     return button
   }
 
   private ensureButtonLabel(button: Node, text: string) {
-    let labelNode = button.getChildByName('Label')
-    if (!labelNode) {
-      labelNode = new Node('Label')
-      labelNode.setParent(button)
-      labelNode.addComponent(UITransform).setContentSize(180, 62)
-    }
-
-    labelNode.setPosition(0, 0, 0)
+    const labelNode = this.getOrCreateNode(button, 'Label')
+    labelNode.setPosition(0, 4, 0)
+    labelNode.getComponent(UITransform)?.setContentSize(320, 70)
     const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label)
     label.string = text
-    label.fontSize = 30
-    label.lineHeight = 36
+    label.fontSize = 32
+    label.lineHeight = 38
     label.horizontalAlign = Label.HorizontalAlign.CENTER
     label.verticalAlign = Label.VerticalAlign.CENTER
     label.color = new Color(255, 255, 255, 255)
     label.isBold = true
+    const outline = labelNode.getComponent(LabelOutline) ?? labelNode.addComponent(LabelOutline)
+    outline.color = new Color(33, 120, 136, 150)
+    outline.width = 2
   }
 
   private drawMask(width: number, height: number) {
@@ -235,49 +322,83 @@ export class GameOverOverlayController extends Component {
     maskTransform.setContentSize(width, height)
     const graphics = this.maskNode.getComponent(Graphics) ?? this.maskNode.addComponent(Graphics)
     graphics.clear()
-    graphics.fillColor = new Color(0, 0, 0, 168)
+    // 使用深蓝灰遮罩衔接冬季背景，避免纯黑色让结算态显得突兀。
+    graphics.fillColor = new Color(19, 42, 62, 158)
     graphics.rect(-width * 0.5, -height * 0.5, width, height)
     graphics.fill()
   }
 
-  private drawPanel() {
-    if (!this.panelNode) {
+  private drawPanelFallback() {
+    if (!this.panelNode || this.popupSpriteFrame) {
       return
     }
 
-    const transform = this.panelNode.getComponent(UITransform) ?? this.panelNode.addComponent(UITransform)
-    transform.setContentSize(GAME_OVER_PANEL_WIDTH, GAME_OVER_PANEL_HEIGHT)
     const graphics = this.panelNode.getComponent(Graphics) ?? this.panelNode.addComponent(Graphics)
     graphics.clear()
-    graphics.fillColor = new Color(49, 123, 136, 68)
-    graphics.roundRect(-GAME_OVER_PANEL_WIDTH * 0.5 + 8, -GAME_OVER_PANEL_HEIGHT * 0.5 - 10, GAME_OVER_PANEL_WIDTH - 16, GAME_OVER_PANEL_HEIGHT, 34)
+    graphics.fillColor = new Color(225, 109, 38, 255)
+    graphics.roundRect(
+      -GAME_OVER_PANEL_WIDTH * 0.5,
+      -GAME_OVER_PANEL_HEIGHT * 0.5,
+      GAME_OVER_PANEL_WIDTH,
+      GAME_OVER_PANEL_HEIGHT,
+      44
+    )
     graphics.fill()
-    graphics.fillColor = new Color(255, 255, 255, 248)
-    graphics.roundRect(-GAME_OVER_PANEL_WIDTH * 0.5, -GAME_OVER_PANEL_HEIGHT * 0.5, GAME_OVER_PANEL_WIDTH, GAME_OVER_PANEL_HEIGHT, 34)
+    graphics.fillColor = new Color(255, 241, 216, 255)
+    graphics.roundRect(
+      -GAME_OVER_PANEL_WIDTH * 0.5 + 34,
+      -GAME_OVER_PANEL_HEIGHT * 0.5 + 34,
+      GAME_OVER_PANEL_WIDTH - 68,
+      GAME_OVER_PANEL_HEIGHT - 92,
+      34
+    )
     graphics.fill()
-    graphics.lineWidth = 4
-    graphics.strokeColor = new Color(205, 237, 240, 210)
-    graphics.roundRect(-GAME_OVER_PANEL_WIDTH * 0.5 + 4, -GAME_OVER_PANEL_HEIGHT * 0.5 + 4, GAME_OVER_PANEL_WIDTH - 8, GAME_OVER_PANEL_HEIGHT - 8, 30)
-    graphics.stroke()
+    graphics.fillColor = new Color(255, 62, 104, 255)
+    graphics.roundRect(-226, 228, 470, 105, 28)
+    graphics.fill()
   }
 
-  private drawButton(button: Node, color: Color) {
-    const transform = button.getComponent(UITransform) ?? button.addComponent(UITransform)
-    transform.setContentSize(196, 86)
-    const graphics = button.getComponent(Graphics) ?? button.addComponent(Graphics)
+  private drawHighestTile(tile: Node) {
+    const graphics = tile.getComponent(Graphics) ?? tile.addComponent(Graphics)
     graphics.clear()
-    graphics.fillColor = new Color(color.r, color.g, color.b, 255)
-    graphics.roundRect(-98, -43, 196, 86, 28)
+    graphics.fillColor = new Color(202, 122, 40, 92)
+    graphics.roundRect(-56, -56, 112, 104, 22)
+    graphics.fill()
+    graphics.fillColor = new Color(255, 174, 70, 255)
+    graphics.roundRect(-60, -48, 120, 104, 22)
     graphics.fill()
     graphics.fillColor = new Color(255, 255, 255, 42)
-    graphics.roundRect(-88, 4, 176, 28, 14)
+    graphics.roundRect(-50, 18, 100, 25, 12)
     graphics.fill()
+  }
+
+  private drawButtonFallback(button: Node, color: Color) {
+    const graphics = button.getComponent(Graphics) ?? button.addComponent(Graphics)
+    graphics.clear()
+    graphics.fillColor = color
+    graphics.roundRect(
+      -GAME_OVER_BUTTON_WIDTH * 0.5,
+      -GAME_OVER_BUTTON_HEIGHT * 0.5,
+      GAME_OVER_BUTTON_WIDTH,
+      GAME_OVER_BUTTON_HEIGHT,
+      46
+    )
+    graphics.fill()
+    graphics.lineWidth = 7
+    graphics.strokeColor = new Color(255, 255, 255, 245)
+    graphics.roundRect(
+      -GAME_OVER_BUTTON_WIDTH * 0.5 + 5,
+      -GAME_OVER_BUTTON_HEIGHT * 0.5 + 5,
+      GAME_OVER_BUTTON_WIDTH - 10,
+      GAME_OVER_BUTTON_HEIGHT - 10,
+      41
+    )
+    graphics.stroke()
   }
 
   private bindTouchEvents() {
     this.bindSwallowNode(this.maskNode)
     this.bindSwallowNode(this.panelNode)
-
     this.bindButtonTouchEvents(this.replayButtonNode, this.onReplayButtonTap)
     this.bindButtonTouchEvents(this.shareButtonNode, this.onShareButtonTap)
   }
@@ -321,29 +442,32 @@ export class GameOverOverlayController extends Component {
   }
 
   private safeOn(node: Node | null, eventType: string, handler: (event: EventTouch) => void) {
-    if (!this.canUseNode(node)) {
-      return
+    if (this.canUseNode(node)) {
+      node.on(eventType, handler, this)
     }
-
-    node.on(eventType, handler, this)
   }
 
   private safeOff(node: Node | null, eventType: string, handler: (event: EventTouch) => void) {
-    if (!this.canUseNode(node)) {
-      return
+    if (this.canUseNode(node)) {
+      node.off(eventType, handler, this)
     }
-
-    node.off(eventType, handler, this)
   }
 
-  // setSiblingIndex 需要节点仍挂在父节点下，切场景销毁阶段必须先判断 parent。
+  private getOrCreateNode(parent: Node, name: string) {
+    let node = parent.getChildByName(name)
+    if (!node) {
+      node = new Node(name)
+      node.setParent(parent)
+      node.addComponent(UITransform)
+    }
+    return node
+  }
+
   private bringNodeToTop(node: Node | null) {
     const parent = node?.parent ?? null
-    if (!this.canUseNode(node) || !parent?.isValid) {
-      return
+    if (this.canUseNode(node) && parent?.isValid) {
+      node.setSiblingIndex(parent.children.length - 1)
     }
-
-    node.setSiblingIndex(parent.children.length - 1)
   }
 
   private stopNodeTreeTweens(node: Node | null) {
@@ -377,19 +501,20 @@ export class GameOverOverlayController extends Component {
   }
 
   private refreshScore(score: number) {
-    if (!this.scoreValueLabel) {
-      return
+    if (this.scoreValueLabel) {
+      this.scoreValueLabel.string = `${Math.max(0, Math.floor(score))}`
     }
-
-    this.scoreValueLabel.string = `${Math.max(0, Math.floor(score))}`
   }
 
   private refreshHighestValue(highestValue: number) {
-    if (!this.highestValueLabel) {
-      return
+    if (this.highestValueLabel) {
+      this.highestValueLabel.string = `${Math.max(0, Math.floor(highestValue))}`
     }
+  }
 
-    this.highestValueLabel.string = `最高合成：${Math.max(0, Math.floor(highestValue))}`
+  private getPanelScale(factor = 1) {
+    const scale = this.panelLayoutScale * factor
+    return new Vec3(scale, scale, 1)
   }
 
   private show() {
@@ -400,12 +525,13 @@ export class GameOverOverlayController extends Component {
     if (this.isVisible) {
       this.node.active = true
       this.overlayOpacity.opacity = 255
+      this.panelNode?.setScale(this.getPanelScale())
       return
     }
 
     this.isVisible = true
     this.node.active = true
-    this.panelNode?.setScale(new Vec3(0.94, 0.94, 1))
+    this.panelNode?.setScale(this.getPanelScale(0.92))
     this.overlayOpacity.opacity = 0
     if (this.panelNode) {
       Tween.stopAllByTarget(this.panelNode)
@@ -413,7 +539,9 @@ export class GameOverOverlayController extends Component {
     Tween.stopAllByTarget(this.overlayOpacity)
     tween(this.overlayOpacity).to(GAME_OVER_ANIM_DURATION, { opacity: 255 }, { easing: 'quadOut' }).start()
     if (this.panelNode) {
-      tween(this.panelNode).to(GAME_OVER_ANIM_DURATION, { scale: Vec3.ONE }, { easing: 'backOut' }).start()
+      tween(this.panelNode)
+        .to(GAME_OVER_ANIM_DURATION, { scale: this.getPanelScale() }, { easing: 'backOut' })
+        .start()
     }
   }
 
@@ -437,7 +565,7 @@ export class GameOverOverlayController extends Component {
       .call(() => {
         if (!this.isVisible) {
           this.node.active = false
-          this.panelNode?.setScale(Vec3.ONE)
+          this.panelNode?.setScale(this.getPanelScale())
         }
       })
       .start()
