@@ -140,11 +140,15 @@ export class PlayController extends Component {
   @property({ type: SpriteFrame, tooltip: 'Game over popup sprite frame' })
   gameOverPopupSpriteFrame: SpriteFrame | null = null
 
-  // 游戏结束主按钮复用项目现有绿色胶囊按钮。
+  // 游戏结束重玩入口复用项目现有 Repeat icon。
   @property({ type: SpriteFrame, tooltip: 'Game over replay button sprite frame' })
   gameOverReplayButtonSpriteFrame: SpriteFrame | null = null
 
-  // 游戏结束分享按钮复用项目现有蓝色胶囊按钮。
+  // 游戏结束回首页入口复用项目现有 Home icon。
+  @property({ type: SpriteFrame, tooltip: 'Game over home button sprite frame' })
+  gameOverHomeButtonSpriteFrame: SpriteFrame | null = null
+
+  // 游戏结束分享入口复用项目现有 Share icon。
   @property({ type: SpriteFrame, tooltip: 'Game over share button sprite frame' })
   gameOverShareButtonSpriteFrame: SpriteFrame | null = null
 
@@ -279,12 +283,14 @@ export class PlayController extends Component {
       onGameOverReplayTap: () => {
         void this.restartGame()
       },
+      onGameOverHomeTap: () => this.returnToStartPageFromGameOver(),
       onGameOverShareTap: () => this.shareGameFromGameOver(),
       coinBarPrefab: this.coinBarPrefab,
       onCoinMoreTap: () => void this.shareForCoinReward(),
       counterNumberSpriteFrames: this.counterNumberSpriteFrames,
       gameOverPopupSpriteFrame: this.gameOverPopupSpriteFrame,
       gameOverReplayButtonSpriteFrame: this.gameOverReplayButtonSpriteFrame,
+      gameOverHomeButtonSpriteFrame: this.gameOverHomeButtonSpriteFrame,
       gameOverShareButtonSpriteFrame: this.gameOverShareButtonSpriteFrame
     })
     if (ongoingSnapshot) {
@@ -2243,6 +2249,32 @@ export class PlayController extends Component {
     this.swapDragState = null
     this.resetBoard()
     // 即将离开游戏场景，不再刷新暂停 UI，避免触摸收尾时触发弹窗关闭动画和事件解绑。
+    this.scheduleOnce(() => director.loadScene(this.homeSceneName), 0)
+  }
+
+  // 结算弹窗点击回首页时，本局已经结束，因此不保存进行中快照，也不消耗体力。
+  private returnToStartPageFromGameOver() {
+    if (!this.hasStartedSession) {
+      return
+    }
+
+    OngoingGameSession.finishGame()
+    // 回首页只保留本次切场景任务，取消之前用于动画等待的 scheduleOnce。
+    this.unscheduleAllCallbacks()
+    this.clearBoardPieces()
+    this.transientFx.clear()
+    this.hasStartedSession = false
+    this.isGameOver = false
+    this.isFastDropping = false
+    this.isResolving = false
+    this.isPaused = false
+    this.isSwapSkillActive = false
+    this.isHammerSkillActive = false
+    this.isBombSkillActive = false
+    this.swapDragState = null
+    this.currentPiece = null
+    this.resetBoard()
+    // 没体力无法重开时，首页 icon 是结算弹窗的兜底出口。
     this.scheduleOnce(() => director.loadScene(this.homeSceneName), 0)
   }
 

@@ -168,6 +168,8 @@ export class PlayUIController extends Component {
   private gameOverReplayHandler: (() => void) | null = null
   // 结算弹窗分享按钮只通知逻辑层做平台分享适配。
   private gameOverShareHandler: (() => void) | null = null
+  // 结算弹窗首页 icon 只通知逻辑层切回首页，不在 UI 层直接改对局状态。
+  private gameOverHomeHandler: (() => void) | null = null
   // 缓存第一个技能节点，和其他技能共用选中态与取消提示。
   private bombSkillNode: Node | null = null
   // 缓存第三个技能节点，便于刷新选中态和销毁时解绑事件。
@@ -206,12 +208,14 @@ export class PlayUIController extends Component {
     onHammerSkillTap: () => void
     onSwapSkillTap: () => void
     onGameOverReplayTap: () => void
+    onGameOverHomeTap: () => void
     onGameOverShareTap: () => void
     coinBarPrefab?: Prefab | null
     onCoinMoreTap?: () => void
     counterNumberSpriteFrames?: SpriteFrame[]
     gameOverPopupSpriteFrame?: SpriteFrame | null
     gameOverReplayButtonSpriteFrame?: SpriteFrame | null
+    gameOverHomeButtonSpriteFrame?: SpriteFrame | null
     gameOverShareButtonSpriteFrame?: SpriteFrame | null
   }) {
     this.boardwidth = options.boardwidth
@@ -225,6 +229,7 @@ export class PlayUIController extends Component {
     this.hammerSkillHandler = options.onHammerSkillTap
     this.swapSkillHandler = options.onSwapSkillTap
     this.gameOverReplayHandler = options.onGameOverReplayTap
+    this.gameOverHomeHandler = options.onGameOverHomeTap
     this.gameOverShareHandler = options.onGameOverShareTap
     this.coinMoreHandler = options.onCoinMoreTap ?? null
     this.counterNumberSpriteFrames = options.counterNumberSpriteFrames ?? []
@@ -241,6 +246,7 @@ export class PlayUIController extends Component {
     this.ensureGameOverOverlay(
       options.gameOverPopupSpriteFrame ?? null,
       options.gameOverReplayButtonSpriteFrame ?? null,
+      options.gameOverHomeButtonSpriteFrame ?? null,
       options.gameOverShareButtonSpriteFrame ?? null
     )
     this.configureControlBar()
@@ -608,6 +614,7 @@ export class PlayUIController extends Component {
   private ensureGameOverOverlay(
     popupSpriteFrame: SpriteFrame | null,
     replayButtonSpriteFrame: SpriteFrame | null,
+    homeButtonSpriteFrame: SpriteFrame | null,
     shareButtonSpriteFrame: SpriteFrame | null
   ) {
     let overlay = this.node.getChildByName('GameOverOverlay')
@@ -622,9 +629,11 @@ export class PlayUIController extends Component {
     this.gameOverOverlayController.setup({
       hostNode: this.node,
       replayHandler: this.gameOverReplayHandler,
+      homeHandler: this.gameOverHomeHandler,
       shareHandler: this.gameOverShareHandler,
       popupSpriteFrame,
       replayButtonSpriteFrame,
+      homeButtonSpriteFrame,
       shareButtonSpriteFrame
     })
   }

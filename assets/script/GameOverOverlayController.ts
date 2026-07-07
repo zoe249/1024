@@ -20,20 +20,32 @@ const { ccclass } = _decorator
 
 // 结算弹窗使用短促的缩放与淡入动画，避免打断游戏结束反馈。
 const GAME_OVER_ANIM_DURATION = 0.18
-// 面板尺寸与项目现有 Popup 素材比例接近，同时为纵向信息和双按钮留足空间。
+// 面板尺寸与项目现有 Popup 素材比例接近，同时为纵向信息和 icon 操作区留足空间。
 const GAME_OVER_PANEL_WIDTH = 610
 const GAME_OVER_PANEL_HEIGHT = 790
 const GAME_OVER_PANEL_EDGE_INSET = 32
 const GAME_OVER_PANEL_VERTICAL_INSET = 64
-const GAME_OVER_BUTTON_WIDTH = 350
-const GAME_OVER_BUTTON_HEIGHT = 112
+const GAME_OVER_ACTION_CENTER_X = 18
+const GAME_OVER_ACTION_CENTER_Y = -232
+const GAME_OVER_ACTION_SPACING = 116
+const GAME_OVER_ICON_SIZE = 72
+const GAME_OVER_HOME_ICON_SIZE = 80
+const GAME_OVER_ICON_HIT_SIZE = 104
+const GAME_OVER_ICON_LABEL_Y = -60
+// Modal 图标原图是 208x214，显式按原图缩放可以避开 Sprite 自身 raw 尺寸覆盖 UITransform 的情况。
+const GAME_OVER_ICON_SOURCE_WIDTH = 208
+const GAME_OVER_ICON_SOURCE_HEIGHT = 214
+
+type GameOverIconKind = 'replay' | 'home' | 'share'
 
 type GameOverOverlayOptions = {
   hostNode: Node
   replayHandler: (() => void) | null
   shareHandler: (() => void) | null
+  homeHandler: (() => void) | null
   popupSpriteFrame?: SpriteFrame | null
   replayButtonSpriteFrame?: SpriteFrame | null
+  homeButtonSpriteFrame?: SpriteFrame | null
   shareButtonSpriteFrame?: SpriteFrame | null
 }
 
@@ -46,13 +58,16 @@ export class GameOverOverlayController extends Component {
   private scoreValueLabel: Label | null = null
   private highestValueLabel: Label | null = null
   private replayButtonNode: Node | null = null
+  private homeButtonNode: Node | null = null
   private shareButtonNode: Node | null = null
   private overlayOpacity: UIOpacity | null = null
   private isVisible = false
   private replayHandler: (() => void) | null = null
   private shareHandler: (() => void) | null = null
+  private homeHandler: (() => void) | null = null
   private popupSpriteFrame: SpriteFrame | null = null
   private replayButtonSpriteFrame: SpriteFrame | null = null
+  private homeButtonSpriteFrame: SpriteFrame | null = null
   private shareButtonSpriteFrame: SpriteFrame | null = null
   private panelLayoutScale = 1
 
@@ -60,8 +75,10 @@ export class GameOverOverlayController extends Component {
     this.hostNode = options.hostNode
     this.replayHandler = options.replayHandler
     this.shareHandler = options.shareHandler
+    this.homeHandler = options.homeHandler
     this.popupSpriteFrame = options.popupSpriteFrame ?? null
     this.replayButtonSpriteFrame = options.replayButtonSpriteFrame ?? null
+    this.homeButtonSpriteFrame = options.homeButtonSpriteFrame ?? null
     this.shareButtonSpriteFrame = options.shareButtonSpriteFrame ?? null
     this.ensureOverlayStructure()
     this.bindTouchEvents()
@@ -111,6 +128,7 @@ export class GameOverOverlayController extends Component {
     this.safeOff(this.panelNode, Node.EventType.TOUCH_END, this.swallowTouch)
     this.safeOff(this.panelNode, Node.EventType.TOUCH_CANCEL, this.swallowTouch)
     this.unbindButtonTouchEvents(this.replayButtonNode, this.onReplayButtonTap)
+    this.unbindButtonTouchEvents(this.homeButtonNode, this.onHomeButtonTap)
     this.unbindButtonTouchEvents(this.shareButtonNode, this.onShareButtonTap)
     this.stopNodeTreeTweens(this.node)
   }
@@ -128,21 +146,35 @@ export class GameOverOverlayController extends Component {
     this.configurePanelSprite(this.panelNode)
 
     this.ensureLabels(this.panelNode)
-    this.replayButtonNode = this.ensureActionButton(
+    this.replayButtonNode = this.ensureIconAction(
       this.panelNode,
       'ReplayButton',
-      '再来一局',
+      '再来',
       this.replayButtonSpriteFrame,
-      new Color(18, 217, 117, 255),
-      -150
+      'replay',
+      GAME_OVER_ACTION_CENTER_X - GAME_OVER_ACTION_SPACING,
+      GAME_OVER_ACTION_CENTER_Y,
+      GAME_OVER_ICON_SIZE
     )
-    this.shareButtonNode = this.ensureActionButton(
+    this.homeButtonNode = this.ensureIconAction(
+      this.panelNode,
+      'HomeButton',
+      '首页',
+      this.homeButtonSpriteFrame,
+      'home',
+      GAME_OVER_ACTION_CENTER_X,
+      GAME_OVER_ACTION_CENTER_Y + 10,
+      GAME_OVER_HOME_ICON_SIZE
+    )
+    this.shareButtonNode = this.ensureIconAction(
       this.panelNode,
       'ShareButton',
-      '分享成绩',
+      '分享',
       this.shareButtonSpriteFrame,
-      new Color(16, 188, 232, 255),
-      -275
+      'share',
+      GAME_OVER_ACTION_CENTER_X + GAME_OVER_ACTION_SPACING,
+      GAME_OVER_ACTION_CENTER_Y,
+      GAME_OVER_ICON_SIZE
     )
   }
 
@@ -269,48 +301,108 @@ export class GameOverOverlayController extends Component {
     return label
   }
 
-  private ensureActionButton(
+  private ensureIconAction(
     parent: Node,
     name: string,
     text: string,
     spriteFrame: SpriteFrame | null,
-    fallbackColor: Color,
-    y: number
+    iconKind: GameOverIconKind,
+    x: number,
+    y: number,
+    iconSize: number
   ) {
     const button = this.getOrCreateNode(parent, name)
-    button.setPosition(18, y, 0)
-    button.getComponent(UITransform)?.setContentSize(GAME_OVER_BUTTON_WIDTH, GAME_OVER_BUTTON_HEIGHT)
-
-    const sprite = button.getComponent(Sprite) ?? button.addComponent(Sprite)
-    sprite.spriteFrame = spriteFrame
-    sprite.sizeMode = Sprite.SizeMode.CUSTOM
-    button.getComponent(UITransform)?.setContentSize(GAME_OVER_BUTTON_WIDTH, GAME_OVER_BUTTON_HEIGHT)
-
-    const graphics = button.getComponent(Graphics) ?? button.addComponent(Graphics)
-    graphics.enabled = !spriteFrame
-    if (!spriteFrame) {
-      this.drawButtonFallback(button, fallbackColor)
+    button.setPosition(x, y, 0)
+    // icon 视觉较轻，但触摸热区保持足够大，避免小屏误点。
+    button.getComponent(UITransform)?.setContentSize(GAME_OVER_ICON_HIT_SIZE, GAME_OVER_ICON_HIT_SIZE + 34)
+    // 兼容旧版大按钮节点热更新复用：父节点只作为点击热区，不再渲染旧 Sprite/Graphics。
+    const legacySprite = button.getComponent(Sprite)
+    if (legacySprite) {
+      legacySprite.enabled = false
+    }
+    const legacyGraphics = button.getComponent(Graphics)
+    if (legacyGraphics) {
+      legacyGraphics.clear()
+      legacyGraphics.enabled = false
     }
 
-    this.ensureButtonLabel(button, text)
+    const iconNode = this.getOrCreateNode(button, 'Icon')
+    iconNode.setPosition(0, 8, 0)
+    const iconTransform = iconNode.getComponent(UITransform) ?? iconNode.addComponent(UITransform)
+    const sprite = iconNode.getComponent(Sprite) ?? iconNode.addComponent(Sprite)
+    sprite.spriteFrame = spriteFrame
+    sprite.enabled = !!spriteFrame
+    const graphics = iconNode.getComponent(Graphics) ?? iconNode.addComponent(Graphics)
+    graphics.clear()
+    if (spriteFrame) {
+      iconTransform.setContentSize(GAME_OVER_ICON_SOURCE_WIDTH, GAME_OVER_ICON_SOURCE_HEIGHT)
+      sprite.sizeMode = Sprite.SizeMode.RAW
+      iconNode.setScale(this.getIconImageScale(iconSize))
+      graphics.enabled = false
+    } else {
+      iconTransform.setContentSize(iconSize, iconSize)
+      iconNode.setScale(Vec3.ONE)
+      graphics.enabled = true
+      this.drawIconFallback(iconNode, iconKind, iconSize)
+    }
+
+    const fallbackIcon = iconNode.getChildByName('FallbackIcon')
+    if (fallbackIcon) {
+      fallbackIcon.active = !spriteFrame
+    }
+
+    this.ensureIconLabel(button, text)
     return button
   }
 
-  private ensureButtonLabel(button: Node, text: string) {
+  private getIconImageScale(iconSize: number) {
+    const scale = iconSize / GAME_OVER_ICON_SOURCE_WIDTH
+    return new Vec3(scale, scale, 1)
+  }
+
+  private ensureIconLabel(button: Node, text: string) {
     const labelNode = this.getOrCreateNode(button, 'Label')
-    labelNode.setPosition(0, 4, 0)
-    labelNode.getComponent(UITransform)?.setContentSize(320, 70)
+    labelNode.setPosition(0, GAME_OVER_ICON_LABEL_Y, 0)
+    labelNode.getComponent(UITransform)?.setContentSize(110, 36)
     const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label)
     label.string = text
-    label.fontSize = 32
-    label.lineHeight = 38
+    label.fontSize = 21
+    label.lineHeight = 28
+    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    label.verticalAlign = Label.VerticalAlign.CENTER
+    label.color = new Color(93, 152, 162, 255)
+    label.isBold = true
+    const outline = labelNode.getComponent(LabelOutline) ?? labelNode.addComponent(LabelOutline)
+    outline.color = new Color(255, 255, 255, 150)
+    outline.width = 1
+  }
+
+  private drawIconFallback(iconNode: Node, iconKind: GameOverIconKind, iconSize: number) {
+    const graphics = iconNode.getComponent(Graphics) ?? iconNode.addComponent(Graphics)
+    graphics.clear()
+    const halfSize = iconSize * 0.5
+    const innerSize = iconSize * 0.78
+    const innerHalf = innerSize * 0.5
+    graphics.fillColor = new Color(249, 253, 255, 255)
+    graphics.roundRect(-halfSize, -halfSize, iconSize, iconSize, iconSize * 0.34)
+    graphics.fill()
+    graphics.fillColor = new Color(255, 59, 107, 255)
+    graphics.roundRect(-innerHalf, -innerHalf, innerSize, innerSize, innerSize * 0.33)
+    graphics.fill()
+
+    // 缺少图片引用时用简化符号兜底；正式场景会绑定 Modal 下的三枚 icon。
+    const iconText = iconKind === 'replay' ? '↻' : iconKind === 'home' ? '⌂' : '↗'
+    const fallbackLabel = this.getOrCreateNode(iconNode, 'FallbackIcon')
+    fallbackLabel.setPosition(0, iconKind === 'home' ? 0 : 1, 0)
+    fallbackLabel.getComponent(UITransform)?.setContentSize(innerSize, innerSize)
+    const label = fallbackLabel.getComponent(Label) ?? fallbackLabel.addComponent(Label)
+    label.string = iconText
+    label.fontSize = iconKind === 'home' ? 55 : 58
+    label.lineHeight = 62
     label.horizontalAlign = Label.HorizontalAlign.CENTER
     label.verticalAlign = Label.VerticalAlign.CENTER
     label.color = new Color(255, 255, 255, 255)
     label.isBold = true
-    const outline = labelNode.getComponent(LabelOutline) ?? labelNode.addComponent(LabelOutline)
-    outline.color = new Color(33, 120, 136, 150)
-    outline.width = 2
   }
 
   private drawMask(width: number, height: number) {
@@ -372,34 +464,11 @@ export class GameOverOverlayController extends Component {
     graphics.fill()
   }
 
-  private drawButtonFallback(button: Node, color: Color) {
-    const graphics = button.getComponent(Graphics) ?? button.addComponent(Graphics)
-    graphics.clear()
-    graphics.fillColor = color
-    graphics.roundRect(
-      -GAME_OVER_BUTTON_WIDTH * 0.5,
-      -GAME_OVER_BUTTON_HEIGHT * 0.5,
-      GAME_OVER_BUTTON_WIDTH,
-      GAME_OVER_BUTTON_HEIGHT,
-      46
-    )
-    graphics.fill()
-    graphics.lineWidth = 7
-    graphics.strokeColor = new Color(255, 255, 255, 245)
-    graphics.roundRect(
-      -GAME_OVER_BUTTON_WIDTH * 0.5 + 5,
-      -GAME_OVER_BUTTON_HEIGHT * 0.5 + 5,
-      GAME_OVER_BUTTON_WIDTH - 10,
-      GAME_OVER_BUTTON_HEIGHT - 10,
-      41
-    )
-    graphics.stroke()
-  }
-
   private bindTouchEvents() {
     this.bindSwallowNode(this.maskNode)
     this.bindSwallowNode(this.panelNode)
     this.bindButtonTouchEvents(this.replayButtonNode, this.onReplayButtonTap)
+    this.bindButtonTouchEvents(this.homeButtonNode, this.onHomeButtonTap)
     this.bindButtonTouchEvents(this.shareButtonNode, this.onShareButtonTap)
   }
 
@@ -493,6 +562,11 @@ export class GameOverOverlayController extends Component {
   private onReplayButtonTap(event: EventTouch) {
     event.propagationStopped = true
     this.replayHandler?.()
+  }
+
+  private onHomeButtonTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.homeHandler?.()
   }
 
   private onShareButtonTap(event: EventTouch) {
