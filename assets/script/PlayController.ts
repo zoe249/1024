@@ -40,6 +40,7 @@ export type OngoingGameSnapshot = {
   currentColumn: number
   bonusScore: number
   highestPieceValue: number
+  usedSkillsThisGame: Record<SkillKind, boolean>
 }
 
 /**
@@ -94,6 +95,12 @@ type SwapDragState = {
 const MAX_ACTIVE_FX = 18
 // 连续消除音效之间保留最小听感间隔，避免连锁时音效糊成一片。
 const MERGE_SOUND_MIN_INTERVAL = 0.46
+// 单局金币结算参数集中在玩法层，方便后续按关卡、活动或难度做倍率扩展。
+const GAME_OVER_SCORE_COIN_DIVISOR = 120
+const GAME_OVER_HIGHEST_BASE_POWER = 7
+const GAME_OVER_HIGHEST_POWER_COIN = 8
+const GAME_OVER_MIN_COIN_REWARD = 5
+const GAME_OVER_MAX_COIN_REWARD = 300
 
 @ccclass('PlaySoundEffectClips')
 export class PlaySoundEffectClips {
@@ -254,6 +261,10 @@ export class PlayController extends Component {
   private readonly shareAdapter = new GameShareAdapter()
   // 记录最近一次合并音效时间，用来给连续消除留出可感知的停顿。
   private lastMergeSoundTimeMs = -Infinity
+  // 本局结束时发放的金币数，只用于结算弹窗展示，重开或回首页后清零。
+  private gameOverCoinReward = 0
+  // 每局每种技能最多成功使用一次；库存可以大于 1，但本局按钮会在使用后置灰。
+  private usedSkillsThisGame: Record<SkillKind, boolean> = this.createEmptySkillUsageState()
   // 生命周期入口：先准备棋盘数据，再把界面初始化交给独立的 UI 组件。
   onLoad() {
     const ongoingSnapshot = OngoingGameSession.consumeSnapshot()
@@ -530,6 +541,8 @@ export class PlayController extends Component {
     this.board = this.boardModel.createEmptyBoard(this.boardheight, this.boardwidth)
     // 重开或首次进入时，分数统计要和棋盘一起清零。
     this.scoreManager.reset()
+    this.gameOverCoinReward = 0
+    this.usedSkillsThisGame = this.createEmptySkillUsageState()
     this.currentColumn = Math.floor(this.boardwidth / 2)
     this.lastMergeSoundTimeMs = -Infinity
   }
@@ -542,7 +555,8 @@ export class PlayController extends Component {
       currentPieceY: this.currentPiece?.node.position.y ?? null,
       currentColumn: this.currentColumn,
       bonusScore: this.scoreManager.getBonusScore(),
-      highestPieceValue: this.scoreManager.getHighestPieceValue()
+      highestPieceValue: this.scoreManager.getHighestPieceValue(),
+      usedSkillsThisGame: { ...this.usedSkillsThisGame }
     }
   }
 
@@ -577,6 +591,11 @@ export class PlayController extends Component {
     }
 
     this.scoreManager.restore(snapshot.bonusScore, snapshot.highestPieceValue)
+    this.usedSkillsThisGame = {
+      bomb: !!snapshot.usedSkillsThisGame?.bomb,
+      hammer: !!snapshot.usedSkillsThisGame?.hammer,
+      swap: !!snapshot.usedSkillsThisGame?.swap
+    }
     const requestedColumn = Math.max(0, Math.min(this.boardwidth - 1, Math.floor(snapshot.currentColumn)))
     const availableColumn = this.getNearestAvailableColumn(requestedColumn)
     if (snapshot.currentPieceValue !== null && availableColumn >= 0) {
@@ -940,7 +959,9 @@ export class PlayController extends Component {
       return
     }
 
-    this.economy.consumeSkill('swap')
+    if (this.economy.consumeSkill('swap')) {
+      this.markSkillUsedThisGame('swap')
+    }
     this.playSoundEffect(this.soundEffectClips.swapSkillAudioClip)
     this.refreshUiState()
     await this.settleBoard(sourcePiece)
@@ -1069,7 +1090,9 @@ export class PlayController extends Component {
   private async executeHammerSkill(target: CellPosition, piece: PieceController) {
     this.isResolving = true
     this.board[target.row][target.column] = null
-    this.economy.consumeSkill('hammer')
+    if (this.economy.consumeSkill('hammer')) {
+      this.markSkillUsedThisGame('hammer')
+    }
     this.playSoundEffect(this.soundEffectClips.hammerSkillAudioClip)
     this.refreshUiState()
 
@@ -1118,7 +1141,9 @@ export class PlayController extends Component {
     }
 
     this.isResolving = true
-    this.economy.consumeSkill('bomb')
+    if (this.economy.consumeSkill('bomb')) {
+      this.markSkillUsedThisGame('bomb')
+    }
     this.playSoundEffect(this.soundEffectClips.bombSkillAudioClip)
     this.refreshUiState()
     const centerPosition = this.getCellPosition(center.row, center.column)
@@ -2189,12 +2214,14 @@ export class PlayController extends Component {
       currentValue: this.currentPiece?.getValue() ?? null,
       score: boardScore + this.scoreManager.getBonusScore(),
       highestValue: this.scoreManager.getHighestPieceValue(),
+      gameOverCoinReward: this.gameOverCoinReward,
       isGameOver: this.isGameOver,
       isPaused: this.isPaused,
       isResolving: this.isResolving,
       activeSkill: this.isBombSkillActive ? 'bomb' : this.isHammerSkillActive ? 'hammer' : this.isSwapSkillActive ? 'swap' : null,
       coins: economy.coins,
-      skillCounts: economy.skills
+      skillCounts: economy.skills,
+      skillUsed: { ...this.usedSkillsThisGame }
     }
   }
 
@@ -2405,13 +2432,35 @@ export class PlayController extends Component {
 
   // 技能统一在开局前购买；对局中库存不足时只提示，不临时扣金币打断玩法节奏。
   private ensureSkillAvailable(skill: SkillKind) {
+    if (this.usedSkillsThisGame[skill]) {
+      const skillName = this.getSkillDisplayName(skill)
+      this.uiController?.showTransientMessage(`${skillName}本局已使用过`)
+      return false
+    }
+
     if (this.economy.hasSkill(skill)) {
       return true
     }
 
-    const skillName = skill === 'bomb' ? '炸弹' : skill === 'hammer' ? '锤子' : '交换'
+    const skillName = this.getSkillDisplayName(skill)
     this.uiController?.showTransientMessage(`${skillName}数量不足，请在下一局开始前购买`)
     return false
+  }
+
+  private markSkillUsedThisGame(skill: SkillKind) {
+    this.usedSkillsThisGame[skill] = true
+  }
+
+  private createEmptySkillUsageState(): Record<SkillKind, boolean> {
+    return {
+      bomb: false,
+      hammer: false,
+      swap: false
+    }
+  }
+
+  private getSkillDisplayName(skill: SkillKind) {
+    return skill === 'bomb' ? '炸弹' : skill === 'hammer' ? '锤子' : '交换'
   }
 
   // 进入游戏结束流程
@@ -2422,6 +2471,10 @@ export class PlayController extends Component {
 
     this.isGameOver = true
     OngoingGameSession.finishGame()
+    const finalScore = this.scoreManager.getTotalScore(this.board)
+    const highestValue = this.scoreManager.getHighestPieceValue()
+    this.gameOverCoinReward = this.calculateGameOverCoinReward(finalScore, highestValue)
+    this.economy.addCoins(this.gameOverCoinReward)
     this.isSwapSkillActive = false
     this.isHammerSkillActive = false
     this.isBombSkillActive = false
@@ -2431,6 +2484,27 @@ export class PlayController extends Component {
     this.audioManager?.pauseBackgroundMusic()
     this.playSoundEffect(this.soundEffectClips.gameOverAudioClip)
     this.refreshUiState()
+  }
+
+  /**
+   * 计算单局结束金币。
+   *
+   * 分数提供稳定基础产出；最高合成数字提供成长目标奖励；
+   * 里程碑奖励让 512/1024/2048 这类关键节点有明显正反馈。
+   */
+  private calculateGameOverCoinReward(score: number, highestValue: number) {
+    const safeScore = Math.max(0, Math.floor(score))
+    const safeHighest = Math.max(0, Math.floor(highestValue))
+    const scoreCoins = Math.floor(safeScore / GAME_OVER_SCORE_COIN_DIVISOR)
+    const highestPower = safeHighest > 0 ? Math.floor(Math.log2(safeHighest)) : 0
+    const highestCoins = Math.max(0, highestPower - GAME_OVER_HIGHEST_BASE_POWER) * GAME_OVER_HIGHEST_POWER_COIN
+    const milestoneCoins =
+      safeHighest >= 2048 ? 90 :
+        safeHighest >= 1024 ? 40 :
+          safeHighest >= 512 ? 18 :
+            0
+    const rawReward = scoreCoins + highestCoins + milestoneCoins
+    return Math.min(GAME_OVER_MAX_COIN_REWARD, Math.max(GAME_OVER_MIN_COIN_REWARD, rawReward))
   }
   // 重新开始游戏并清空棋盘
   private async restartGame() {

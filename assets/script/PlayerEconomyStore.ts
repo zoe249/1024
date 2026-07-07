@@ -20,7 +20,7 @@ export type SkillPurchaseResult = {
   purchased: boolean
   price: number
   balance: number
-  reason: 'purchased' | 'insufficient-coins'
+  reason: 'purchased' | 'insufficient-coins' | 'max-reached'
 }
 
 // 所有经济数值集中在这里，策划调参时不需要进入首页或玩法流程代码。
@@ -29,6 +29,7 @@ export const ECONOMY_CONFIG = {
   maxEnergy: 4,
   initialCoins: 99999,
   initialSkillCount: 1,
+  maxSkillCount: 9,
   dailyLoginCoins: 500,
   shareCoins: 200,
   shareEnergy: 1,
@@ -110,6 +111,24 @@ export class PlayerEconomyStore {
     return { claimed: true, amount, reason: 'claimed' }
   }
 
+  // 单局结算金币由玩法层计算，这里只负责安全入账和持久化。
+  addCoins(amount: number) {
+    const coins = Math.max(0, Math.floor(amount))
+    if (coins <= 0) {
+      return {
+        added: 0,
+        balance: this.state.coins
+      }
+    }
+
+    this.state.coins += coins
+    this.saveState()
+    return {
+      added: coins,
+      balance: this.state.coins
+    }
+  }
+
   // 开始一局和重玩都必须先成功扣除体力。
   tryConsumeEnergy(amount = ECONOMY_CONFIG.gameEnergyCost) {
     const cost = Math.max(0, Math.floor(amount))
@@ -138,6 +157,15 @@ export class PlayerEconomyStore {
 
   purchaseSkill(skill: SkillKind): SkillPurchaseResult {
     const price = ECONOMY_CONFIG.skillPrices[skill]
+    if (this.state.skills[skill] >= ECONOMY_CONFIG.maxSkillCount) {
+      return {
+        purchased: false,
+        price,
+        balance: this.state.coins,
+        reason: 'max-reached'
+      }
+    }
+
     if (this.state.coins < price) {
       return {
         purchased: false,
@@ -189,9 +217,9 @@ export class PlayerEconomyStore {
         maxEnergy,
         coins: Math.max(0, Math.floor(parsed.coins ?? fallback.coins)),
         skills: {
-          bomb: Math.max(0, Math.floor(parsed.skills?.bomb ?? fallback.skills.bomb)),
-          hammer: Math.max(0, Math.floor(parsed.skills?.hammer ?? fallback.skills.hammer)),
-          swap: Math.max(0, Math.floor(parsed.skills?.swap ?? fallback.skills.swap))
+          bomb: this.clampSkillCount(parsed.skills?.bomb ?? fallback.skills.bomb),
+          hammer: this.clampSkillCount(parsed.skills?.hammer ?? fallback.skills.hammer),
+          swap: this.clampSkillCount(parsed.skills?.swap ?? fallback.skills.swap)
         },
         lastDailyLoginDate: parsed.lastDailyLoginDate ?? ''
       }
@@ -207,6 +235,10 @@ export class PlayerEconomyStore {
     } catch (error) {
       console.warn('玩家经济存档写入失败', error)
     }
+  }
+
+  private clampSkillCount(count: number) {
+    return Math.min(ECONOMY_CONFIG.maxSkillCount, Math.max(0, Math.floor(count)))
   }
 
   // 使用本地日期而非 UTC，保证“每日”切换符合玩家所在时区的自然日。

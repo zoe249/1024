@@ -57,6 +57,7 @@ export class GameOverOverlayController extends Component {
   private panelNode: Node | null = null
   private scoreValueLabel: Label | null = null
   private highestValueLabel: Label | null = null
+  private coinRewardLabel: Label | null = null
   private replayButtonNode: Node | null = null
   private homeButtonNode: Node | null = null
   private shareButtonNode: Node | null = null
@@ -105,9 +106,10 @@ export class GameOverOverlayController extends Component {
   }
 
   // 外部只传入纯状态，弹窗自身负责显示、隐藏和文本刷新。
-  renderState(isGameOver: boolean, score: number, highestValue: number) {
+  renderState(isGameOver: boolean, score: number, highestValue: number, coinReward: number) {
     this.refreshScore(score)
     this.refreshHighestValue(highestValue)
+    this.refreshCoinReward(coinReward)
     this.bringNodeToTop(this.node)
 
     if (isGameOver) {
@@ -268,6 +270,19 @@ export class GameOverOverlayController extends Component {
       430,
       42,
       false
+    )
+    this.coinRewardLabel = this.ensureLabel(
+      panel,
+      'CoinReward',
+      '获得金币 +0',
+      24,
+      new Color(226, 137, 34, 255),
+      new Vec3(18, -105, 0),
+      360,
+      42,
+      true,
+      new Color(255, 250, 224, 180),
+      1
     )
   }
 
@@ -583,6 +598,12 @@ export class GameOverOverlayController extends Component {
   private refreshHighestValue(highestValue: number) {
     if (this.highestValueLabel) {
       this.highestValueLabel.string = `${Math.max(0, Math.floor(highestValue))}`
+    }
+  }
+
+  private refreshCoinReward(coinReward: number) {
+    if (this.coinRewardLabel) {
+      this.coinRewardLabel.string = `获得金币 +${Math.max(0, Math.floor(coinReward))}`
     }
   }
 

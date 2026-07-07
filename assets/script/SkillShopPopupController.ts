@@ -15,7 +15,7 @@ import {
   UIOpacity,
   Vec3
 } from 'cc'
-import type { EconomySnapshot } from './PlayerEconomyStore'
+import { ECONOMY_CONFIG, type EconomySnapshot } from './PlayerEconomyStore'
 import type { SkillKind } from './SkillStock'
 
 const { ccclass, property } = _decorator
@@ -69,6 +69,12 @@ export class SkillShopPopupController extends Component {
   @property({ type: SpriteFrame, tooltip: '金币图片' })
   coinSpriteFrame: SpriteFrame | null = null
 
+  @property({ type: SpriteFrame, tooltip: '技能数量底图，复用游戏内 AmountBG' })
+  amountBgSpriteFrame: SpriteFrame | null = null
+
+  @property({ type: [SpriteFrame], tooltip: '技能数量数字贴图，按 0-9 顺序配置' })
+  counterNumberSpriteFrames: SpriteFrame[] = []
+
   private hostNode: Node | null = null
   private panelNode: Node | null = null
   private maskNode: Node | null = null
@@ -81,6 +87,14 @@ export class SkillShopPopupController extends Component {
   private startHandler: (() => void) | null = null
   private closeHandler: (() => void) | null = null
   private purchaseButtonNodes = new Map<SkillKind, Node>()
+  private purchaseButtonLabels = new Map<SkillKind, Label>()
+  private skillCountSprites = new Map<SkillKind, Sprite>()
+  private skillCountFallbackLabels = new Map<SkillKind, Label>()
+  private currentSkillCounts: Record<SkillKind, number> = {
+    bomb: 0,
+    hammer: 0,
+    swap: 0
+  }
   private purchaseTapHandlers = new Map<SkillKind, (event: EventTouch) => void>()
   private panelLayoutScale = 1
 
@@ -101,6 +115,9 @@ export class SkillShopPopupController extends Component {
     if (this.balanceLabel) {
       this.balanceLabel.string = `${snapshot.coins}`
     }
+
+    this.currentSkillCounts = { ...snapshot.skills }
+    this.refreshSkillRows(snapshot)
   }
 
   show() {
@@ -181,6 +198,9 @@ export class SkillShopPopupController extends Component {
       Tween.stopAllByTarget(this.overlayOpacity)
     }
     this.purchaseButtonNodes.clear()
+    this.purchaseButtonLabels.clear()
+    this.skillCountSprites.clear()
+    this.skillCountFallbackLabels.clear()
     this.purchaseTapHandlers.clear()
   }
 
@@ -267,7 +287,8 @@ export class SkillShopPopupController extends Component {
       rowNode.setPosition(0, row.y, 0)
       rowNode.getComponent(UITransform)?.setContentSize(540, 118)
       this.ensureSpriteNode(rowNode, 'Icon', row.icon, new Vec3(-218, 0, 0), 104, 107)
-      this.ensureLabel(rowNode, 'Name', `${row.name} × 1`, 34, new Vec3(-58, 24, 0), 230, 52, new Color(112, 52, 14, 255), true)
+      this.ensureSkillCountBadge(rowNode, row.skill)
+      this.ensureLabel(rowNode, 'Name', row.name, 34, new Vec3(-58, 24, 0), 230, 52, new Color(112, 52, 14, 255), true)
       this.ensurePrice(rowNode, row.price)
       const buyButton = this.ensureImageButton(
         rowNode,
@@ -280,10 +301,81 @@ export class SkillShopPopupController extends Component {
         30
       )
       this.purchaseButtonNodes.set(row.skill, buyButton)
+      const buyLabel = buyButton.getChildByName('Label')?.getComponent(Label) ?? null
+      if (buyLabel) {
+        this.purchaseButtonLabels.set(row.skill, buyLabel)
+      }
       if (index < rows.length - 1) {
         this.drawDivider(rowNode)
       }
     })
+  }
+
+  private ensureSkillCountBadge(rowNode: Node, skill: SkillKind) {
+    const badge = this.getOrCreateNode(rowNode, 'CountBadge')
+    badge.setPosition(-179, -36, 0)
+    badge.getComponent(UITransform)?.setContentSize(36, 36)
+
+    const amountBg = this.ensureSpriteNode(badge, 'AmountBG', this.amountBgSpriteFrame, Vec3.ZERO, 36, 36)
+    amountBg.setSiblingIndex(0)
+
+    const countNode = this.ensureSpriteNode(badge, 'Count', null, new Vec3(0, 0, 0), 14, 22)
+    countNode.setSiblingIndex(1)
+    const countSprite = countNode.getComponent(Sprite) ?? countNode.addComponent(Sprite)
+    this.skillCountSprites.set(skill, countSprite)
+
+    const fallbackLabel = this.ensureLabel(
+      badge,
+      'FallbackCount',
+      '0',
+      19,
+      Vec3.ZERO,
+      28,
+      28,
+      new Color(255, 255, 255, 255),
+      true
+    )
+    fallbackLabel.node.setSiblingIndex(2)
+    this.skillCountFallbackLabels.set(skill, fallbackLabel)
+  }
+
+  private refreshSkillRows(snapshot: EconomySnapshot) {
+    const skills: SkillKind[] = ['bomb', 'hammer', 'swap']
+    for (const skill of skills) {
+      const count = Math.min(ECONOMY_CONFIG.maxSkillCount, Math.max(0, Math.floor(snapshot.skills[skill])))
+      const numberSpriteFrame = this.getCounterNumberSpriteFrame(count)
+      const countSprite = this.skillCountSprites.get(skill) ?? null
+      const fallbackLabel = this.skillCountFallbackLabels.get(skill) ?? null
+      if (countSprite) {
+        countSprite.spriteFrame = numberSpriteFrame
+        countSprite.enabled = !!numberSpriteFrame
+      }
+      if (fallbackLabel) {
+        fallbackLabel.string = `${count}`
+        fallbackLabel.node.active = !numberSpriteFrame
+      }
+
+      const isMax = count >= ECONOMY_CONFIG.maxSkillCount
+      const button = this.purchaseButtonNodes.get(skill) ?? null
+      const buttonLabel = this.purchaseButtonLabels.get(skill) ?? null
+      if (buttonLabel) {
+        buttonLabel.string = isMax ? '已满' : '购买'
+      }
+      if (button) {
+        const opacity = button.getComponent(UIOpacity) ?? button.addComponent(UIOpacity)
+        opacity.opacity = isMax ? 150 : 255
+      }
+    }
+  }
+
+  private getCounterNumberSpriteFrame(count: number) {
+    const displayCount = Math.min(ECONOMY_CONFIG.maxSkillCount, Math.max(0, count))
+    const displayName = `${displayCount}`
+    return (
+      this.counterNumberSpriteFrames.find((spriteFrame) => spriteFrame?.name === displayName) ??
+      this.counterNumberSpriteFrames[displayCount] ??
+      null
+    )
   }
 
   private ensurePrice(rowNode: Node, price: number) {
@@ -505,7 +597,16 @@ export class SkillShopPopupController extends Component {
   private onPurchaseTap(event: EventTouch, skill: SkillKind) {
     event.propagationStopped = true
     this.restoreButtonScale(event.currentTarget as Node)
+    if (this.currentSkillCounts[skill] >= ECONOMY_CONFIG.maxSkillCount) {
+      this.showMessage(`${this.getSkillName(skill)}最多持有 ${ECONOMY_CONFIG.maxSkillCount} 个`, true)
+      return
+    }
+
     this.purchaseHandler?.(skill)
+  }
+
+  private getSkillName(skill: SkillKind) {
+    return skill === 'bomb' ? '炸弹' : skill === 'hammer' ? '锤子' : '交换'
   }
 
   private onStartTap(event: EventTouch) {

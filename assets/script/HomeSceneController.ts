@@ -149,7 +149,9 @@ export class HomeSceneController extends Component {
     this.skillShopController?.showMessage(
       result.purchased
         ? `购买成功：${skillName} +1`
-        : `金币不足，购买${skillName}需要 ${result.price} 金币`,
+        : result.reason === 'max-reached'
+          ? `${skillName}最多持有 ${ECONOMY_CONFIG.maxSkillCount} 个`
+          : `金币不足，购买${skillName}需要 ${result.price} 金币`,
       !result.purchased
     )
   }

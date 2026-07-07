@@ -29,6 +29,7 @@ export type PlayUIState = {
   currentValue: number | null
   score: number
   highestValue: number
+  gameOverCoinReward: number
   isGameOver: boolean
   isPaused: boolean
   isResolving: boolean
@@ -38,6 +39,11 @@ export type PlayUIState = {
     bomb: number
     hammer: number
     swap: number
+  }
+  skillUsed: {
+    bomb: boolean
+    hammer: boolean
+    swap: boolean
   }
 }
 
@@ -138,6 +144,7 @@ export class PlayUIController extends Component {
     currentValue: null,
     score: 0,
     highestValue: 0,
+    gameOverCoinReward: 0,
     isGameOver: false,
     isPaused: false,
     isResolving: false,
@@ -147,6 +154,11 @@ export class PlayUIController extends Component {
       bomb: 1,
       hammer: 1,
       swap: 1
+    },
+    skillUsed: {
+      bomb: false,
+      hammer: false,
+      swap: false
     }
   }
   // 顶部状态栏文字。
@@ -274,7 +286,8 @@ export class PlayUIController extends Component {
     this.gameOverOverlayController?.renderState(
       this.currentState.isGameOver,
       this.currentState.score,
-      this.currentState.highestValue
+      this.currentState.highestValue,
+      this.currentState.gameOverCoinReward
     )
   }
 
@@ -1172,7 +1185,7 @@ export class PlayUIController extends Component {
     this.refreshSkillHintState(this.currentState.activeSkill)
   }
 
-  // 数量大于 0 时显示 AmountBG+Count；数量为 0 时只显示 Box/MoreBtn。
+  // 游戏内只展示技能图标，不展示库存数量；库存逻辑仍由 PlayController 统一判断。
   private refreshSkillCountDisplay() {
     this.refreshSingleSkillCount('bomb', this.bombSkillNode)
     this.refreshSingleSkillCount('hammer', this.hammerSkillNode)
@@ -1180,36 +1193,29 @@ export class PlayUIController extends Component {
   }
 
   private refreshSingleSkillCount(skill: 'bomb' | 'hammer' | 'swap', skillNode: Node | null) {
-    const count = Math.max(0, Math.floor(this.currentState.skillCounts[skill]))
+    const hasUsedThisGame = this.currentState.skillUsed[skill]
     if (!skillNode) {
       return
     }
 
     const boxNode = this.getSkillBox(skillNode)
-    const hasCount = count > 0
     const moreButtonNode = boxNode.getChildByName('MoreBtn')
     const amountBgNode = boxNode.getChildByName('AmountBG')
     const countNode = boxNode.getChildByName('Count')
-    const countSprite = this.skillCountSprites[skill]
-    const numberSpriteFrame = this.getCounterNumberSpriteFrame(count)
-    const canShowCount = hasCount && !!amountBgNode && !!countNode && !!countSprite && !!numberSpriteFrame
 
     if (moreButtonNode) {
-      moreButtonNode.active = !canShowCount
+      moreButtonNode.active = false
     }
     if (amountBgNode) {
-      amountBgNode.active = canShowCount
+      amountBgNode.active = false
     }
     if (countNode) {
-      countNode.active = canShowCount
-    }
-
-    if (canShowCount) {
-      countSprite.spriteFrame = numberSpriteFrame
+      countNode.active = false
     }
 
     const opacity = skillNode.getComponent(UIOpacity) ?? skillNode.addComponent(UIOpacity)
-    opacity.opacity = 255
+    // 每局已使用过的技能仍置灰，避免隐藏数量后误以为还能再次使用。
+    opacity.opacity = hasUsedThisGame ? 120 : 255
   }
 
   // counterNumberSpriteFrames 里的图片以 0-9 命名，优先按名字找，找不到时用下标兜底。
