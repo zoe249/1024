@@ -2,7 +2,7 @@ import { _decorator, AudioClip, Component, director, instantiate, Node, Prefab, 
 import { StartPageController } from './StartPageController'
 import { GameAudioManager } from './GameAudioManager'
 import { GameShareAdapter } from './GameShareAdapter'
-import { PlayerEconomyStore } from './PlayerEconomyStore'
+import { ECONOMY_CONFIG, PlayerEconomyStore } from './PlayerEconomyStore'
 import { SkillShopPopupController } from './SkillShopPopupController'
 import type { SkillKind } from './SkillStock'
 import { OngoingGameSession } from './PlayController'
@@ -109,6 +109,13 @@ export class HomeSceneController extends Component {
       return
     }
 
+    if (!this.canStartNewGame()) {
+      this.closeSkillShop()
+      this.startPageController?.showMessage('体力不足，请先点击体力条补充')
+      this.refreshPlayerResources()
+      return
+    }
+
     if (!this.skillShopNode?.isValid || !this.skillShopController?.isValid) {
       if (!this.skillShopPopupPrefab) {
         this.startPageController?.showMessage('技能购买弹窗资源未配置')
@@ -157,7 +164,9 @@ export class HomeSceneController extends Component {
       return
     }
     if (!this.economy.tryConsumeEnergy()) {
-      this.skillShopController?.showMessage('体力不足，请关闭弹窗后点击体力条补充', true)
+      this.closeSkillShop()
+      this.startPageController?.showMessage('体力不足，请先点击体力条补充')
+      this.refreshPlayerResources()
       return
     }
 
@@ -186,6 +195,11 @@ export class HomeSceneController extends Component {
   // 每次从首页进入游戏都走 loading；若场景名未配置，再直接进入玩法场景兜底。
   private getStartTargetSceneName() {
     return this.loadingSceneName || this.gameSceneName
+  }
+
+  // 新开一局前先在首页拦截体力不足，避免玩家先看到技能购买弹窗再被拦住。
+  private canStartNewGame() {
+    return this.economy.getSnapshot().energy >= ECONOMY_CONFIG.gameEnergyCost
   }
 
   // Home 页优先使用新字段，旧字段只作为历史场景的兜底资源位。

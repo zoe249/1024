@@ -4,7 +4,6 @@
   Component,
   EventTouch,
   Graphics,
-  instantiate,
   Label,
   LabelOutline,
   Node,
@@ -235,7 +234,7 @@ export class PlayUIController extends Component {
     this.counterNumberSpriteFrames = options.counterNumberSpriteFrames ?? []
 
     this.fitBackgroundToScreen()
-    this.ensureCoinBar(options.coinBarPrefab ?? null)
+    this.hideCoinBar()
     this.ensureBoardDecorations()
     this.ensureScoreDisplay()
     this.ensureSkillButtons()
@@ -251,7 +250,6 @@ export class PlayUIController extends Component {
     )
     this.configureControlBar()
     this.configureStatusBar()
-    this.configureCoinBar()
     this.updateSkillHintLayout()
     this.renderState(this.currentState)
   }
@@ -260,7 +258,6 @@ export class PlayUIController extends Component {
   syncLayout() {
     this.configureControlBar()
     this.configureStatusBar()
-    this.configureCoinBar()
     this.updateSkillHintLayout()
     this.pauseOverlayController?.syncLayout()
     this.gameOverOverlayController?.syncLayout()
@@ -270,7 +267,6 @@ export class PlayUIController extends Component {
   renderState(state: PlayUIState) {
     this.currentState = state
     this.refreshScoreDisplay()
-    this.refreshCoinDisplay()
     this.refreshSkillButtonState()
     // this.refreshStatus()
     // this.refreshPauseButton()
@@ -686,26 +682,18 @@ export class PlayUIController extends Component {
       .start()
   }
 
-  /**
-   * 将金币 Prefab 挂到玩法根节点，整条资源条都作为分享领金币入口。
-   * 节点只负责显示和发送点击意图，不直接修改玩家金币。
-   */
-  private ensureCoinBar(coinBarPrefab: Prefab | null) {
+  // 游戏内不再展示金币余额；金币仍由经济仓库维护，首页和购买弹窗按需展示。
+  private hideCoinBar() {
     this.coinBarNode = this.node.getChildByName('CoinBar')
-    if (!this.coinBarNode && coinBarPrefab) {
-      this.coinBarNode = instantiate(coinBarPrefab)
-      this.coinBarNode.setParent(this.node)
-    }
     if (!this.coinBarNode) {
       return
     }
 
     this.coinAmountLabel = this.coinBarNode.getChildByName('Amount')?.getComponent(Label) ?? null
     this.unbindCoinBar()
-    this.coinBarNode.on(Node.EventType.TOUCH_START, this.handleCoinBarPressStart, this)
-    this.coinBarNode.on(Node.EventType.TOUCH_END, this.handleCoinBarPressEnd, this)
-    this.coinBarNode.on(Node.EventType.TOUCH_CANCEL, this.handleCoinBarPressEnd, this)
-    this.coinBarNode.on(Node.EventType.TOUCH_END, this.handleCoinMoreTap, this)
+    this.coinBarNode.active = false
+    this.coinBarNode = null
+    this.coinAmountLabel = null
   }
 
   private unbindCoinBar() {
