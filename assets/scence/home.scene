@@ -1237,7 +1237,7 @@
     "_prefab": null,
     "_lpos": {
       "__type__": "cc.Vec3",
-      "x": -124,
+      "x": -62,
       "y": 0,
       "z": 0
     },
@@ -1397,7 +1397,7 @@
       "__id__": 28
     },
     "_children": [],
-    "_active": true,
+    "_active": false,
     "_components": [
       {
         "__id__": 35
@@ -1593,7 +1593,7 @@
     "_prefab": null,
     "_lpos": {
       "__type__": "cc.Vec3",
-      "x": 124,
+      "x": 62,
       "y": 0,
       "z": 0
     },

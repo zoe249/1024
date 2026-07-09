@@ -69,6 +69,7 @@ const START_BUTTON_WIDTH = 332
 const START_BUTTON_HEIGHT = 90
 const ACTION_ICON_WIDTH = 80
 const ACTION_ICON_HEIGHT = 82
+const ACTION_ICON_PAIR_OFFSET = 62
 // 资源条保持已经确认的小尺寸，以下常量统一用于胶囊避让和标题间距计算。
 const AMOUNT_BAR_SCALE = 0.36
 const AMOUNT_BAR_SOURCE_HEIGHT = 155
@@ -313,7 +314,6 @@ export class StartPageController extends Component {
     this.unscheduleAllCallbacks()
     this.unbindPressableButton(this.startButtonNode, this.handleStartTap)
     this.unbindPressableButton(this.rankButtonNode, this.handleRankTap)
-    this.unbindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
     this.unbindPressableButton(this.shareButtonNode, this.handleShareTap)
     this.unbindAmountBar(this.energyMoreButtonNode, this.handleEnergyMoreTap)
     this.safeOff(this.rankCloseButtonNode, Node.EventType.TOUCH_END, this.handleRankCloseTap)
@@ -371,6 +371,7 @@ export class StartPageController extends Component {
     this.rankButtonNode = this.rankButtonNodeRef ?? this.findChildDeep(root, 'RankButton')
     this.settingsButtonNode = this.settingsButtonNodeRef ?? this.findChildDeep(root, 'SettingsButton')
     this.shareButtonNode = this.shareButtonNodeRef ?? this.findChildDeep(root, 'ShareButton')
+    this.hideHomeSettingsButton()
     this.rankMaskNode = this.rankMaskNodeRef ?? this.findChildDeep(root, 'RankMask')
     this.rankPanelNode = this.rankPanelNodeRef ?? (this.rankMaskNode ? this.findChildDeep(this.rankMaskNode, 'RankPanel') : this.findChildDeep(root, 'RankPanel'))
     this.rankCloseButtonNode = this.rankPanelNode ? this.findChildDeep(this.rankPanelNode, 'CloseButton') : this.findChildDeep(root, 'CloseButton')
@@ -414,7 +415,7 @@ export class StartPageController extends Component {
     if (!this.startButtonNode && this.pageCardNode) {
       this.startButtonNode = this.createStartButton(this.pageCardNode)
     }
-    if (!this.rankButtonNode || !this.settingsButtonNode || !this.shareButtonNode) {
+    if (!this.rankButtonNode || !this.shareButtonNode) {
       this.ensureFallbackActionButtons()
     }
     if (!this.rankMaskNode) {
@@ -728,11 +729,9 @@ export class StartPageController extends Component {
 
     this.unbindPressableButton(this.startButtonNode, this.handleStartTap)
     this.unbindPressableButton(this.rankButtonNode, this.handleRankTap)
-    this.unbindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
     this.unbindPressableButton(this.shareButtonNode, this.handleShareTap)
     this.bindPressableButton(this.startButtonNode, this.handleStartTap)
     this.bindPressableButton(this.rankButtonNode, this.handleRankTap)
-    this.bindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
     this.bindPressableButton(this.shareButtonNode, this.handleShareTap)
 
     this.safeOff(this.rankCloseButtonNode, Node.EventType.TOUCH_END, this.handleRankCloseTap)
@@ -756,16 +755,22 @@ export class StartPageController extends Component {
 
     if (!this.rankButtonNode) {
       this.rankButtonNode = this.createActionIconButton(bar, 'RankButton', this.rankButtonSpriteFrame, '榜')
-      this.rankButtonNode.setPosition(-100, 0, 0)
-    }
-    if (!this.settingsButtonNode) {
-      this.settingsButtonNode = this.createActionIconButton(bar, 'SettingsButton', this.settingsButtonSpriteFrame, '设')
-      this.settingsButtonNode.setPosition(0, 0, 0)
+      this.rankButtonNode.setPosition(-ACTION_ICON_PAIR_OFFSET, 0, 0)
     }
     if (!this.shareButtonNode) {
       this.shareButtonNode = this.createActionIconButton(bar, 'ShareButton', this.shareButtonSpriteFrame, '享')
-      this.shareButtonNode.setPosition(100, 0, 0)
+      this.shareButtonNode.setPosition(ACTION_ICON_PAIR_OFFSET, 0, 0)
     }
+    this.hideHomeSettingsButton()
+  }
+
+  private hideHomeSettingsButton() {
+    if (!this.settingsButtonNode) {
+      return
+    }
+
+    // 首页不再提供设置入口；保留节点引用仅用于兼容旧场景，避免运行时残留可点击热区。
+    this.settingsButtonNode.active = false
   }
 
   private redrawBackground() {
@@ -1058,11 +1063,9 @@ export class StartPageController extends Component {
 
     // 底部入口统一使用现成图片资源，减少文字按钮造成的视觉重量。
     this.rankButtonNode = this.createActionIconButton(bar, 'RankButton', this.rankButtonSpriteFrame, '榜')
-    this.settingsButtonNode = this.createActionIconButton(bar, 'SettingsButton', this.settingsButtonSpriteFrame, '设')
     this.shareButtonNode = this.createActionIconButton(bar, 'ShareButton', this.shareButtonSpriteFrame, '享')
-    this.rankButtonNode.setPosition(-100, 0, 0)
-    this.settingsButtonNode.setPosition(0, 0, 0)
-    this.shareButtonNode.setPosition(100, 0, 0)
+    this.rankButtonNode.setPosition(-ACTION_ICON_PAIR_OFFSET, 0, 0)
+    this.shareButtonNode.setPosition(ACTION_ICON_PAIR_OFFSET, 0, 0)
   }
 
   private createActionIconButton(parent: Node, name: string, spriteFrame: SpriteFrame | null, fallbackText: string) {
@@ -1633,17 +1636,14 @@ export class StartPageController extends Component {
   }
 
   private handleRankTap(event: EventTouch) {
-    this.showRankModal(false, event)
+    event.propagationStopped = true
+    // 排行榜能力暂未接入，首页入口先给轻提示，避免误打开假数据榜单。
+    this.showToast('暂未开放')
   }
 
   private handleRankCloseTap(event: EventTouch) {
     event.propagationStopped = true
     this.hideRankModal()
-  }
-
-  private handleSettingsTap(event: EventTouch) {
-    event.propagationStopped = true
-    this.showToast('设置功能请进入游戏后从暂停菜单调整')
   }
 
   private handleShareTap(event: EventTouch) {
