@@ -43,7 +43,7 @@ def create_contact_sheet(directory: Path) -> None:
     files = sorted(
         path
         for path in directory.glob("*.png")
-        if path.name not in {"background-clean.png", "materials-preview.png"}
+        if path.name not in {"background-clean.png", "materials-preview.png", "materials-preview.jpg"}
     )
     if not files:
         return
@@ -67,13 +67,19 @@ def create_contact_sheet(directory: Path) -> None:
         sheet.paste(preview, (x + 10, y + 10))
         draw.text((x + 12, y + cell_height - 34), path.stem, fill="#3d2a20", font=font)
 
-    sheet.save(directory / "materials-preview.png")
+    sheet.save(
+        directory / "materials-preview.jpg",
+        quality=84,
+        subsampling=0,
+        optimize=True,
+        progressive=True,
+    )
 
 
 def main() -> None:
     for directory in GENERATED_DIRS:
         for path in directory.glob("*.png"):
-            if path.name in {"background-clean.png", "materials-preview.png"}:
+            if path.name in {"background-clean.png", "materials-preview.png", "materials-preview.jpg"}:
                 continue
             trim_transparent_image(path)
         create_contact_sheet(directory)

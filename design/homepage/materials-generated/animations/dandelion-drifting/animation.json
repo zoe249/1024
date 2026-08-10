@@ -1,0 +1,10 @@
+{
+  "name": "dandelion-drifting",
+  "frameCount": 32,
+  "frameWidth": 384,
+  "frameHeight": 512,
+  "frameRate": 13,
+  "loop": true,
+  "anchor": { "x": 0.5, "y": 0.5 },
+  "frames": "frames/frame-00.png .. frames/frame-31.png"
+}

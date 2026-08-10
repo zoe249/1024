@@ -1,0 +1,10 @@
+{
+  "name": "bear-blowing",
+  "frameCount": 16,
+  "frameWidth": 384,
+  "frameHeight": 512,
+  "frameRate": 12,
+  "loop": true,
+  "anchor": { "x": 0.5, "y": 0.0 },
+  "frames": "frames/frame-00.png .. frames/frame-15.png"
+}

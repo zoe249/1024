@@ -4,7 +4,7 @@
 
 所有 UI 素材统一使用以下约束：温暖的中文手绘蜡笔与纸张质感，米白、珊瑚橙、叶绿色为主色，深棕色略带手绘感的描边，弱高光，无外部投影；画面只放一个完整素材，四周留足边距，背景为完全平坦的 `#ff00ff` 色键，不含场景、样机、水印或多余元素。
 
-生成后使用：`remove_chroma_key.py --auto-key border --soft-matte --transparent-threshold 12 --opaque-threshold 220 --despill`，再运行 `process_generated_materials.py`。
+生成后使用：`remove_chroma_key.py --auto-key border --soft-matte --transparent-threshold 12 --opaque-threshold 220 --despill`，依次运行 `process_generated_materials.py` 和 `optimize_generated_materials.py`。后者按 750×1335 设计分辨率缩放静态素材，并使用索引 PNG 或高质量 JPEG 控制文件体积。
 
 ## 首页
 
@@ -18,6 +18,14 @@
 - `button-start-game.png`：适中宽度的珊瑚橙圆角按钮，文字仅为“开始游戏”。
 
 背景、数字花园 Logo、小熊吹蒲公英、蓝色小鸟和蒲公英种子使用同一风格约束独立生成。
+
+### 首页动画
+
+小熊和小鸟先生成 4×2 的 8 个关键姿势，再分别生成相邻关键姿势之间的 8 个中间姿势，交错组成 16 帧循环。蒲公英以生成式种子切片建立 32 帧闭合 S 曲线轨迹。源图集不显示网格、文字或标注，每格使用统一的 `#ff00ff` 色键背景。
+
+- `bear-blowing`：参照首页小熊，表现放松吸气、鼓腮、撅嘴、轻吹、强吹、缓和与恢复；脚底锚点固定，蒲公英保持完整，不混入飞散种子。
+- `bird-flapping`：参照首页蓝色小鸟，表现翅膀中位、抬起、最高、下压、最低再回升；身体中心与脚部固定，只移动翅膀并带轻微尾羽起伏。
+- `dandelion-drifting`：参照现有白色蒲公英种子，七颗种子沿不同闭合 S 曲线轻柔平移和旋转，保持粒子数量与密度，首尾位置完全连续。
 
 ## 设置窗口
 
