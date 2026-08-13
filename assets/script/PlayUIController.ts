@@ -9,6 +9,7 @@
   LabelOutline,
   Node,
   Prefab,
+  ResolutionPolicy,
   screen,
   Sprite,
   SpriteFrame,
@@ -17,6 +18,7 @@
   UIOpacity,
   UITransform,
   Vec3,
+  view,
   Widget,
   sys
 } from 'cc'
@@ -315,6 +317,8 @@ export class PlayUIController extends Component {
   private coinBarNode: Node | null = null
   private coinAmountLabel: Label | null = null
   private coinMoreHandler: (() => void) | null = null
+  // 背景独立于游戏内容节点铺放，避免长屏适配时连棋盘和 HUD 一起缩放。
+  private gameBackgroundNode: Node | null = null
 
   // 由逻辑层在启动时调用，把布局、动作和表现资源分别交给 UI 层管理。
   setup(options: {
@@ -341,8 +345,10 @@ export class PlayUIController extends Component {
     this.coinMoreHandler = actions.coinRewardShare
     this.counterNumberSpriteFrames = resources.counterNumberSpriteFrames ?? []
 
-    this.fitBackgroundToScreen()
+    // 竖屏小游戏固定按宽度适配，让 Canvas 覆盖完整窗口；额外高度交给背景和安全区布局吸收。
+    view.setDesignResolutionSize(GAME_DESIGN_WIDTH, GAME_DESIGN_HEIGHT, ResolutionPolicy.FIXED_WIDTH)
     this.ensureGameBackground()
+    this.fitBackgroundToScreen()
     this.ensureGamePageLayout()
     this.hideCoinBar()
     this.ensureBoardDecorations()
@@ -368,6 +374,8 @@ export class PlayUIController extends Component {
 
   // 某些平台启动后一帧安全区才稳定，因此开放一个额外布局入口给逻辑层补收。
   syncLayout() {
+    this.fitBackgroundToScreen()
+    this.ensureGamePageLayout()
     this.configureControlBar()
     this.configureStatusBar()
     this.updateSkillHintLayout()
@@ -482,11 +490,12 @@ export class PlayUIController extends Component {
     this.feedbackLayer = null
     this.coinBarNode = null
     this.coinAmountLabel = null
+    this.gameBackgroundNode = null
     this.pauseOverlayController = null
     this.gameOverOverlayController = null
   }
 
-  // 背景节点依然挂在 play 根节点上，这里只负责把它铺满整个画布。
+  // 主内容节点跟随 Canvas；背景独立按 cover 规则等比放大，避免长屏上下露底。
   private fitBackgroundToScreen() {
     const selfTransform = this.node.getComponent(UITransform)
     const parentTransform = this.node.parent?.getComponent(UITransform) ?? null
@@ -495,12 +504,26 @@ export class PlayUIController extends Component {
     }
 
     selfTransform.setContentSize(parentTransform.width, parentTransform.height)
+    this.node.setPosition(0, 0, 0)
 
-    const bgSprite = this.node.getComponent(Sprite)
-    if (bgSprite) {
-      bgSprite.sizeMode = Sprite.SizeMode.CUSTOM
-      bgSprite.enabled = true
+    const background = this.gameBackgroundNode ?? this.node.getChildByName('Background')
+    const backgroundTransform = background?.getComponent(UITransform) ?? null
+    const backgroundSprite = background?.getComponent(Sprite) ?? null
+    if (!background || !backgroundTransform || !backgroundSprite) {
+      return
     }
+
+    background.setPosition(0, 0, 0)
+    background.setSiblingIndex(0)
+    backgroundSprite.enabled = true
+    backgroundSprite.sizeMode = Sprite.SizeMode.CUSTOM
+    backgroundSprite.type = Sprite.Type.SIMPLE
+    backgroundSprite.trim = false
+    const imageSize = backgroundSprite.spriteFrame?.originalSize
+    const imageWidth = imageSize?.width ?? GAME_DESIGN_WIDTH
+    const imageHeight = imageSize?.height ?? GAME_DESIGN_HEIGHT
+    const coverScale = Math.max(parentTransform.width / imageWidth, parentTransform.height / imageHeight)
+    backgroundTransform.setContentSize(Math.ceil(imageWidth * coverScale), Math.ceil(imageHeight * coverScale))
   }
 
   /**
@@ -508,9 +531,20 @@ export class PlayUIController extends Component {
    * Scene 中仍保留序列化引用，UUID 加载用于覆盖预览中可能存在的旧场景缓存。
    */
   private ensureGameBackground() {
-    const sprite = this.node.getComponent(Sprite)
-    if (!sprite) {
-      return
+    const rootSprite = this.node.getComponent(Sprite)
+    let background = this.node.getChildByName('Background')
+    if (!background) {
+      background = new Node('Background')
+      background.setParent(this.node)
+      background.addComponent(UITransform)
+      background.addComponent(Sprite)
+    }
+    this.gameBackgroundNode = background
+    background.setSiblingIndex(0)
+    const sprite = background.getComponent(Sprite) ?? background.addComponent(Sprite)
+    sprite.spriteFrame = rootSprite?.spriteFrame ?? sprite.spriteFrame
+    if (rootSprite) {
+      rootSprite.enabled = false
     }
 
     sprite.enabled = true
@@ -522,6 +556,9 @@ export class PlayUIController extends Component {
       sprite.spriteFrame = asset
       sprite.enabled = true
       sprite.sizeMode = Sprite.SizeMode.CUSTOM
+      sprite.type = Sprite.Type.SIMPLE
+      sprite.trim = false
+      this.fitBackgroundToScreen()
     })
   }
 
@@ -531,7 +568,11 @@ export class PlayUIController extends Component {
    */
   private ensureGamePageLayout() {
     const rootTransform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform)
-    rootTransform.setContentSize(GAME_DESIGN_WIDTH, GAME_DESIGN_HEIGHT)
+    const canvasTransform = this.node.parent?.getComponent(UITransform) ?? null
+    const viewportWidth = canvasTransform?.width ?? GAME_DESIGN_WIDTH
+    const viewportHeight = canvasTransform?.height ?? GAME_DESIGN_HEIGHT
+    rootTransform.setContentSize(viewportWidth, viewportHeight)
+    const topAlignedOffsetY = Math.max(0, (viewportHeight - GAME_DESIGN_HEIGHT) * 0.5)
 
     const boardNode = this.node.getChildByName('board')
     if (boardNode) {
@@ -555,9 +596,12 @@ export class PlayUIController extends Component {
     const statusNode = this.node.getChildByName('Status')
     const contentNode = statusNode?.getChildByName('Content')
     statusNode?.setPosition(0, 0, 0)
-    contentNode?.setPosition(0, 0, 0)
-    statusNode?.getComponent(UITransform)?.setContentSize(GAME_DESIGN_WIDTH, GAME_DESIGN_HEIGHT)
+    // HUD 仍使用 750×1334 定稿坐标，但整体贴住可视区顶部，避免长屏上分数和设置按钮一起下沉。
+    contentNode?.setPosition(0, topAlignedOffsetY, 0)
+    statusNode?.getComponent(UITransform)?.setContentSize(viewportWidth, viewportHeight)
     contentNode?.getComponent(UITransform)?.setContentSize(GAME_DESIGN_WIDTH, GAME_DESIGN_HEIGHT)
+    this.statusContentBasePosition = { x: 0, y: topAlignedOffsetY, z: 0 }
+    this.statusContentBaseSize = { width: GAME_DESIGN_WIDTH, height: GAME_DESIGN_HEIGHT }
   }
 
   // 纯代码绘制玻璃棋盘、列蒙版和列分隔线，并同步列节点占位尺寸。
@@ -934,7 +978,9 @@ export class PlayUIController extends Component {
     const titleLabel = titleNode?.getComponent(Label) ?? null
     if (titleNode && titleLabel) {
       titleNode.setPosition(-26, 0, 0)
-      titleNode.getComponent(UITransform)?.setContentSize(58, 36)
+      const titleTransform = titleNode.getComponent(UITransform) ?? titleNode.addComponent(UITransform)
+      titleTransform.setContentSize(58, 36)
+      titleTransform.setAnchorPoint(0.5, 0.5)
       titleLabel.string = '分数'
       titleLabel.fontSize = 20
       titleLabel.lineHeight = 24
@@ -956,7 +1002,9 @@ export class PlayUIController extends Component {
     this.scoreNumberLabel = numberNode?.getComponent(Label) ?? null
     if (numberNode && this.scoreNumberLabel) {
       numberNode.setPosition(42, 0, 0)
-      numberNode.getComponent(UITransform)?.setContentSize(88, 40)
+      const numberTransform = numberNode.getComponent(UITransform) ?? numberNode.addComponent(UITransform)
+      numberTransform.setContentSize(88, 40)
+      numberTransform.setAnchorPoint(0.5, 0.5)
       this.scoreNumberLabel.fontSize = 25
       this.scoreNumberLabel.lineHeight = 30
       this.scoreNumberLabel.color = HUD_SCORE_TEXT_COLOR
