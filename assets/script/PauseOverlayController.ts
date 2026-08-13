@@ -33,6 +33,7 @@ const AUDIO_SOUND_EFFECT_KEY = 'play.audio.soundEffectVolume'
 // 游戏中设置弹窗按 750 × 1334 定稿适配；左右保留 65 像素安全边距。
 const PAUSE_PANEL_WIDTH = 620
 const PAUSE_PANEL_HEIGHT = 770
+const HOME_SETTINGS_PANEL_HEIGHT = 690
 const PAUSE_UTILITY_BUTTON_WIDTH = 210
 const PAUSE_UTILITY_BUTTON_HEIGHT = 145
 const PAUSE_GAME_BUTTON_WIDTH = 250
@@ -129,6 +130,8 @@ export class PauseOverlayController extends Component {
   private feedbackButtonNode: Node | null = null
   private utilityActionsNode: Node | null = null
   private gameActionsNode: Node | null = null
+  // 首页设置不展示对局操作，返回首页和重新开始仍只属于游戏中模式。
+  private isHomeMode = false
 
   // 由外部 UI 组件在启动时调用，把 play 根节点传进来；暂停层只绑定已有按钮，不创建额外层级。
   setup(options: {
@@ -138,6 +141,7 @@ export class PauseOverlayController extends Component {
     homeHandler: (() => void) | null
     shareHandler: (() => void) | null
     feedbackHandler: (() => void) | null
+    mode?: 'game' | 'home'
   }) {
     this.hostNode = options.hostNode
     this.pauseHandler = options.pauseHandler
@@ -145,6 +149,7 @@ export class PauseOverlayController extends Component {
     this.homeHandler = options.homeHandler
     this.shareHandler = options.shareHandler
     this.feedbackHandler = options.feedbackHandler
+    this.isHomeMode = options.mode === 'home'
     this.isReturningHome = false
     this.ensureOverlayStructure()
     this.ensurePauseOverlayMaskSprite()
@@ -187,6 +192,14 @@ export class PauseOverlayController extends Component {
     this.refreshPauseOverlay()
   }
 
+  public show() {
+    this.renderState(true)
+  }
+
+  public hide() {
+    this.renderState(false)
+  }
+
   onDestroy() {
     this.unscheduleAllCallbacks()
     this.stopPauseOverlayTweens()
@@ -224,7 +237,11 @@ export class PauseOverlayController extends Component {
       mask.setParent(this.node)
       const maskTransform = mask.addComponent(UITransform)
       maskTransform.setContentSize(overlayTransform.width, overlayTransform.height)
-      mask.addComponent(Sprite)
+      if (this.isHomeMode) {
+        mask.addComponent(Graphics)
+      } else {
+        mask.addComponent(Sprite)
+      }
     }
     this.pauseOverlayMask = mask
 
@@ -238,7 +255,38 @@ export class PauseOverlayController extends Component {
       panel.setPosition(150, 0, 0)
     }
     this.pauseOverlayPanel = panel
+    this.ensureRuntimePanelStructure(panel)
     this.pausePanelShownPosition = panel.position.clone()
+  }
+
+  /**
+   * 首页没有预制的设置层级，因此在缺失时补齐与 game.scene 同名的最小挂点。
+   * 视觉仍完全使用 Settings 素材，运行时节点只承担布局和触摸区域。
+   */
+  private ensureRuntimePanelStructure(panel: Node) {
+    this.ensureRuntimeNode(panel, 'SettingLabel', 250, 110)
+    this.ensureRuntimeNode(panel, 'CloseBtn', 72, 74)
+    this.ensureRuntimeAudioControl(panel, 'Notifications')
+    this.ensureRuntimeAudioControl(panel, 'BgSound')
+  }
+
+  private ensureRuntimeAudioControl(panel: Node, name: string) {
+    const control = this.ensureRuntimeNode(panel, name, 92, 97)
+    const slider = this.ensureRuntimeNode(control, 'Slider', 400, 72)
+    this.ensureRuntimeNode(slider, 'SliderBase', PAUSE_SLIDER_TRACK_WIDTH, 40)
+    this.ensureRuntimeNode(slider, 'Fill', PAUSE_SLIDER_TRACK_WIDTH, 42)
+    this.ensureRuntimeNode(slider, 'Controller', PAUSE_SLIDER_KNOB_WIDTH, PAUSE_SLIDER_KNOB_HEIGHT)
+  }
+
+  private ensureRuntimeNode(parent: Node, name: string, width: number, height: number) {
+    let node = parent.getChildByName(name)
+    if (!node) {
+      node = new Node(name)
+      node.setParent(parent)
+      node.addComponent(UITransform)
+    }
+    ;(node.getComponent(UITransform) ?? node.addComponent(UITransform)).setContentSize(width, height)
+    return node
   }
 
   // 设置面板严格按游戏中定稿分区：标题、双滑块、平台操作和游戏操作依次向下排列。
@@ -249,10 +297,11 @@ export class PauseOverlayController extends Component {
     }
 
     const panelTransform = panel.getComponent(UITransform) ?? panel.addComponent(UITransform)
-    panelTransform.setContentSize(PAUSE_PANEL_WIDTH, PAUSE_PANEL_HEIGHT)
-    panel.setPosition(0, -78, 0)
+    const panelHeight = this.isHomeMode ? HOME_SETTINGS_PANEL_HEIGHT : PAUSE_PANEL_HEIGHT
+    panelTransform.setContentSize(PAUSE_PANEL_WIDTH, panelHeight)
+    panel.setPosition(0, this.isHomeMode ? -38 : -78, 0)
     this.pausePanelShownPosition = panel.position.clone()
-    this.applyArtwork(panel, SettingsArtwork.panel, PAUSE_PANEL_WIDTH, PAUSE_PANEL_HEIGHT)
+    this.applyArtwork(panel, SettingsArtwork.panel, PAUSE_PANEL_WIDTH, panelHeight)
     const generatedBackground = panel.getChildByName(GENERATED_BACKGROUND_NAME)
     if (generatedBackground) {
       generatedBackground.active = false
@@ -261,7 +310,7 @@ export class PauseOverlayController extends Component {
     const titleNode = panel.getChildByName('SettingLabel')
     const titleLabel = titleNode?.getComponent(Label) ?? null
     if (titleNode) {
-      titleNode.setPosition(0, 356, 0)
+      titleNode.setPosition(0, this.isHomeMode ? 320 : 356, 0)
       titleNode.getComponent(UITransform)?.setContentSize(250, 110)
       if (titleLabel) {
         titleLabel.enabled = false
@@ -272,15 +321,22 @@ export class PauseOverlayController extends Component {
 
     this.closeButtonNode = this.closeButtonNode ?? panel.getChildByName('CloseBtn')
     if (this.closeButtonNode) {
-      this.closeButtonNode.setPosition(258, 328, 0)
+      this.closeButtonNode.setPosition(258, this.isHomeMode ? 292 : 328, 0)
       this.applyArtwork(this.closeButtonNode, SettingsArtwork.close, 72, 74)
     }
 
     // 定稿要求“音效”在上、“音量（背景音乐）”在下，节点历史命名不再决定视觉顺序。
-    this.layoutAudioControl(this.soundEffectControl, 218, '音效', SettingsArtwork.sound)
-    this.layoutAudioControl(this.bgMusicControl, 92, '音量', SettingsArtwork.music)
-    this.ensureSeparator(panel, 'AudioSeparator', 12)
-    this.ensureSeparator(panel, 'ActionSeparator', -193)
+    this.layoutAudioControl(this.soundEffectControl, this.isHomeMode ? 166 : 218, '音效', SettingsArtwork.sound)
+    this.layoutAudioControl(this.bgMusicControl, this.isHomeMode ? 34 : 92, '音量', SettingsArtwork.music)
+    this.ensureSeparator(panel, 'AudioSeparator', this.isHomeMode ? -86 : 12)
+    const actionSeparator = panel.getChildByName('ActionSeparator')
+    if (this.isHomeMode) {
+      if (actionSeparator) {
+        actionSeparator.active = false
+      }
+    } else {
+      this.ensureSeparator(panel, 'ActionSeparator', -193)
+    }
   }
 
   private layoutAudioControl(control: Node | null, y: number, title: string, iconArtwork: string) {
@@ -378,8 +434,8 @@ export class PauseOverlayController extends Component {
 
   // 固定按钮优先复用 Scene 节点；迁移期缺失的分享、反馈挂点只补到明确的固定容器中。
   private bindPauseActionButtons() {
-    this.replayButtonNode = this.findExistingPauseActionNode(['Repay', 'Replay'])
-    this.homeButtonNode = this.findExistingPauseActionNode(['Home'])
+    this.replayButtonNode = this.isHomeMode ? null : this.findExistingPauseActionNode(['Repay', 'Replay'])
+    this.homeButtonNode = this.isHomeMode ? null : this.findExistingPauseActionNode(['Home'])
     this.ensurePauseActionStructure()
     this.bindPauseActionButton(this.replayButtonNode, this.onReplayButtonTap)
     this.bindPauseActionButton(this.homeButtonNode, this.onHomeButtonTap)
@@ -393,8 +449,11 @@ export class PauseOverlayController extends Component {
       return
     }
 
-    this.utilityActionsNode?.setPosition(0, -94, 0)
+    this.utilityActionsNode?.setPosition(0, this.isHomeMode ? -218 : -94, 0)
     this.gameActionsNode?.setPosition(0, -272, 0)
+    if (this.gameActionsNode) {
+      this.gameActionsNode.active = !this.isHomeMode
+    }
     if (this.canUseNode(this.shareButtonNode)) {
       this.shareButtonNode.setPosition(-133, 0, 0)
     }
@@ -422,6 +481,11 @@ export class PauseOverlayController extends Component {
     this.feedbackButtonNode =
       this.findChildDeep(panel, ['FeedbackButton', 'Feedback']) ??
       this.createActionNode(this.utilityActionsNode, 'FeedbackButton')
+
+    if (!this.isHomeMode) {
+      this.homeButtonNode = this.homeButtonNode ?? this.createActionNode(this.gameActionsNode, 'Home')
+      this.replayButtonNode = this.replayButtonNode ?? this.createActionNode(this.gameActionsNode, 'Replay')
+    }
 
     this.moveNodeToContainer(this.shareButtonNode, this.utilityActionsNode)
     this.moveNodeToContainer(this.feedbackButtonNode, this.utilityActionsNode)
@@ -691,30 +755,45 @@ export class PauseOverlayController extends Component {
     }
   }
 
-  // Mask 节点强制使用可显示的 SpriteFrame，避免空 SpriteFrame 导致蒙版完全不显示。
+  // 游戏页复用背景 Sprite；首页根节点没有背景 Sprite，直接使用独立的 Graphics 遮罩。
   private ensurePauseOverlayMaskSprite() {
     if (!this.pauseOverlayMask) {
       return
     }
 
+    const overlayTransform = this.node.getComponent(UITransform)
     const maskTransform = this.pauseOverlayMask.getComponent(UITransform)
+      ?? this.pauseOverlayMask.addComponent(UITransform)
     const maskSprite = this.pauseOverlayMask.getComponent(Sprite)
-    if (!maskTransform || !maskSprite) {
+    const maskWidth = Math.max(1, overlayTransform?.width ?? 750)
+    const maskHeight = Math.max(1, overlayTransform?.height ?? 1334)
+    maskTransform.setContentSize(maskWidth, maskHeight)
+
+    if (maskSprite) {
+      const sourceSprite = this.hostNode
+        ?.getComponentsInChildren(Sprite)
+        .find(candidate => candidate !== maskSprite && !!candidate.spriteFrame)
+      if (!maskSprite.spriteFrame && sourceSprite?.spriteFrame) {
+        maskSprite.spriteFrame = sourceSprite.spriteFrame
+      }
+      maskSprite.enabled = !!maskSprite.spriteFrame
+      maskSprite.sizeMode = Sprite.SizeMode.CUSTOM
+      maskSprite.type = Sprite.Type.SIMPLE
+      maskSprite.color = new Color(0, 0, 0, 170)
       return
     }
 
-    const rootSprite = this.hostNode?.getComponent(Sprite)
-    if (!maskSprite.spriteFrame && rootSprite?.spriteFrame) {
-      // 复用 play 根节点已有的背景 SpriteFrame，确保蒙版一定有可渲染贴图。
-      maskSprite.spriteFrame = rootSprite.spriteFrame
-    }
-
-    maskSprite.enabled = true
-    maskSprite.sizeMode = Sprite.SizeMode.CUSTOM
-    maskSprite.type = Sprite.Type.SIMPLE
-    // 蒙版只需要统一压暗画面，因此固定使用半透明黑色。
-    maskSprite.color = new Color(0, 0, 0, 170)
-    maskTransform.setContentSize(maskTransform.width, maskTransform.height)
+    const maskGraphics = this.pauseOverlayMask.getComponent(Graphics)
+      ?? this.pauseOverlayMask.addComponent(Graphics)
+    maskGraphics.clear()
+    maskGraphics.fillColor = new Color(0, 0, 0, 170)
+    maskGraphics.rect(
+      -maskWidth * maskTransform.anchorX,
+      -maskHeight * maskTransform.anchorY,
+      maskWidth,
+      maskHeight
+    )
+    maskGraphics.fill()
   }
 
   // 复用 Panel 中已搭好的音乐和音效节点，补上交互、存档和视觉状态。
@@ -786,7 +865,8 @@ export class PauseOverlayController extends Component {
   private prepareSliderFill(fillNode: Node | null, fullWidth: number, trackMinX: number) {
     const fillTransform = fillNode?.getComponent(UITransform)
     const fillSprite = fillNode?.getComponent(Sprite)
-    if (!fillNode || !fillTransform || !fillSprite) {
+    // SpriteFrame 异步加载完成前切换 FILLED 会触发 Cocos BarFilled 读取空纹理宽度。
+    if (!fillNode || !fillTransform || !fillSprite?.spriteFrame) {
       return
     }
 
@@ -854,7 +934,7 @@ export class PauseOverlayController extends Component {
     value: number
   ) {
     const fillSprite = fillNode?.getComponent(Sprite)
-    if (!fillNode || !controllerNode || !fillSprite) {
+    if (!fillNode || !controllerNode || !fillSprite?.spriteFrame) {
       return
     }
 

@@ -1,7 +1,9 @@
-import { _decorator, AudioClip, Component, director, instantiate, Node, Prefab, SpriteFrame } from 'cc'
+import { _decorator, AudioClip, Component, director, instantiate, Node, Prefab, SpriteFrame, UITransform } from 'cc'
 import { StartPageController } from './StartPageController'
 import { GameAudioManager } from './GameAudioManager'
+import { GameFeedbackAdapter } from './GameFeedbackAdapter'
 import { GameShareAdapter } from './GameShareAdapter'
+import { PauseOverlayController } from './PauseOverlayController'
 import { ECONOMY_CONFIG, PlayerEconomyStore } from './PlayerEconomyStore'
 import { SkillShopPopupController } from './SkillShopPopupController'
 import type { SkillKind } from './SkillStock'
@@ -54,8 +56,11 @@ export class HomeSceneController extends Component {
   private startPageController: StartPageController | null = null
   private skillShopNode: Node | null = null
   private skillShopController: SkillShopPopupController | null = null
+  private homeSettingsNode: Node | null = null
+  private homeSettingsController: PauseOverlayController | null = null
   private audioManager: GameAudioManager | null = null
   private readonly shareAdapter = new GameShareAdapter()
+  private readonly feedbackAdapter = new GameFeedbackAdapter()
   private readonly economy = PlayerEconomyStore.getInstance()
   private isLoadingGameScene = false
   private dailyLoginReward = 0
@@ -77,7 +82,11 @@ export class HomeSceneController extends Component {
       energyBarPrefab: this.energyBarPrefab,
       energy: resources.energy,
       maxEnergy: resources.maxEnergy,
-      onEnergyMoreTap: () => void this.shareForEnergyReward()
+      coins: resources.coins,
+      onEnergyMoreTap: () => void this.shareForEnergyReward(),
+      onSettingsTap: () => this.openHomeSettings(),
+      onDailyRewardTap: () => this.showDailyRewardStatus(),
+      onShopTap: () => this.openSkillShop()
     })
   }
 
@@ -85,6 +94,7 @@ export class HomeSceneController extends Component {
     // 首帧后再同步一次布局，兼容微信安全区和 Creator 预览尺寸变化。
     this.startPageController?.syncLayout()
     this.skillShopController?.syncLayout()
+    this.homeSettingsController?.syncLayout()
     this.audioManager?.playStartPageBackgroundMusic(this.getHomeBgmClip())
     if (this.dailyLoginReward > 0) {
       this.startPageController?.showMessage(`每日登录奖励：金币 +${this.dailyLoginReward}`)
@@ -94,6 +104,8 @@ export class HomeSceneController extends Component {
   onDestroy() {
     this.skillShopController = null
     this.skillShopNode = null
+    this.homeSettingsController = null
+    this.homeSettingsNode = null
   }
 
   /**
@@ -247,7 +259,51 @@ export class HomeSceneController extends Component {
     const snapshot = this.economy.getSnapshot()
     this.startPageController?.renderPlayerResources(
       snapshot.energy,
-      snapshot.maxEnergy
+      snapshot.maxEnergy,
+      snapshot.coins
+    )
+  }
+
+  private openHomeSettings() {
+    if (!this.homeSettingsNode?.isValid || !this.homeSettingsController?.isValid) {
+      this.homeSettingsNode = new Node('HomeSettingsOverlay')
+      this.homeSettingsNode.setParent(this.node)
+      const hostTransform = this.node.getComponent(UITransform)
+      this.homeSettingsNode.addComponent(UITransform).setContentSize(
+        hostTransform?.width ?? 750,
+        hostTransform?.height ?? 1334
+      )
+      this.homeSettingsController = this.homeSettingsNode.addComponent(PauseOverlayController)
+      this.homeSettingsController.setup({
+        hostNode: this.node,
+        pauseHandler: () => this.homeSettingsController?.hide(),
+        replayHandler: null,
+        homeHandler: null,
+        shareHandler: () => this.shareGameFromStartPage(),
+        feedbackHandler: () => void this.openHomeFeedback(),
+        mode: 'home'
+      })
+    }
+
+    this.homeSettingsController.syncLayout()
+    this.homeSettingsController.show()
+  }
+
+  private async openHomeFeedback() {
+    const result = await this.feedbackAdapter.open('home_settings')
+    if (!this.node.isValid || result === 'opened') {
+      return
+    }
+    this.startPageController?.showMessage(
+      result === 'unsupported' ? '当前平台暂不支持客服反馈' : '客服反馈打开失败，请稍后重试'
+    )
+  }
+
+  private showDailyRewardStatus() {
+    this.startPageController?.showMessage(
+      this.dailyLoginReward > 0
+        ? `每日奖励：金币 +${this.dailyLoginReward}`
+        : '今日奖励已领取'
     )
   }
 

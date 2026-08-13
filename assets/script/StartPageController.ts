@@ -8,6 +8,7 @@ import {
   Label,
   Node,
   Prefab,
+  resources,
   screen,
   Sprite,
   SpriteFrame,
@@ -31,6 +32,10 @@ type StartPageOptions = {
   energy?: number
   maxEnergy?: number
   onEnergyMoreTap?: () => void
+  coins?: number
+  onSettingsTap?: () => void
+  onDailyRewardTap?: () => void
+  onShopTap?: () => void
 }
 
 // 只读取首页胶囊避让所需字段，避免项目依赖额外的微信类型声明。
@@ -80,6 +85,25 @@ const AMOUNT_BAR_LEFT_INSET = 57
 // 首页排行榜需要轻雾化遮罩，暂停中复用排行榜时则保持透明，避免覆盖原有深色暂停蒙版。
 const RANK_MASK_HOME_COLOR = new Color(234, 246, 250, 212)
 const RANK_MASK_PAUSE_COLOR = new Color(0, 0, 0, 0)
+const HOMEPAGE_ART_ROOT = 'Homepage/'
+const HOMEPAGE_DESIGN_WIDTH = 750
+const HOMEPAGE_DESIGN_HEIGHT = 1625
+
+const HomepageArtwork = {
+  background: 'background-clean',
+  start: 'button-start-game',
+  bear: 'character-bear-dandelion',
+  bird: 'character-blue-bird',
+  seeds: 'effect-dandelion-seeds',
+  daily: 'feature-daily-reward',
+  leaderboard: 'feature-leaderboard',
+  share: 'feature-share',
+  shop: 'feature-shop',
+  logo: 'logo-1024-number-garden',
+  coin: 'resource-coin',
+  stamina: 'resource-stamina',
+  settings: 'ui-settings'
+} as const
 
 const RANKING_DATA: RankEntry[] = [
   { rank: 1, name: 'Mao', score: 42880, color: new Color(255, 209, 105, 255) },
@@ -149,6 +173,12 @@ export class StartPageController extends Component {
   private startHandler: (() => void) | null = null
   private shareHandler: (() => void) | null = null
   private energyMoreHandler: (() => void) | null = null
+  private settingsHandler: (() => void) | null = null
+  private dailyRewardHandler: (() => void) | null = null
+  private shopHandler: (() => void) | null = null
+  private currentCoins = 0
+  private currentEnergy = 0
+  private currentMaxEnergy = 4
   private rootNode: Node | null = null
   private pageCardNode: Node | null = null
   private rankMaskNode: Node | null = null
@@ -178,6 +208,13 @@ export class StartPageController extends Component {
   // 有层级节点时不再由脚本重新排版首页主体，避免覆盖编辑器里的 UI 调整。
   private usesHierarchyNodes = false
   private pageDecorNodes: Node[] = []
+  private homepageLayerNode: Node | null = null
+  private dailyRewardButtonNode: Node | null = null
+  private shopButtonNode: Node | null = null
+  private coinResourceButtonNode: Node | null = null
+  private staminaResourceButtonNode: Node | null = null
+  private coinValueLabel: Label | null = null
+  private staminaValueLabel: Label | null = null
 
   setup(options: StartPageOptions) {
     this.startHandler = options.onStartTap
@@ -187,8 +224,16 @@ export class StartPageController extends Component {
     this.settingsButtonSpriteFrame = options.settingsButtonSpriteFrame ?? null
     this.shareButtonSpriteFrame = options.shareButtonSpriteFrame ?? null
     this.energyMoreHandler = options.onEnergyMoreTap ?? null
+    this.settingsHandler = options.onSettingsTap ?? null
+    this.dailyRewardHandler = options.onDailyRewardTap ?? null
+    this.shopHandler = options.onShopTap ?? null
+    this.currentCoins = Math.max(0, Math.floor(options.coins ?? 0))
+    this.currentEnergy = Math.max(0, Math.floor(options.energy ?? 0))
+    this.currentMaxEnergy = Math.max(1, Math.floor(options.maxEnergy ?? 4))
     this.ensurePage()
-    this.ensureEnergyBar(options.energyBarPrefab ?? null)
+    if (!this.usesHierarchyNodes) {
+      this.ensureEnergyBar(options.energyBarPrefab ?? null)
+    }
     this.renderPlayerResources(options.energy ?? 0, options.maxEnergy ?? 4)
     this.syncLayout()
     this.show()
@@ -217,12 +262,19 @@ export class StartPageController extends Component {
       this.redrawCard()
       this.layoutPageContents(cardWidth, cardHeight)
     }
-    this.layoutAmountBars(cardHeight)
+    if (this.homepageLayerNode) {
+      this.layoutHomepageArtwork(cardWidth, cardHeight)
+    } else {
+      this.layoutAmountBars(cardHeight)
+    }
     this.layoutRankModal(parentTransform.width, parentTransform.height)
   }
 
   // 首页逻辑层每次资源变化后只需要传入纯数值，Prefab 节点不持有经济状态。
-  public renderPlayerResources(energy: number, maxEnergy: number) {
+  public renderPlayerResources(energy: number, maxEnergy: number, coins = this.currentCoins) {
+    this.currentEnergy = Math.max(0, Math.floor(energy))
+    this.currentMaxEnergy = Math.max(1, Math.floor(maxEnergy))
+    this.currentCoins = Math.max(0, Math.floor(coins))
     const visibleEnergy = Math.min(
       this.energyHeartNodes.length,
       Math.max(0, Math.floor(maxEnergy)),
@@ -231,7 +283,12 @@ export class StartPageController extends Component {
     this.energyHeartNodes.forEach((heartNode, index) => {
       heartNode.active = index < visibleEnergy
     })
-
+    if (this.coinValueLabel) {
+      this.coinValueLabel.string = `${this.currentCoins}`
+    }
+    if (this.staminaValueLabel) {
+      this.staminaValueLabel.string = `${this.currentEnergy}/${this.currentMaxEnergy}`
+    }
   }
 
   // 首页逻辑层统一通过这个入口展示领取、分享和体力不足提示。
@@ -315,6 +372,11 @@ export class StartPageController extends Component {
     this.unbindPressableButton(this.startButtonNode, this.handleStartTap)
     this.unbindPressableButton(this.rankButtonNode, this.handleRankTap)
     this.unbindPressableButton(this.shareButtonNode, this.handleShareTap)
+    this.unbindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
+    this.unbindPressableButton(this.dailyRewardButtonNode, this.handleDailyRewardTap)
+    this.unbindPressableButton(this.shopButtonNode, this.handleShopTap)
+    this.unbindPressableButton(this.coinResourceButtonNode, this.handleCoinResourceTap)
+    this.unbindPressableButton(this.staminaResourceButtonNode, this.handleEnergyMoreTap)
     this.unbindAmountBar(this.energyMoreButtonNode, this.handleEnergyMoreTap)
     this.safeOff(this.rankCloseButtonNode, Node.EventType.TOUCH_END, this.handleRankCloseTap)
     this.safeOff(this.rankMaskNode, Node.EventType.TOUCH_END, this.hideRankModal)
@@ -371,7 +433,6 @@ export class StartPageController extends Component {
     this.rankButtonNode = this.rankButtonNodeRef ?? this.findChildDeep(root, 'RankButton')
     this.settingsButtonNode = this.settingsButtonNodeRef ?? this.findChildDeep(root, 'SettingsButton')
     this.shareButtonNode = this.shareButtonNodeRef ?? this.findChildDeep(root, 'ShareButton')
-    this.hideHomeSettingsButton()
     this.rankMaskNode = this.rankMaskNodeRef ?? this.findChildDeep(root, 'RankMask')
     this.rankPanelNode = this.rankPanelNodeRef ?? (this.rankMaskNode ? this.findChildDeep(this.rankMaskNode, 'RankPanel') : this.findChildDeep(root, 'RankPanel'))
     this.rankCloseButtonNode = this.rankPanelNode ? this.findChildDeep(this.rankPanelNode, 'CloseButton') : this.findChildDeep(root, 'CloseButton')
@@ -435,13 +496,225 @@ export class StartPageController extends Component {
       return
     }
 
-    this.ensureHierarchyOldLogo()
-    this.ensureHierarchyOldStartButton()
-    if (!this.pageCardNode.getChildByName('TileRow')) {
-      this.buildFloatingTiles(this.pageCardNode)
+    this.ensureDesignedHomepage()
+  }
+
+  /**
+   * 首页定稿由独立的 HomepageArtwork 层承载，旧 Logo、ActionBar 和提示文字只关闭显示，
+   * 不删除 Scene 节点，方便排行榜弹窗继续复用历史结构，也避免破坏序列化引用。
+   */
+  private ensureDesignedHomepage() {
+    if (!this.pageCardNode) {
+      return
     }
-    this.pageCardNode.getChildByName('TileRow')?.setPosition(0, 0, 0)
+
+    for (const name of ['Logo', 'TitleCard', 'TileRow', 'ActionBar', 'TipText']) {
+      const legacyNode = this.pageCardNode.getChildByName(name)
+      if (legacyNode) {
+        legacyNode.active = false
+      }
+    }
+    const legacyGraphics = this.pageCardNode.getComponent(Graphics)
+    if (legacyGraphics) {
+      legacyGraphics.clear()
+    }
+
+    this.homepageLayerNode = this.getOrCreatePageNode(this.pageCardNode, 'HomepageArtwork')
+    this.homepageLayerNode.active = true
+    ;(this.homepageLayerNode.getComponent(UITransform) ?? this.homepageLayerNode.addComponent(UITransform)).setContentSize(
+      HOMEPAGE_DESIGN_WIDTH,
+      HOMEPAGE_DESIGN_HEIGHT
+    )
+
+    const background = this.getOrCreatePageNode(this.homepageLayerNode, 'HomepageBackground')
+    background.setSiblingIndex(0)
+    this.applyHomepageArtwork(background, HomepageArtwork.background, 750, 1625)
+
+    const logo = this.getOrCreatePageNode(this.homepageLayerNode, 'HomepageLogo')
+    this.applyHomepageArtwork(logo, HomepageArtwork.logo, 560, 318)
+
+    const seeds = this.getOrCreatePageNode(this.homepageLayerNode, 'DandelionSeeds')
+    this.applyHomepageArtwork(seeds, HomepageArtwork.seeds, 330, 460)
+    const bear = this.getOrCreatePageNode(this.homepageLayerNode, 'BearDandelion')
+    this.applyHomepageArtwork(bear, HomepageArtwork.bear, 380, 450)
+    const bird = this.getOrCreatePageNode(this.homepageLayerNode, 'BlueBird')
+    this.applyHomepageArtwork(bird, HomepageArtwork.bird, 132, 132)
+
+    this.settingsButtonNode = this.getOrCreatePageNode(this.homepageLayerNode, 'SettingsButton')
+    this.applyHomepageArtwork(this.settingsButtonNode, HomepageArtwork.settings, 76, 79)
+    this.coinResourceButtonNode = this.ensureResourceBar(
+      this.homepageLayerNode,
+      'CoinResource',
+      HomepageArtwork.coin,
+      false
+    )
+    this.staminaResourceButtonNode = this.ensureResourceBar(
+      this.homepageLayerNode,
+      'StaminaResource',
+      HomepageArtwork.stamina,
+      true
+    )
+
+    this.dailyRewardButtonNode = this.ensureHomepageButton(
+      this.homepageLayerNode,
+      'DailyRewardButton',
+      HomepageArtwork.daily,
+      142,
+      128
+    )
+    this.rankButtonNode = this.ensureHomepageButton(
+      this.homepageLayerNode,
+      'RankButton',
+      HomepageArtwork.leaderboard,
+      142,
+      140
+    )
+    this.shopButtonNode = this.ensureHomepageButton(
+      this.homepageLayerNode,
+      'ShopButton',
+      HomepageArtwork.shop,
+      142,
+      134
+    )
+    this.shareButtonNode = this.ensureHomepageButton(
+      this.homepageLayerNode,
+      'ShareButton',
+      HomepageArtwork.share,
+      142,
+      138
+    )
+    this.startButtonNode = this.ensureHomepageButton(
+      this.homepageLayerNode,
+      'StartButton',
+      HomepageArtwork.start,
+      360,
+      128
+    )
     this.startHierarchyStartButtonBreathing()
+    this.layoutHomepageArtwork(HOMEPAGE_DESIGN_WIDTH, HOMEPAGE_DESIGN_HEIGHT)
+  }
+
+  private ensureHomepageButton(
+    parent: Node,
+    name: string,
+    artwork: string,
+    width: number,
+    height: number
+  ) {
+    const button = this.getOrCreatePageNode(parent, name)
+    button.active = true
+    this.applyHomepageArtwork(button, artwork, width, height)
+    return button
+  }
+
+  private ensureResourceBar(parent: Node, name: string, artwork: string, stamina: boolean) {
+    const bar = this.getOrCreatePageNode(parent, name)
+    bar.active = true
+    this.applyHomepageArtwork(bar, artwork, 188, stamina ? 60 : 54)
+
+    // 资源条素材保留了定稿中的示例数字，运行时先用同色小底板盖住，再渲染真实数据。
+    // 这样不需要再复制一套只差数字的位图，也不会出现动态数字与“1280 / 8/10”叠字。
+    const valueCover = this.getOrCreatePageNode(bar, 'DynamicValueCover')
+    valueCover.setPosition(0, stamina ? 0 : 1, 0)
+    valueCover.getComponent(UITransform)?.setContentSize(76, stamina ? 42 : 38)
+    const coverGraphics = valueCover.getComponent(Graphics) ?? valueCover.addComponent(Graphics)
+    coverGraphics.clear()
+    coverGraphics.fillColor = stamina
+      ? new Color(249, 226, 186, 255)
+      : new Color(248, 230, 197, 255)
+    coverGraphics.roundRect(-38, stamina ? -21 : -19, 76, stamina ? 42 : 38, 10)
+    coverGraphics.fill()
+
+    const value = this.ensureHomepageValueLabel(bar, 'DynamicValue', stamina ? '0/4' : '0')
+    value.node.setPosition(0, stamina ? 0 : 1, 0)
+    value.node.getComponent(UITransform)?.setContentSize(76, 42)
+    if (stamina) {
+      this.staminaValueLabel = value
+    } else {
+      this.coinValueLabel = value
+    }
+    return bar
+  }
+
+  private ensureHomepageValueLabel(parent: Node, name: string, text: string) {
+    const node = this.getOrCreatePageNode(parent, name)
+    node.active = true
+    const label = node.getComponent(Label) ?? node.addComponent(Label)
+    label.string = text
+    label.fontSize = 25
+    label.lineHeight = 32
+    label.isBold = true
+    label.overflow = Label.Overflow.SHRINK
+    label.color = new Color(88, 46, 27, 255)
+    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    label.verticalAlign = Label.VerticalAlign.CENTER
+    return label
+  }
+
+  private applyHomepageArtwork(node: Node, artwork: string, width: number, height: number) {
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform)
+    transform.setContentSize(width, height)
+    const sprite = node.getComponent(Sprite) ?? node.addComponent(Sprite)
+    sprite.enabled = true
+    sprite.type = Sprite.Type.SIMPLE
+    sprite.sizeMode = Sprite.SizeMode.CUSTOM
+    sprite.trim = false
+    sprite.color = Color.WHITE
+
+    resources.load(`${HOMEPAGE_ART_ROOT}${artwork}/spriteFrame`, SpriteFrame, (error, spriteFrame) => {
+      if (error || !spriteFrame || !this.canUseNode(node)) {
+        console.warn(`[首页] 素材加载失败: ${artwork}`, error)
+        return
+      }
+      sprite.spriteFrame = spriteFrame
+      transform.setContentSize(width, height)
+    })
+  }
+
+  private getOrCreatePageNode(parent: Node, name: string) {
+    let node = parent.getChildByName(name)
+    if (!node) {
+      node = new Node(name)
+      node.setParent(parent)
+      node.addComponent(UITransform)
+    }
+    return node
+  }
+
+  /**
+   * 定稿坐标以 750 × 1625 为基准：横向按画布宽度等比缩放，短屏压缩纵向间距；
+   * 背景独立使用 cover 铺满实际画布，前景素材本身始终保持比例、不做拉伸。
+   */
+  private layoutHomepageArtwork(cardWidth: number, cardHeight: number) {
+    if (!this.homepageLayerNode) {
+      return
+    }
+    // 横向始终贴合设计宽度；短屏只压缩元素间的纵向距离，不把整套 UI 等比缩小到画面中央。
+    // 这样 750 × 1335 预览里设置按钮仍贴近左上角，左右功能按钮也不会向中间收拢。
+    const foregroundScale = cardWidth / HOMEPAGE_DESIGN_WIDTH
+    const verticalScale = Math.min(1, cardHeight / Math.max(1, HOMEPAGE_DESIGN_HEIGHT * foregroundScale))
+    this.homepageLayerNode.setPosition(0, 0, 0)
+    this.homepageLayerNode.setScale(foregroundScale, foregroundScale, 1)
+
+    const background = this.homepageLayerNode.getChildByName('HomepageBackground')
+    const coverScale = Math.max(cardWidth / 750, cardHeight / 1625) / Math.max(0.001, foregroundScale)
+    background?.setPosition(0, 0, 0)
+    background?.setScale(coverScale, coverScale, 1)
+
+    this.homepageLayerNode.getChildByName('HomepageLogo')?.setPosition(0, 455 * verticalScale, 0)
+    this.homepageLayerNode.getChildByName('DandelionSeeds')?.setPosition(80, 122 * verticalScale, 0)
+    this.homepageLayerNode.getChildByName('BearDandelion')?.setPosition(28, -140 * verticalScale, 0)
+    this.homepageLayerNode.getChildByName('BlueBird')?.setPosition(275, -82 * verticalScale, 0)
+
+    this.settingsButtonNode?.setPosition(-318, 705 * verticalScale, 0)
+    this.coinResourceButtonNode?.setPosition(-164, 705 * verticalScale, 0)
+    this.staminaResourceButtonNode?.setPosition(90, 705 * verticalScale, 0)
+    this.dailyRewardButtonNode?.setPosition(-294, -292 * verticalScale, 0)
+    this.rankButtonNode?.setPosition(-294, -455 * verticalScale, 0)
+    this.shopButtonNode?.setPosition(294, -292 * verticalScale, 0)
+    this.shareButtonNode?.setPosition(294, -455 * verticalScale, 0)
+    this.startButtonNode?.setPosition(0, -655 * verticalScale, 0)
+    this.renderPlayerResources(this.currentEnergy, this.currentMaxEnergy, this.currentCoins)
   }
 
   /**
@@ -730,9 +1003,19 @@ export class StartPageController extends Component {
     this.unbindPressableButton(this.startButtonNode, this.handleStartTap)
     this.unbindPressableButton(this.rankButtonNode, this.handleRankTap)
     this.unbindPressableButton(this.shareButtonNode, this.handleShareTap)
+    this.unbindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
+    this.unbindPressableButton(this.dailyRewardButtonNode, this.handleDailyRewardTap)
+    this.unbindPressableButton(this.shopButtonNode, this.handleShopTap)
+    this.unbindPressableButton(this.coinResourceButtonNode, this.handleCoinResourceTap)
+    this.unbindPressableButton(this.staminaResourceButtonNode, this.handleEnergyMoreTap)
     this.bindPressableButton(this.startButtonNode, this.handleStartTap)
     this.bindPressableButton(this.rankButtonNode, this.handleRankTap)
     this.bindPressableButton(this.shareButtonNode, this.handleShareTap)
+    this.bindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
+    this.bindPressableButton(this.dailyRewardButtonNode, this.handleDailyRewardTap)
+    this.bindPressableButton(this.shopButtonNode, this.handleShopTap)
+    this.bindPressableButton(this.coinResourceButtonNode, this.handleCoinResourceTap)
+    this.bindPressableButton(this.staminaResourceButtonNode, this.handleEnergyMoreTap)
 
     this.safeOff(this.rankCloseButtonNode, Node.EventType.TOUCH_END, this.handleRankCloseTap)
     this.safeOn(this.rankCloseButtonNode, Node.EventType.TOUCH_END, this.handleRankCloseTap)
@@ -761,7 +1044,9 @@ export class StartPageController extends Component {
       this.shareButtonNode = this.createActionIconButton(bar, 'ShareButton', this.shareButtonSpriteFrame, '享')
       this.shareButtonNode.setPosition(ACTION_ICON_PAIR_OFFSET, 0, 0)
     }
-    this.hideHomeSettingsButton()
+    if (!this.homepageLayerNode) {
+      this.hideHomeSettingsButton()
+    }
   }
 
   private hideHomeSettingsButton() {
@@ -1649,6 +1934,26 @@ export class StartPageController extends Component {
   private handleShareTap(event: EventTouch) {
     event.propagationStopped = true
     this.shareHandler?.()
+  }
+
+  private handleSettingsTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.settingsHandler?.()
+  }
+
+  private handleDailyRewardTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.dailyRewardHandler?.()
+  }
+
+  private handleShopTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.shopHandler?.()
+  }
+
+  private handleCoinResourceTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.shopHandler?.()
   }
 
   private handleEnergyMoreTap(event: EventTouch) {

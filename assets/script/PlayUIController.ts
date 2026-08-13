@@ -155,7 +155,8 @@ const PLAYER_AMOUNT_BAR_CAPSULE_GAP = 18
 const GAME_DESIGN_WIDTH = 750
 const GAME_DESIGN_HEIGHT = 1334
 const GAME_BACKGROUND_SPRITE_FRAME_UUID = '5ad49fb5-9e08-4dc5-9ee9-1451320c9378@f9941'
-const GAME_SETTINGS_SPRITE_FRAME_UUID = 'e46abce5-f5e6-4bf3-aa9c-d85173983ec2@f9941'
+// 游戏页与首页共用同一枚设置图标，避免两个界面出现不同的齿轮样式。
+const GAME_SETTINGS_SPRITE_FRAME_UUID = '84a1f2b0-6d31-4e77-9c42-2b80d1f5100d@f9941'
 const SKILL_ICON_SPRITE_FRAME_UUIDS: Record<PlaySkillKind, string> = {
   bomb: 'c2bd34f2-a783-4855-8af8-fa07fe942dc1@f9941',
   hammer: 'a7c0480a-a4dd-46dc-ab94-4c0df29d1bd8@f9941',
@@ -964,8 +965,7 @@ export class PlayUIController extends Component {
       return
     }
     this.ensureSettingsButtonVisual(statusContent?.getChildByName('SettingsBtn') ?? null)
-    this.ensureModeCard(statusContent)
-    this.ensureObjectiveCard(statusContent)
+    this.hideUnsupportedProgressCards(statusContent)
     this.ensureNextPieceCard(statusContent)
     const scoreNode =
       statusContent?.getChildByName('Score') ??
@@ -1027,6 +1027,17 @@ export class PlayUIController extends Component {
     }
     this.displayedScore = this.currentState.score
     this.scoreTweenState.value = this.currentState.score
+  }
+
+  // 当前为无关卡目标的经典合成模式，不展示“第几关”和冰封进度占位卡。
+  private hideUnsupportedProgressCards(parent: Node) {
+    for (const name of ['ModeCard', 'ObjectiveCard']) {
+      const node = parent.getChildByName(name)
+      if (node) {
+        node.active = false
+      }
+    }
+    this.objectiveProgressLabel = null
   }
 
   /** 分数星标独立绘制，避免星星和文字共用一种颜色。 */
