@@ -37,6 +37,7 @@ export type PlayUIState = {
   score: number
   highestValue: number
   gameOverCoinReward: number
+  gameOverRewardDoubled: boolean
   isGameOver: boolean
   isPaused: boolean
   isResolving: boolean
@@ -73,6 +74,7 @@ export type PlayUIActions = {
   useSwap: () => void
   homeFromGameOver: () => void
   shareFromGameOver: () => void
+  doubleGameOverReward: () => void
   coinRewardShare: () => void
 }
 
@@ -250,6 +252,7 @@ export class PlayUIController extends Component {
     score: 0,
     highestValue: 0,
     gameOverCoinReward: 0,
+    gameOverRewardDoubled: false,
     isGameOver: false,
     isPaused: false,
     isResolving: false,
@@ -288,6 +291,8 @@ export class PlayUIController extends Component {
   private gameOverReplayHandler: (() => void) | null = null
   // 结算弹窗分享按钮只通知逻辑层做平台分享适配。
   private gameOverShareHandler: (() => void) | null = null
+  // 双倍奖励按钮只通知玩法层完成平台流程和经济入账，UI 不直接增加金币。
+  private gameOverDoubleRewardHandler: (() => void) | null = null
   // 结算弹窗首页 icon 只通知逻辑层切回首页，不在 UI 层直接改对局状态。
   private gameOverHomeHandler: (() => void) | null = null
   // 缓存第一个技能节点，和其他技能共用选中态与取消提示。
@@ -342,6 +347,7 @@ export class PlayUIController extends Component {
     this.gameOverReplayHandler = actions.restart
     this.gameOverHomeHandler = actions.homeFromGameOver
     this.gameOverShareHandler = actions.shareFromGameOver
+    this.gameOverDoubleRewardHandler = actions.doubleGameOverReward
     this.coinMoreHandler = actions.coinRewardShare
     this.counterNumberSpriteFrames = resources.counterNumberSpriteFrames ?? []
 
@@ -398,7 +404,8 @@ export class PlayUIController extends Component {
       this.currentState.isGameOver,
       this.currentState.score,
       this.currentState.highestValue,
-      this.currentState.gameOverCoinReward
+      this.currentState.gameOverCoinReward,
+      this.currentState.gameOverRewardDoubled
     )
   }
   private skillVisualKeys: Record<PlaySkillKind, string> = {
@@ -926,7 +933,7 @@ export class PlayUIController extends Component {
       hostNode: this.node,
       replayHandler: this.gameOverReplayHandler,
       homeHandler: this.gameOverHomeHandler,
-      shareHandler: this.gameOverShareHandler,
+      shareHandler: this.gameOverDoubleRewardHandler,
       popupSpriteFrame,
       replayButtonSpriteFrame,
       homeButtonSpriteFrame,
