@@ -144,7 +144,10 @@ export class GameOverOverlayController extends Component {
     this.maskNode.getComponent(Graphics) ?? this.maskNode.addComponent(Graphics)
 
     this.panelNode = this.getOrCreateNode(this.node, 'Panel')
-    this.panelNode.getComponent(UITransform)?.setContentSize(GAME_OVER_PANEL_WIDTH, GAME_OVER_PANEL_HEIGHT)
+    ;(this.panelNode.getComponent(UITransform) ?? this.panelNode.addComponent(UITransform)).setContentSize(
+      GAME_OVER_PANEL_WIDTH,
+      GAME_OVER_PANEL_HEIGHT
+    )
     this.configurePanelSprite(this.panelNode)
 
     this.ensureLabels(this.panelNode)
@@ -184,10 +187,14 @@ export class GameOverOverlayController extends Component {
     const sprite = panel.getComponent(Sprite) ?? panel.addComponent(Sprite)
     sprite.spriteFrame = this.popupSpriteFrame
     sprite.sizeMode = Sprite.SizeMode.CUSTOM
+    sprite.enabled = !!this.popupSpriteFrame
     panel.getComponent(UITransform)?.setContentSize(GAME_OVER_PANEL_WIDTH, GAME_OVER_PANEL_HEIGHT)
 
-    const graphics = panel.getComponent(Graphics) ?? panel.addComponent(Graphics)
-    graphics.enabled = !this.popupSpriteFrame
+    // Sprite 与 Graphics 都是可渲染组件，不能挂在同一个节点；无弹窗贴图时改用独立背景子节点兜底。
+    const fallbackBackground = panel.getChildByName('FallbackBackground')
+    if (fallbackBackground) {
+      fallbackBackground.active = !this.popupSpriteFrame
+    }
   }
 
   /**
@@ -211,7 +218,7 @@ export class GameOverOverlayController extends Component {
 
     const highestTile = this.getOrCreateNode(panel, 'HighestTile')
     highestTile.setPosition(18, 196, 0)
-    highestTile.getComponent(UITransform)?.setContentSize(120, 104)
+    ;(highestTile.getComponent(UITransform) ?? highestTile.addComponent(UITransform)).setContentSize(120, 104)
     this.drawHighestTile(highestTile)
     this.highestValueLabel = this.ensureLabel(
       highestTile,
@@ -301,7 +308,7 @@ export class GameOverOverlayController extends Component {
   ) {
     const labelNode = this.getOrCreateNode(parent, name)
     labelNode.setPosition(position)
-    labelNode.getComponent(UITransform)?.setContentSize(width, height)
+    ;(labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform)).setContentSize(width, height)
     const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label)
     label.string = text
     label.fontSize = fontSize
@@ -329,7 +336,10 @@ export class GameOverOverlayController extends Component {
     const button = this.getOrCreateNode(parent, name)
     button.setPosition(x, y, 0)
     // icon 视觉较轻，但触摸热区保持足够大，避免小屏误点。
-    button.getComponent(UITransform)?.setContentSize(GAME_OVER_ICON_HIT_SIZE, GAME_OVER_ICON_HIT_SIZE + 34)
+    ;(button.getComponent(UITransform) ?? button.addComponent(UITransform)).setContentSize(
+      GAME_OVER_ICON_HIT_SIZE,
+      GAME_OVER_ICON_HIT_SIZE + 34
+    )
     // 兼容旧版大按钮节点热更新复用：父节点只作为点击热区，不再渲染旧 Sprite/Graphics。
     const legacySprite = button.getComponent(Sprite)
     if (legacySprite) {
@@ -344,26 +354,33 @@ export class GameOverOverlayController extends Component {
     const iconNode = this.getOrCreateNode(button, 'Icon')
     iconNode.setPosition(0, 8, 0)
     const iconTransform = iconNode.getComponent(UITransform) ?? iconNode.addComponent(UITransform)
-    const sprite = iconNode.getComponent(Sprite) ?? iconNode.addComponent(Sprite)
-    sprite.spriteFrame = spriteFrame
-    sprite.enabled = !!spriteFrame
-    const graphics = iconNode.getComponent(Graphics) ?? iconNode.addComponent(Graphics)
-    graphics.clear()
     if (spriteFrame) {
+      const sprite = iconNode.getComponent(Sprite) ?? iconNode.addComponent(Sprite)
+      sprite.spriteFrame = spriteFrame
+      sprite.enabled = true
       iconTransform.setContentSize(GAME_OVER_ICON_SOURCE_WIDTH, GAME_OVER_ICON_SOURCE_HEIGHT)
       sprite.sizeMode = Sprite.SizeMode.RAW
       iconNode.setScale(this.getIconImageScale(iconSize))
-      graphics.enabled = false
     } else {
+      const sprite = iconNode.getComponent(Sprite)
+      if (sprite) {
+        sprite.enabled = false
+      }
       iconTransform.setContentSize(iconSize, iconSize)
       iconNode.setScale(Vec3.ONE)
-      graphics.enabled = true
-      this.drawIconFallback(iconNode, iconKind, iconSize)
+      const fallbackVisual = this.getOrCreateNode(iconNode, 'FallbackVisual')
+      fallbackVisual.active = true
+      fallbackVisual.setPosition(Vec3.ZERO)
+      ;(fallbackVisual.getComponent(UITransform) ?? fallbackVisual.addComponent(UITransform)).setContentSize(
+        iconSize,
+        iconSize
+      )
+      this.drawIconFallback(fallbackVisual, iconKind, iconSize)
     }
 
-    const fallbackIcon = iconNode.getChildByName('FallbackIcon')
-    if (fallbackIcon) {
-      fallbackIcon.active = !spriteFrame
+    const fallbackVisual = iconNode.getChildByName('FallbackVisual')
+    if (fallbackVisual) {
+      fallbackVisual.active = !spriteFrame
     }
 
     this.ensureIconLabel(button, text)
@@ -440,7 +457,15 @@ export class GameOverOverlayController extends Component {
       return
     }
 
-    const graphics = this.panelNode.getComponent(Graphics) ?? this.panelNode.addComponent(Graphics)
+    const background = this.getOrCreateNode(this.panelNode, 'FallbackBackground')
+    background.active = true
+    background.setPosition(Vec3.ZERO)
+    background.setSiblingIndex(0)
+    ;(background.getComponent(UITransform) ?? background.addComponent(UITransform)).setContentSize(
+      GAME_OVER_PANEL_WIDTH,
+      GAME_OVER_PANEL_HEIGHT
+    )
+    const graphics = background.getComponent(Graphics) ?? background.addComponent(Graphics)
     graphics.clear()
     graphics.fillColor = new Color(225, 109, 38, 255)
     graphics.roundRect(

@@ -4,6 +4,7 @@ import { AudioClip, director } from 'cc'
 import { PlayUIController, type PlayUIState } from './PlayUIController'
 import { GameAudioManager } from './GameAudioManager'
 import { GameShareAdapter } from './GameShareAdapter'
+import { GameFeedbackAdapter } from './GameFeedbackAdapter'
 import type { SkillKind } from './SkillStock'
 import { PlayerEconomyStore } from './PlayerEconomyStore'
 import { BoardGeometry } from './BoardGeometry'
@@ -36,6 +37,7 @@ type DirectedMergeResult = {
 export type OngoingGameSnapshot = {
   boardValues: Array<Array<number | null>>
   currentPieceValue: number | null
+  nextPieceValue?: number | null
   currentPieceY: number | null
   currentColumn: number
   bonusScore: number
@@ -213,7 +215,7 @@ export class PlayController extends Component {
 
   // 新棋子出生在棋盘顶部之外的偏移量，给玩家留出观察和拖动时间。
   @property({ tooltip: 'Spawn offset above board' })
-  spawnOffsetY = 160
+  spawnOffsetY = 0
 
   @property({ type: [SpriteFrame], tooltip: '技能计数数字贴图' })
   counterNumberSpriteFrames: SpriteFrame[] = []
@@ -226,6 +228,8 @@ export class PlayController extends Component {
   private currentPiece: PieceController | null = null
   // 当前下落棋子的目标列。
   private currentColumn = 0
+  // 下一枚棋子预先抽取，仅用于设计稿的左侧预览卡。
+  private nextPieceValue = 2
   // 是否处于按住后的快速下落状态。
   private isFastDropping = false
   // 游戏结束标记；当前由结算弹窗接管重玩入口，根节点触摸重开只作为兜底。
@@ -250,6 +254,9 @@ export class PlayController extends Component {
   private readonly scoreManager = new ScoreManager()
   // UI 渲染组件，专门负责棋盘绘制、状态栏、控制栏和暂停遮罩。
   private uiController: PlayUIController | null = null
+  // 棋子和临时特效使用独立层级，避免运行时追加节点盖住暂停/结算覆盖层。
+  private pieceLayer: Node | null = null
+  private fxLayer: Node | null = null
   // 首页已经拆到独立 home.scene；玩法场景加载后直接进入一局。
   private hasStartedSession = true
   // 拖尾生成计时器，用来控制特效频率。
@@ -259,6 +266,7 @@ export class PlayController extends Component {
   // 音频和分享适配从玩法主流程中拆出，降低 PlayController 的横向职责。
   private audioManager: GameAudioManager | null = null
   private readonly shareAdapter = new GameShareAdapter()
+  private readonly feedbackAdapter = new GameFeedbackAdapter()
   // 记录最近一次合并音效时间，用来给连续消除留出可感知的停顿。
   private lastMergeSoundTimeMs = -Infinity
   // 本局结束时发放的金币数，只用于结算弹窗展示，重开或回首页后清零。
@@ -267,42 +275,58 @@ export class PlayController extends Component {
   private usedSkillsThisGame: Record<SkillKind, boolean> = this.createEmptySkillUsageState()
   // 生命周期入口：先准备棋盘数据，再把界面初始化交给独立的 UI 组件。
   onLoad() {
+    // 750×1334 游戏页中出生棋子紧贴棋盘上方，避免和顶部目标卡重叠。
+    this.spawnOffsetY = 0
     const ongoingSnapshot = OngoingGameSession.consumeSnapshot()
     if (!OngoingGameSession.hasActiveGame()) {
       // 兼容 Creator 直接预览 game.scene 的开发入口。
       OngoingGameSession.beginNewGame()
     }
     this.resetBoard()
+    this.ensureGameplayLayers()
     this.boardGeometry = new BoardGeometry(this.node, this.buildBoardGeometryOptions())
     this.audioManager = new GameAudioManager(this.node)
     this.audioManager.setup()
     this.uiController = this.getComponent(PlayUIController) ?? this.addComponent(PlayUIController)
     // UI 组件只接收绘制所需参数和按钮回调，不参与玩法计算。
     this.uiController.setup({
-      boardwidth: this.boardwidth,
-      boardheight: this.boardheight,
-      pieceSize: this.pieceSize,
-      spacing: this.spacing,
-      onPauseTap: () => this.togglePauseFromUi(),
-      onPauseReplayTap: () => {
-        void this.restartGame()
+      layout: {
+        boardwidth: this.boardwidth,
+        boardheight: this.boardheight,
+        pieceSize: this.pieceSize,
+        spacing: this.spacing
       },
-      onPauseHomeTap: () => this.returnToStartPageFromPause(),
-      onBombSkillTap: () => this.toggleBombSkillFromUi(),
-      onHammerSkillTap: () => this.toggleHammerSkillFromUi(),
-      onSwapSkillTap: () => this.toggleSwapSkillFromUi(),
-      onGameOverReplayTap: () => {
-        void this.restartGame()
+      actions: {
+        pause: () => this.togglePauseFromUi(),
+        restart: () => {
+          void this.restartGame()
+        },
+        homeFromPause: () => this.returnToStartPageFromPause(),
+        shareFromPause: () => {
+          void this.shareGameFromPause()
+        },
+        feedbackFromPause: () => {
+          void this.openFeedbackFromPause()
+        },
+        useBomb: () => this.toggleBombSkillFromUi(),
+        useHammer: () => this.toggleHammerSkillFromUi(),
+        useSwap: () => this.toggleSwapSkillFromUi(),
+        homeFromGameOver: () => this.returnToStartPageFromGameOver(),
+        shareFromGameOver: () => {
+          void this.shareGameFromGameOver()
+        },
+        coinRewardShare: () => {
+          void this.shareForCoinReward()
+        }
       },
-      onGameOverHomeTap: () => this.returnToStartPageFromGameOver(),
-      onGameOverShareTap: () => this.shareGameFromGameOver(),
-      coinBarPrefab: this.coinBarPrefab,
-      onCoinMoreTap: () => void this.shareForCoinReward(),
-      counterNumberSpriteFrames: this.counterNumberSpriteFrames,
-      gameOverPopupSpriteFrame: this.gameOverPopupSpriteFrame,
-      gameOverReplayButtonSpriteFrame: this.gameOverReplayButtonSpriteFrame,
-      gameOverHomeButtonSpriteFrame: this.gameOverHomeButtonSpriteFrame,
-      gameOverShareButtonSpriteFrame: this.gameOverShareButtonSpriteFrame
+      resources: {
+        coinBarPrefab: this.coinBarPrefab,
+        counterNumberSpriteFrames: this.counterNumberSpriteFrames,
+        gameOverPopupSpriteFrame: this.gameOverPopupSpriteFrame,
+        gameOverReplayButtonSpriteFrame: this.gameOverReplayButtonSpriteFrame,
+        gameOverHomeButtonSpriteFrame: this.gameOverHomeButtonSpriteFrame,
+        gameOverShareButtonSpriteFrame: this.gameOverShareButtonSpriteFrame
+      }
     })
     if (ongoingSnapshot) {
       this.restoreOngoingGame(ongoingSnapshot)
@@ -328,6 +352,41 @@ export class PlayController extends Component {
     this.node.off(Node.EventType.TOUCH_END, this.handleTouchEnd, this)
     this.node.off(Node.EventType.TOUCH_CANCEL, this.handleTouchCancel, this)
     this.uiController = null
+    this.pieceLayer = null
+    this.fxLayer = null
+  }
+
+  /**
+   * 解析 Scene 中固定的 PieceLayer/FxLayer；旧场景缺少节点时才创建兼容层。
+   *
+   * 两层都保持与 Main 相同的局部坐标系：棋盘逻辑无需改坐标换算，
+   * 但新生成的棋子和动画不会再因为 append 到 Main 末尾而压住 OverlayLayer。
+   */
+  private ensureGameplayLayers() {
+    const boardNode = this.node.getChildByName('board') ?? this.node.getChildByName('Board')
+    this.pieceLayer = this.node.getChildByName('PieceLayer')
+    if (!this.pieceLayer) {
+      this.pieceLayer = new Node('PieceLayer')
+      this.pieceLayer.setParent(this.node)
+    }
+
+    this.fxLayer = this.node.getChildByName('FxLayer')
+    if (!this.fxLayer) {
+      this.fxLayer = new Node('FxLayer')
+      this.fxLayer.setParent(this.node)
+    }
+
+    const boardIndex = boardNode?.getSiblingIndex() ?? 0
+    this.pieceLayer.setSiblingIndex(Math.min(boardIndex + 1, this.node.children.length - 1))
+    this.fxLayer.setSiblingIndex(Math.min(this.pieceLayer.getSiblingIndex() + 1, this.node.children.length - 1))
+  }
+
+  private getPieceLayer() {
+    return this.pieceLayer?.isValid ? this.pieceLayer : this.node
+  }
+
+  private getFxLayer() {
+    return this.fxLayer?.isValid ? this.fxLayer : this.node
   }
 
   // 所有玩法短音效统一从这里转给音频管理器，空资源会被安全忽略。
@@ -544,6 +603,7 @@ export class PlayController extends Component {
     this.gameOverCoinReward = 0
     this.usedSkillsThisGame = this.createEmptySkillUsageState()
     this.currentColumn = Math.floor(this.boardwidth / 2)
+    this.nextPieceValue = this.randomBasePieceValue()
     this.lastMergeSoundTimeMs = -Infinity
   }
 
@@ -552,6 +612,7 @@ export class PlayController extends Component {
     return {
       boardValues: this.board.map((row) => row.map((piece) => piece?.getValue() ?? null)),
       currentPieceValue: this.currentPiece?.getValue() ?? null,
+      nextPieceValue: this.nextPieceValue,
       currentPieceY: this.currentPiece?.node.position.y ?? null,
       currentColumn: this.currentColumn,
       bonusScore: this.scoreManager.getBonusScore(),
@@ -591,6 +652,7 @@ export class PlayController extends Component {
     }
 
     this.scoreManager.restore(snapshot.bonusScore, snapshot.highestPieceValue)
+    this.nextPieceValue = snapshot.nextPieceValue ?? this.randomBasePieceValue()
     this.usedSkillsThisGame = {
       bomb: !!snapshot.usedSkillsThisGame?.bomb,
       hammer: !!snapshot.usedSkillsThisGame?.hammer,
@@ -636,8 +698,8 @@ export class PlayController extends Component {
     pieceNode.getComponent(UITransform)?.setContentSize(this.pieceSize, this.pieceSize)
     pieceController.setValue(value)
     pieceNode.setScale(Vec3.ONE)
-    this.node.addChild(pieceNode)
-    pieceController.syncTrailEffect()
+    this.getPieceLayer().addChild(pieceNode)
+    pieceController.syncLayout(true)
     return pieceController
   }
 
@@ -658,7 +720,7 @@ export class PlayController extends Component {
   /**
    * 生成下一颗可操作棋子并放到出生区。
    *
-   * 这里只负责实例化预制体、同步棋盘格子尺寸、随机初始数值和刷新 UI 状态。
+   * 这里只负责实例化预制体、同步棋盘格子尺寸、消费预览数值和刷新 UI 状态。
    * 如果当前棋盘已经没有可落子列，会直接进入游戏结束流程。
    */
   private spawnPiece() {
@@ -684,18 +746,18 @@ export class PlayController extends Component {
       // 让预制体的真实显示尺寸和当前棋盘格子尺寸保持一致。
       pieceTransform.setContentSize(this.pieceSize, this.pieceSize)
     }
-    // 棋子尺寸由棋盘动态决定，拖尾发射区域也要在实例化后按真实尺寸重新校准。
-    pieceController.syncTrailEffect()
-
-    const value = this.basePieceList[Math.floor(Math.random() * this.basePieceList.length)]
+    const value = this.nextPieceValue
+    this.nextPieceValue = this.randomBasePieceValue()
     this.currentColumn = column
     this.isFastDropping = false
     this.trailTimer = 0
     pieceController.setValue(value)
+    // 棋子尺寸由棋盘动态决定，主体、装饰、数字和拖尾在设值后统一校准。
+    pieceController.syncLayout(true)
     this.scoreManager.updateHighestPieceValue(value)
     pieceNode.setScale(Vec3.ONE)
     pieceNode.setPosition(this.getSpawnPosition(column))
-    this.node.addChild(pieceNode)
+    this.getPieceLayer().addChild(pieceNode)
     this.currentPiece = pieceController
     this.refreshUiState()
   }
@@ -800,7 +862,8 @@ export class PlayController extends Component {
       desiredPreviewPiecePosition: null
     }
     // 被拖动的棋子临时提到更高层级，避免拖拽过程中被其他棋子遮住。
-    piece.node.setSiblingIndex(this.node.children.length - 1)
+    const pieceParent = piece.node.parent ?? this.getPieceLayer()
+    piece.node.setSiblingIndex(pieceParent.children.length - 1)
     piece.node.setScale(new Vec3(1.08, 1.08, 1))
     this.moveSwapDragPiece(event)
   }
@@ -928,7 +991,8 @@ export class PlayController extends Component {
       return
     }
 
-    dragState.piece.node.setSiblingIndex(Math.min(dragState.originalSiblingIndex, this.node.children.length - 1))
+    const pieceParent = dragState.piece.node.parent ?? this.getPieceLayer()
+    dragState.piece.node.setSiblingIndex(Math.min(dragState.originalSiblingIndex, pieceParent.children.length - 1))
   }
 
   // 真正执行交换：先改棋盘数据，再播放双向移动，随后复用现有全盘消除结算。
@@ -1242,8 +1306,9 @@ export class PlayController extends Component {
     sprite.spriteFrame = this.bombSkillSpriteFrame
     sprite.sizeMode = Sprite.SizeMode.CUSTOM
 
-    bombNode.setParent(this.node)
-    bombNode.setSiblingIndex(this.node.children.length - 1)
+    const fxLayer = this.getFxLayer()
+    bombNode.setParent(fxLayer)
+    bombNode.setSiblingIndex(fxLayer.children.length - 1)
     bombNode.setPosition(position)
     bombNode.setScale(new Vec3(0.72, 0.72, 1))
     return bombNode
@@ -1352,8 +1417,9 @@ export class PlayController extends Component {
 
       const opacity = particle.addComponent(UIOpacity)
       opacity.opacity = 230
-      particle.setParent(this.node)
-      particle.setSiblingIndex(this.node.children.length - 1)
+      const fxLayer = this.getFxLayer()
+      particle.setParent(fxLayer)
+      particle.setSiblingIndex(fxLayer.children.length - 1)
       particle.setPosition(position.clone().add3f(
         (Math.random() - 0.5) * this.pieceSize * 0.28,
         (Math.random() - 0.5) * this.pieceSize * 0.28,
@@ -1399,7 +1465,7 @@ export class PlayController extends Component {
     sprite.color = new Color(255, 231, 132, 190)
     const opacity = shockwave.addComponent(UIOpacity)
     opacity.opacity = 140
-    shockwave.setParent(this.node)
+    shockwave.setParent(this.getFxLayer())
     shockwave.setPosition(position)
     shockwave.setScale(new Vec3(0.35, 0.35, 1))
     this.transientFx.register(shockwave)
@@ -1429,8 +1495,9 @@ export class PlayController extends Component {
     sprite.spriteFrame = this.hammerSkillSpriteFrame
     sprite.sizeMode = Sprite.SizeMode.CUSTOM
 
-    hammerNode.setParent(this.node)
-    hammerNode.setSiblingIndex(this.node.children.length - 1)
+    const fxLayer = this.getFxLayer()
+    hammerNode.setParent(fxLayer)
+    hammerNode.setSiblingIndex(fxLayer.children.length - 1)
     hammerNode.setPosition(position.clone().add3f(this.pieceSize * 0.32, this.pieceSize * 0.58, 0))
     hammerNode.setScale(new Vec3(0.92, 0.92, 1))
     hammerNode.setRotationFromEuler(0, 0, -28)
@@ -2008,8 +2075,9 @@ export class PlayController extends Component {
     const impact = this.createFxPiece(anchor)
     const opacity = impact.addComponent(UIOpacity)
     opacity.opacity = 150
-    impact.setParent(this.node)
-    impact.setSiblingIndex(this.node.children.length - 1)
+    const fxLayer = this.getFxLayer()
+    impact.setParent(fxLayer)
+    impact.setSiblingIndex(fxLayer.children.length - 1)
     impact.setPosition(position)
     impact.setScale(new Vec3(0.58, 0.58, 1))
 
@@ -2047,7 +2115,7 @@ export class PlayController extends Component {
     const flash = this.createFxPiece(anchor)
     const opacity = flash.addComponent(UIOpacity)
     opacity.opacity = 88
-    flash.setParent(this.node)
+    flash.setParent(this.getFxLayer())
     flash.setPosition(position)
     flash.setScale(new Vec3(0.82, 0.82, 1))
     const sprite = flash.getComponent(Sprite)
@@ -2088,7 +2156,7 @@ export class PlayController extends Component {
       opacity.opacity = 120
       const transform = particle.getComponent(UITransform)
       transform?.setContentSize(14, 14)
-      particle.setParent(this.node)
+      particle.setParent(this.getFxLayer())
       particle.setPosition(position)
       particle.setScale(new Vec3(0.14, 0.14, 1))
       this.transientFx.register(particle)
@@ -2212,6 +2280,8 @@ export class PlayController extends Component {
     const economy = this.economy.getSnapshot()
     return {
       currentValue: this.currentPiece?.getValue() ?? null,
+      nextValue: this.nextPieceValue,
+      currentColumn: this.currentColumn,
       score: boardScore + this.scoreManager.getBonusScore(),
       highestValue: this.scoreManager.getHighestPieceValue(),
       gameOverCoinReward: this.gameOverCoinReward,
@@ -2306,13 +2376,45 @@ export class PlayController extends Component {
   }
 
   // 分享入口只负责适配平台能力；没有平台 API 时保持静默降级，避免打断暂停弹窗。
-  private shareGameFromPause() {
-    this.shareAdapter.shareScore(this.scoreManager.getTotalScore(this.board), 'pause_share')
+  private async shareGameFromPause() {
+    const result = await this.shareAdapter.shareScore(this.scoreManager.getTotalScore(this.board), 'pause_share')
+    if (!this.node.isValid) {
+      return
+    }
+
+    if (result === 'cancelled') {
+      this.uiController?.showTransientMessage('分享未完成')
+    } else if (result === 'unsupported') {
+      this.uiController?.showTransientMessage('当前平台暂不支持分享')
+    }
   }
 
   // 结算弹窗分享本局分数，和暂停分享共用平台适配逻辑。
-  private shareGameFromGameOver() {
-    this.shareAdapter.shareScore(this.scoreManager.getTotalScore(this.board), 'game_over_share')
+  private async shareGameFromGameOver() {
+    const result = await this.shareAdapter.shareScore(this.scoreManager.getTotalScore(this.board), 'game_over_share')
+    if (!this.node.isValid) {
+      return
+    }
+
+    if (result === 'cancelled') {
+      this.uiController?.showTransientMessage('分享未完成')
+    } else if (result === 'unsupported') {
+      this.uiController?.showTransientMessage('当前平台暂不支持分享')
+    }
+  }
+
+  // 客服能力统一交给平台适配器；设置弹窗只派发意图，不直接依赖微信 API。
+  private async openFeedbackFromPause() {
+    const result = await this.feedbackAdapter.open('pause_feedback')
+    if (!this.node.isValid) {
+      return
+    }
+
+    if (result === 'unsupported') {
+      this.uiController?.showTransientMessage('当前平台暂不支持客服反馈')
+    } else if (result === 'failed') {
+      this.uiController?.showTransientMessage('客服入口打开失败，请稍后重试')
+    }
   }
 
   /**
@@ -2484,6 +2586,10 @@ export class PlayController extends Component {
     this.audioManager?.pauseBackgroundMusic()
     this.playSoundEffect(this.soundEffectClips.gameOverAudioClip)
     this.refreshUiState()
+  }
+
+  private randomBasePieceValue() {
+    return this.basePieceList[Math.floor(Math.random() * this.basePieceList.length)]
   }
 
   /**

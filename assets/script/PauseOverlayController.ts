@@ -4,8 +4,9 @@
   Color,
   Component,
   EventTouch,
+  Graphics,
+  Label,
   Node,
-  screen,
   Sprite,
   tween,
   Tween,
@@ -27,8 +28,17 @@ const PAUSE_PANEL_HIDDEN_GAP = 32
 const AUDIO_MUSIC_VOLUME_KEY = 'play.audio.musicVolume'
 // 音效音量本地存储键。
 const AUDIO_SOUND_EFFECT_KEY = 'play.audio.soundEffectVolume'
-// 暂停层底部动作按钮的安全区基础留白。
-const PAUSE_ACTION_SAFE_BOTTOM_PADDING = 108
+// 游戏内设置面板统一尺寸；在 750 宽设计分辨率下保留两侧 65 像素安全边距。
+const PAUSE_PANEL_WIDTH = 620
+const PAUSE_PANEL_HEIGHT = 760
+const PAUSE_ACTION_BUTTON_WIDTH = 250
+const PAUSE_ACTION_BUTTON_HEIGHT = 68
+const PAUSE_CONTINUE_BUTTON_WIDTH = 320
+const PAUSE_CONTINUE_BUTTON_HEIGHT = 76
+const PAUSE_PANEL_BORDER = new Color(93, 62, 42, 245)
+const PAUSE_PANEL_FILL = new Color(255, 249, 224, 252)
+const PAUSE_TEXT_COLOR = new Color(81, 55, 37, 255)
+const GENERATED_BACKGROUND_NAME = 'GeneratedBackground'
 
 @ccclass('PauseOverlayController')
 export class PauseOverlayController extends Component {
@@ -78,6 +88,9 @@ export class PauseOverlayController extends Component {
   private replayHandler: (() => void) | null = null
   // 暂停层回首页按钮只通知逻辑层保存对局并切换到首页场景。
   private homeHandler: (() => void) | null = null
+  // 分享和反馈只派发平台意图，暂停组件自身不访问平台 API。
+  private shareHandler: (() => void) | null = null
+  private feedbackHandler: (() => void) | null = null
   // 回首页会销毁当前游戏场景，点击后只派发一次，避免连续触摸重复触发解绑和切场景。
   private isReturningHome = false
   // 关闭弹窗的按钮
@@ -89,6 +102,10 @@ export class PauseOverlayController extends Component {
   private replayButtonNode: Node | null = null
   // 层级管理器中配置的回首页按钮节点。
   private homeButtonNode: Node | null = null
+  private shareButtonNode: Node | null = null
+  private feedbackButtonNode: Node | null = null
+  private utilityActionsNode: Node | null = null
+  private gameActionsNode: Node | null = null
 
   // 由外部 UI 组件在启动时调用，把 play 根节点传进来；暂停层只绑定已有按钮，不创建额外层级。
   setup(options: {
@@ -96,16 +113,21 @@ export class PauseOverlayController extends Component {
     pauseHandler: (() => void) | null
     replayHandler: (() => void) | null
     homeHandler: (() => void) | null
+    shareHandler: (() => void) | null
+    feedbackHandler: (() => void) | null
   }) {
     this.hostNode = options.hostNode
     this.pauseHandler = options.pauseHandler
     this.replayHandler = options.replayHandler
     this.homeHandler = options.homeHandler
+    this.shareHandler = options.shareHandler
+    this.feedbackHandler = options.feedbackHandler
     this.isReturningHome = false
     this.ensureOverlayStructure()
     this.ensurePauseOverlayMaskSprite()
     this.bindPauseOverlayMask()
     this.ensureAudioControls()
+    this.configurePausePanelLayout()
     this.bindPlayButton()
     this.bindPauseActionButtons()
     this.layoutPauseActionButtons()
@@ -123,6 +145,7 @@ export class PauseOverlayController extends Component {
     }
 
     this.ensurePauseOverlayMaskSprite()
+    this.configurePausePanelLayout()
     this.configureAudioControlLayout()
     this.layoutPauseActionButtons()
     this.refreshAudioControls()
@@ -155,6 +178,8 @@ export class PauseOverlayController extends Component {
     this.unbindPauseActionButton(this.playButtonNode, this.onCloseButtonTap)
     this.unbindPauseActionButton(this.replayButtonNode, this.onReplayButtonTap)
     this.unbindPauseActionButton(this.homeButtonNode, this.onHomeButtonTap)
+    this.unbindPauseActionButton(this.shareButtonNode, this.onShareButtonTap)
+    this.unbindPauseActionButton(this.feedbackButtonNode, this.onFeedbackButtonTap)
   }
 
   // PauseOverlay 节点优先复用 scene 中现成的 Mask 和 Panel，缺失时再补最小结构。
@@ -191,6 +216,94 @@ export class PauseOverlayController extends Component {
     this.pausePanelShownPosition = panel.position.clone()
   }
 
+  // 设置面板使用固定信息区和动作区，避免旧版大图决定排版，也避免操作按钮游离在弹窗外。
+  private configurePausePanelLayout() {
+    const panel = this.pauseOverlayPanel
+    if (!panel) {
+      return
+    }
+
+    const panelTransform = panel.getComponent(UITransform) ?? panel.addComponent(UITransform)
+    panelTransform.setContentSize(PAUSE_PANEL_WIDTH, PAUSE_PANEL_HEIGHT)
+    const panelSprite = panel.getComponent(Sprite)
+    if (panelSprite) {
+      panelSprite.enabled = false
+    }
+
+    // Panel 历史节点已经挂有 Sprite；Cocos 同一节点不能同时拥有两个可渲染组件，
+    // 因此把程序绘制背景放到独立子节点，既避免组件冲突，也能稳定压在内容下方。
+    const panelBackground = this.ensureGraphicsBackground(panel, PAUSE_PANEL_WIDTH, PAUSE_PANEL_HEIGHT)
+    const panelGraphics = panelBackground.getComponent(Graphics)!
+    panelGraphics.clear()
+    panelGraphics.fillColor = new Color(61, 43, 31, 90)
+    panelGraphics.roundRect(
+      -PAUSE_PANEL_WIDTH * 0.5 + 8,
+      -PAUSE_PANEL_HEIGHT * 0.5 - 10,
+      PAUSE_PANEL_WIDTH,
+      PAUSE_PANEL_HEIGHT,
+      44
+    )
+    panelGraphics.fill()
+    panelGraphics.fillColor = PAUSE_PANEL_BORDER
+    panelGraphics.roundRect(
+      -PAUSE_PANEL_WIDTH * 0.5,
+      -PAUSE_PANEL_HEIGHT * 0.5,
+      PAUSE_PANEL_WIDTH,
+      PAUSE_PANEL_HEIGHT,
+      44
+    )
+    panelGraphics.fill()
+    panelGraphics.fillColor = PAUSE_PANEL_FILL
+    panelGraphics.roundRect(
+      -PAUSE_PANEL_WIDTH * 0.5 + 5,
+      -PAUSE_PANEL_HEIGHT * 0.5 + 5,
+      PAUSE_PANEL_WIDTH - 10,
+      PAUSE_PANEL_HEIGHT - 10,
+      39
+    )
+    panelGraphics.fill()
+
+    const titleNode = panel.getChildByName('SettingLabel')
+    const titleLabel = titleNode?.getComponent(Label) ?? null
+    if (titleNode && titleLabel) {
+      titleNode.setPosition(0, 315, 0)
+      titleNode.getComponent(UITransform)?.setContentSize(280, 58)
+      titleLabel.string = '游戏设置'
+      titleLabel.fontSize = 38
+      titleLabel.lineHeight = 48
+      titleLabel.color = PAUSE_TEXT_COLOR
+      titleLabel.isBold = true
+      titleLabel.horizontalAlign = Label.HorizontalAlign.CENTER
+      titleLabel.verticalAlign = Label.VerticalAlign.CENTER
+    }
+
+    this.closeButtonNode = this.closeButtonNode ?? panel.getChildByName('CloseBtn')
+    if (this.closeButtonNode) {
+      this.closeButtonNode.setPosition(260, 316, 0)
+      this.closeButtonNode.getComponent(UITransform)?.setContentSize(64, 64)
+    }
+
+    this.layoutAudioControl(this.bgMusicControl, 188, '音乐音量')
+    this.layoutAudioControl(this.soundEffectControl, 94, '音效音量')
+  }
+
+  private layoutAudioControl(control: Node | null, y: number, title: string) {
+    if (!this.canUseNode(control)) {
+      return
+    }
+    control.setPosition(-165, y, 0)
+    const labelNode = control.children.find((child) => !!child.getComponent(Label)) ?? null
+    const label = labelNode?.getComponent(Label) ?? null
+    if (labelNode && label) {
+      labelNode.setPosition(70, labelNode.position.y, labelNode.position.z)
+      label.string = title
+      label.fontSize = 24
+      label.lineHeight = 30
+      label.color = PAUSE_TEXT_COLOR
+      label.isBold = true
+    }
+  }
+
   // 蒙版层只负责拦截触摸，防止暂停时点穿到底层棋盘和控制栏。
   private swallowOverlayTouch(event: EventTouch) {
     event.propagationStopped = true
@@ -218,55 +331,288 @@ export class PauseOverlayController extends Component {
     this.scheduleOnce(() => this.homeHandler?.(), 0)
   }
 
+  private onShareButtonTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.shareHandler?.()
+  }
+
+  private onFeedbackButtonTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.feedbackHandler?.()
+  }
+
   // Play 按钮是暂停面板里已有的继续按钮，兼容旧命名 Save 和 Continue。
   private bindPlayButton() {
     this.playButtonNode = this.findExistingPauseActionNode(['Play', 'Save', 'Continue'])
+    if (this.playButtonNode) {
+      this.stylePauseButton(
+        this.playButtonNode,
+        '继续游戏',
+        PAUSE_CONTINUE_BUTTON_WIDTH,
+        PAUSE_CONTINUE_BUTTON_HEIGHT,
+        new Color(112, 185, 117, 255),
+        '▶'
+      )
+    }
     this.bindPauseActionButton(this.playButtonNode, this.onCloseButtonTap)
   }
 
-  // 只绑定层级管理器中已经存在的暂停动作按钮，不在脚本里创建或隐藏任何按钮节点。
+  // 固定按钮优先复用 Scene 节点；迁移期缺失的分享、反馈挂点只补到明确的固定容器中。
   private bindPauseActionButtons() {
     this.replayButtonNode = this.findExistingPauseActionNode(['Repay', 'Replay'])
     this.homeButtonNode = this.findExistingPauseActionNode(['Home'])
+    this.ensurePauseActionStructure()
     this.bindPauseActionButton(this.replayButtonNode, this.onReplayButtonTap)
     this.bindPauseActionButton(this.homeButtonNode, this.onHomeButtonTap)
+    this.bindPauseActionButton(this.shareButtonNode, this.onShareButtonTap)
+    this.bindPauseActionButton(this.feedbackButtonNode, this.onFeedbackButtonTap)
   }
 
-  // 这两个按钮来自层级管理器，这里只根据安全区修正位置，不创建新节点。
+  // 游戏操作在面板内同一行等宽排布；安全区由整个面板居中解决，不再把按钮散落到屏幕两角。
   private layoutPauseActionButtons() {
-    const overlayTransform = this.node.getComponent(UITransform)
-    if (!overlayTransform) {
+    if (!this.pauseOverlayPanel) {
       return
     }
 
-    const safeArea = sys.getSafeAreaRect()
-    const safeBottom = safeArea
-      ? (safeArea.y / Math.max(1, screen.windowSize.height)) * overlayTransform.height
-      : 0
-    const edgeInsetX = Math.max(96, Math.min(132, overlayTransform.width * 0.15))
-    const bottomInsetY = Math.max(PAUSE_ACTION_SAFE_BOTTOM_PADDING, safeBottom + PAUSE_ACTION_SAFE_BOTTOM_PADDING)
-    const buttonY = -overlayTransform.height * 0.5 + bottomInsetY
-
+    this.utilityActionsNode?.setPosition(0, -24, 0)
+    this.gameActionsNode?.setPosition(0, -120, 0)
+    if (this.canUseNode(this.shareButtonNode)) {
+      this.shareButtonNode.setPosition(-140, 0, 0)
+    }
+    if (this.canUseNode(this.feedbackButtonNode)) {
+      this.feedbackButtonNode.setPosition(140, 0, 0)
+    }
     if (this.canUseNode(this.homeButtonNode)) {
-      this.homeButtonNode.setPosition(-overlayTransform.width * 0.5 + edgeInsetX, buttonY, 0)
+      this.homeButtonNode.setPosition(-140, 0, 0)
     }
     if (this.canUseNode(this.replayButtonNode)) {
-      this.replayButtonNode.setPosition(overlayTransform.width * 0.5 - edgeInsetX, buttonY, 0)
+      this.replayButtonNode.setPosition(140, 0, 0)
+    }
+    if (this.canUseNode(this.playButtonNode)) {
+      this.playButtonNode.setPosition(0, -235, 0)
     }
   }
 
-  // 新按钮可能被放在 PauseOverlay 根节点、Panel 或 Mask 下，这里只做浅层兼容查找。
+  private ensurePauseActionStructure() {
+    const panel = this.pauseOverlayPanel
+    if (!panel) {
+      return
+    }
+
+    this.utilityActionsNode = this.ensureContainer(panel, 'UtilityActions', 560, PAUSE_ACTION_BUTTON_HEIGHT)
+    this.gameActionsNode = this.ensureContainer(panel, 'GameActions', 560, PAUSE_ACTION_BUTTON_HEIGHT)
+    this.shareButtonNode =
+      this.findChildDeep(panel, ['ShareButton', 'Share']) ?? this.createActionNode(this.utilityActionsNode, 'ShareButton')
+    this.feedbackButtonNode =
+      this.findChildDeep(panel, ['FeedbackButton', 'Feedback']) ??
+      this.createActionNode(this.utilityActionsNode, 'FeedbackButton')
+
+    this.moveNodeToContainer(this.shareButtonNode, this.utilityActionsNode)
+    this.moveNodeToContainer(this.feedbackButtonNode, this.utilityActionsNode)
+    this.moveNodeToContainer(this.homeButtonNode, this.gameActionsNode)
+    this.moveNodeToContainer(this.replayButtonNode, this.gameActionsNode)
+
+    this.stylePauseButton(
+      this.shareButtonNode,
+      '转发好友',
+      PAUSE_ACTION_BUTTON_WIDTH,
+      PAUSE_ACTION_BUTTON_HEIGHT,
+      new Color(255, 183, 91, 255),
+      '↗'
+    )
+    this.stylePauseButton(
+      this.feedbackButtonNode,
+      '客服反馈',
+      PAUSE_ACTION_BUTTON_WIDTH,
+      PAUSE_ACTION_BUTTON_HEIGHT,
+      new Color(102, 194, 199, 255),
+      '✉'
+    )
+    this.stylePauseButton(
+      this.homeButtonNode,
+      '返回首页',
+      PAUSE_ACTION_BUTTON_WIDTH,
+      PAUSE_ACTION_BUTTON_HEIGHT,
+      new Color(116, 183, 210, 255),
+      '⌂'
+    )
+    this.stylePauseButton(
+      this.replayButtonNode,
+      '重新开始',
+      PAUSE_ACTION_BUTTON_WIDTH,
+      PAUSE_ACTION_BUTTON_HEIGHT,
+      new Color(242, 139, 105, 255),
+      '↻'
+    )
+  }
+
+  private ensureContainer(parent: Node, name: string, width: number, height: number) {
+    let container = parent.getChildByName(name)
+    if (!container) {
+      container = new Node(name)
+      container.setParent(parent)
+      container.addComponent(UITransform)
+    }
+    const transform = container.getComponent(UITransform) ?? container.addComponent(UITransform)
+    transform.setContentSize(width, height)
+    return container
+  }
+
+  private createActionNode(parent: Node, name: string) {
+    const node = new Node(name)
+    node.setParent(parent)
+    node.addComponent(UITransform)
+    return node
+  }
+
+  private moveNodeToContainer(node: Node | null, container: Node | null) {
+    if (!this.canUseNode(node) || !this.canUseNode(container) || node.parent === container) {
+      return
+    }
+    node.setParent(container)
+  }
+
+  // 迁移阶段保留旧按钮图片作为小图标，按钮底板统一改为轻量矢量胶囊以避免拉伸和额外贴图。
+  private stylePauseButton(
+    node: Node | null,
+    text: string,
+    width: number,
+    height: number,
+    fillColor: Color,
+    fallbackIcon: string
+  ) {
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform)
+    transform.setContentSize(width, height)
+    const rootSprite = node.getComponent(Sprite)
+    // 旧按钮可能还带着尺寸很大的 Label/Sprite 子节点，只保留重构后的背景、图标和文字。
+    for (const child of node.children) {
+      if (child.name !== GENERATED_BACKGROUND_NAME && child.name !== 'Icon' && child.name !== 'Text') {
+        child.active = false
+      }
+    }
+
+    let icon = node.getChildByName('Icon')
+    if (!icon) {
+      icon = new Node('Icon')
+      icon.setParent(node)
+      icon.addComponent(UITransform)
+    }
+    icon.active = true
+    icon.setPosition(-width * 0.5 + 42, 0, 0)
+
+    // 历史按钮贴图的留白和原始尺寸差异很大，压缩成小图标后仍会显得忽大忽小。
+    // 设置页统一使用轻量符号图标，保持四个操作按钮的视觉重量一致。
+    const legacyIconSprite = icon.getComponent(Sprite)
+    if (legacyIconSprite) {
+      legacyIconSprite.enabled = false
+    }
+    const legacyIconLabel = icon.getComponent(Label)
+    if (legacyIconLabel) {
+      legacyIconLabel.enabled = false
+    }
+    let glyphNode = icon.getChildByName('Glyph')
+    if (!glyphNode) {
+      glyphNode = new Node('Glyph')
+      glyphNode.setParent(icon)
+      glyphNode.addComponent(UITransform)
+      glyphNode.addComponent(Label)
+    }
+    glyphNode.active = true
+    glyphNode.setPosition(Vec3.ZERO)
+    glyphNode.getComponent(UITransform)?.setContentSize(44, 44)
+    const iconLabel = glyphNode.getComponent(Label) ?? glyphNode.addComponent(Label)
+    iconLabel.string = fallbackIcon
+    iconLabel.fontSize = 28
+    iconLabel.lineHeight = 34
+    iconLabel.color = new Color(255, 253, 235, 255)
+    iconLabel.horizontalAlign = Label.HorizontalAlign.CENTER
+    iconLabel.verticalAlign = Label.VerticalAlign.CENTER
+    icon.getComponent(UITransform)?.setContentSize(44, 44)
+    if (rootSprite) {
+      rootSprite.enabled = false
+    }
+
+    const background = this.ensureGraphicsBackground(node, width, height)
+    const graphics = background.getComponent(Graphics)!
+    graphics.clear()
+    graphics.fillColor = PAUSE_PANEL_BORDER
+    graphics.roundRect(-width * 0.5, -height * 0.5, width, height, height * 0.5)
+    graphics.fill()
+    graphics.fillColor = fillColor
+    graphics.roundRect(-width * 0.5 + 4, -height * 0.5 + 4, width - 8, height - 8, height * 0.5 - 4)
+    graphics.fill()
+
+    let labelNode = node.getChildByName('Text')
+    if (!labelNode) {
+      labelNode = new Node('Text')
+      labelNode.setParent(node)
+      labelNode.addComponent(UITransform)
+      labelNode.addComponent(Label)
+    }
+    labelNode.setPosition(25, 0, 0)
+    labelNode.active = true
+    labelNode.getComponent(UITransform)?.setContentSize(width - 84, height - 8)
+    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label)
+    label.string = text
+    label.fontSize = height >= 74 ? 27 : 23
+    label.lineHeight = height >= 74 ? 34 : 30
+    label.color = new Color(255, 253, 235, 255)
+    label.isBold = true
+    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    label.verticalAlign = Label.VerticalAlign.CENTER
+  }
+
+  /**
+   * 为已有 UI 节点补一个只负责程序绘制的背景层。
+   *
+   * 历史 Scene 中的 Panel、Play、Home、Repay 已经挂有 Sprite，直接在根节点添加 Graphics
+   * 会触发“同一节点存在多个 Renderable”警告。独立背景子节点能保留点击区域和序列化引用，
+   * 同时让重构后的胶囊按钮不再受旧贴图原始尺寸影响。
+   */
+  private ensureGraphicsBackground(parent: Node, width: number, height: number) {
+    let background = parent.getChildByName(GENERATED_BACKGROUND_NAME)
+    if (!background) {
+      background = new Node(GENERATED_BACKGROUND_NAME)
+      background.setParent(parent)
+      background.addComponent(UITransform)
+      background.addComponent(Graphics)
+    }
+
+    background.active = true
+    background.setPosition(Vec3.ZERO)
+    background.setSiblingIndex(0)
+    const transform = background.getComponent(UITransform) ?? background.addComponent(UITransform)
+    transform.setContentSize(width, height)
+    return background
+  }
+
+  // 按钮可能已经迁移到动作容器，递归查找可以兼容旧 Scene 和新 Scene 两种层级。
   private findExistingPauseActionNode(names: string[]) {
     const parents = [this.node, this.pauseOverlayPanel, this.pauseOverlayMask]
     for (const parent of parents) {
       if (!parent) {
         continue
       }
-      for (const name of names) {
-        const node = parent.getChildByName(name)
-        if (node) {
-          return node
-        }
+      const node = this.findChildDeep(parent, names)
+      if (node) {
+        return node
+      }
+    }
+    return null
+  }
+
+  private findChildDeep(parent: Node, names: string[]): Node | null {
+    for (const child of parent.children) {
+      if (names.indexOf(child.name) >= 0) {
+        return child
+      }
+      const nested = this.findChildDeep(child, names)
+      if (nested) {
+        return nested
       }
     }
     return null

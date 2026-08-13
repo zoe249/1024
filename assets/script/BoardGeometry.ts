@@ -190,11 +190,16 @@ export class BoardGeometry {
 
   // 根据棋盘当前内区宽度计算左下角第一个格子的中心 x 坐标。
   private getBoardGridOriginX() {
-    return -this.getBoardInnerWidth() / 2 + this.getStepSize() / 2
+    return this.getBoardLocalPosition().x - this.getBoardInnerWidth() / 2 + this.getStepSize() / 2
   }
 
   // 根据棋盘当前内区高度计算左下角第一个格子的中心 y 坐标。
   private getBoardGridOriginY() {
-    return -this.getBoardInnerHeight() / 2 + this.getStepSize() / 2
+    return this.getBoardLocalPosition().y - this.getBoardInnerHeight() / 2 + this.getStepSize() / 2
+  }
+
+  // board 可以在 UI 重构时整体移动，棋子和触摸换算必须同步这个局部偏移。
+  private getBoardLocalPosition() {
+    return this.ownerNode.getChildByName('board')?.position ?? Vec3.ZERO
   }
 }

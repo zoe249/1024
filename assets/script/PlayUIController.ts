@@ -1,5 +1,6 @@
 ﻿import {
   _decorator,
+  assetManager,
   Color,
   Component,
   EventTouch,
@@ -24,16 +25,20 @@ import { GameOverOverlayController } from './GameOverOverlayController'
 
 const { ccclass } = _decorator
 
+type PlaySkillKind = 'bomb' | 'hammer' | 'swap'
+
 // UI 层只关心界面展示所需的最小状态，不参与棋盘运算和合并逻辑。
 export type PlayUIState = {
   currentValue: number | null
+  nextValue: number | null
+  currentColumn: number
   score: number
   highestValue: number
   gameOverCoinReward: number
   isGameOver: boolean
   isPaused: boolean
   isResolving: boolean
-  activeSkill: 'bomb' | 'hammer' | 'swap' | null
+  activeSkill: PlaySkillKind | null
   coins: number
   skillCounts: {
     bomb: number
@@ -45,6 +50,38 @@ export type PlayUIState = {
     hammer: boolean
     swap: boolean
   }
+}
+
+export type PlayUILayout = {
+  boardwidth: number
+  boardheight: number
+  pieceSize: number
+  spacing: number
+}
+
+// 所有 UI 操作统一通过回调回到玩法层，UI 组件不直接修改棋盘、经济或场景状态。
+export type PlayUIActions = {
+  pause: () => void
+  restart: () => void
+  homeFromPause: () => void
+  shareFromPause: () => void
+  feedbackFromPause: () => void
+  useBomb: () => void
+  useHammer: () => void
+  useSwap: () => void
+  homeFromGameOver: () => void
+  shareFromGameOver: () => void
+  coinRewardShare: () => void
+}
+
+// 资源仍由场景序列化后注入，但在 UI 入口处集中成一个对象，避免继续扩张玩法参数列表。
+export type PlayUIResources = {
+  coinBarPrefab?: Prefab | null
+  counterNumberSpriteFrames?: SpriteFrame[]
+  gameOverPopupSpriteFrame?: SpriteFrame | null
+  gameOverReplayButtonSpriteFrame?: SpriteFrame | null
+  gameOverHomeButtonSpriteFrame?: SpriteFrame | null
+  gameOverShareButtonSpriteFrame?: SpriteFrame | null
 }
 
 // 只读取胶囊布局会用到的字段，避免在没有微信类型声明时丢失类型约束。
@@ -65,19 +102,19 @@ type WechatWindowInfo = {
 }
 
 // 棋盘边框厚度，UI 绘制和棋盘内区布局都会基于这个值计算。
-const BOARD_BORDER_WIDTH = 20
+const BOARD_BORDER_WIDTH = 8
 // 棋盘内层圆角与棋子圆角保持一致，保证视觉统一。
-const BOARD_INNER_RADIUS = 8
+const BOARD_INNER_RADIUS = 14
 // 棋盘外层玻璃阴影色，用很低透明度替代原来的实色边框。
-const BOARD_GLASS_SHADOW_COLOR = new Color(28, 56, 70, 68)
+const BOARD_GLASS_SHADOW_COLOR = new Color(75, 55, 32, 18)
 // 棋盘主体玻璃蒙版色改成浅青蓝灰，保持冷色调但不过度压暗。
-const BOARD_GLASS_TINT_COLOR = new Color(116, 190, 214, 52)
+const BOARD_GLASS_TINT_COLOR = new Color(255, 248, 220, 8)
 // 棋盘内区玻璃底色只做浅冷雾化，避免变成厚重实色背景。
-const BOARD_GLASS_INNER_COLOR = new Color(156, 220, 236, 30)
+const BOARD_GLASS_INNER_COLOR = new Color(255, 248, 220, 0)
 // 棋盘列的轻量蒙版色，用交替透明块让五列仍然可识别。
-const BOARD_COLUMN_TINT_COLOR = new Color(188, 238, 248, 20)
+const BOARD_COLUMN_TINT_COLOR = new Color(255, 255, 255, 0)
 // 棋盘列边缘柔光色，让虚线和玻璃面板看起来是一体的。
-const BOARD_COLUMN_EDGE_COLOR = new Color(126, 216, 238, 48)
+const BOARD_COLUMN_EDGE_COLOR = new Color(255, 255, 255, 0)
 // 外层圆角由内层圆角叠加边框厚度得到，确保边框厚度视觉一致。
 const BOARD_OUTER_RADIUS = BOARD_INNER_RADIUS + BOARD_BORDER_WIDTH
 // 列分隔虚线宽度。
@@ -91,7 +128,7 @@ const BOARD_DASH_INSET = 16
 // 虚线圆角半径，让列分隔更柔和。
 const BOARD_DASH_RADIUS = 2
 // 虚线颜色改成浅冷柔光，配合新的玻璃蒙版而不是原来的实色样式。
-const BOARD_DASH_COLOR = new Color(214, 248, 255, 92)
+const BOARD_DASH_COLOR = new Color(255, 255, 255, 0)
 // 技能次数角标的默认位置参考左侧第一个技能的 MoreBtn，也就是无次数时视觉正确的加号位置。
 const SKILL_BADGE_FALLBACK_X = -45.529
 const SKILL_BADGE_FALLBACK_Y = -40.613
@@ -110,6 +147,68 @@ const PLAYER_AMOUNT_BAR_DEFAULT_TOP_INSET = 92
 const PLAYER_AMOUNT_BAR_FALLBACK_X = -190
 const PLAYER_AMOUNT_BAR_SETTINGS_GAP = 18
 const PLAYER_AMOUNT_BAR_CAPSULE_GAP = 18
+// 游戏页以 750×1334 为设计基准，运行时只对安全区做整体补偿。
+const GAME_DESIGN_WIDTH = 750
+const GAME_DESIGN_HEIGHT = 1334
+const GAME_BACKGROUND_SPRITE_FRAME_UUID = '5ad49fb5-9e08-4dc5-9ee9-1451320c9378@f9941'
+const GAME_SETTINGS_SPRITE_FRAME_UUID = 'e46abce5-f5e6-4bf3-aa9c-d85173983ec2@f9941'
+const SKILL_ICON_SPRITE_FRAME_UUIDS: Record<PlaySkillKind, string> = {
+  bomb: 'c2bd34f2-a783-4855-8af8-fa07fe942dc1@f9941',
+  hammer: 'a7c0480a-a4dd-46dc-ab94-4c0df29d1bd8@f9941',
+  swap: '32927f70-f651-471d-b8a1-7c2bbe5ddc17@f9941'
+}
+const GAME_BOARD_Y = -60
+const GAME_SKILLS_Y = -568
+const HUD_SETTINGS_HIT_SIZE = 76
+const HUD_SETTINGS_ICON_SIZE = 64
+const HUD_SETTINGS_X = -325
+const HUD_SETTINGS_Y = 616
+const HUD_MODE_WIDTH = 230
+const HUD_MODE_HEIGHT = 64
+const HUD_MODE_Y = 615
+const HUD_OBJECTIVE_WIDTH = 210
+const HUD_OBJECTIVE_HEIGHT = 90
+const HUD_OBJECTIVE_Y = 507
+const HUD_SCORE_WIDTH = 174
+const HUD_SCORE_HEIGHT = 50
+const HUD_SCORE_X = 268
+const HUD_SCORE_Y = 415
+const HUD_NEXT_X = -297
+const HUD_NEXT_Y = 400
+const HUD_SCORE_BG_COLOR = new Color(255, 250, 230, 238)
+const HUD_SCORE_BORDER_COLOR = new Color(91, 61, 35, 235)
+const HUD_SCORE_TEXT_COLOR = new Color(81, 55, 37, 255)
+const HUD_CARD_BG_COLOR = new Color(255, 250, 234, 246)
+const HUD_CARD_BORDER_COLOR = new Color(75, 53, 40, 255)
+const HUD_ACCENT_GREEN = new Color(101, 190, 54, 255)
+const HUD_ACCENT_BLUE = new Color(74, 183, 205, 255)
+const DROP_GUIDE_COLOR = new Color(255, 144, 35, 218)
+const DROP_GUIDE_FILL_COLOR = new Color(109, 225, 238, 30)
+// 技能状态层只做轻量描边和标签，不创建独立材质。
+const SKILL_SELECTION_COLOR = new Color(255, 242, 142, 245)
+const SKILL_DISABLED_OPACITY = 118
+const SKILL_EMPTY_OPACITY = 178
+const SKILL_CARD_BORDER_COLOR = new Color(75, 53, 40, 255)
+const SKILL_CARD_INNER_COLORS: Record<PlaySkillKind, Color> = {
+  bomb: new Color(131, 82, 185, 255),
+  hammer: new Color(61, 148, 208, 255),
+  swap: new Color(255, 190, 53, 255)
+}
+const SKILL_CARD_LABELS: Record<PlaySkillKind, string> = {
+  bomb: '炸弹',
+  hammer: '木槌',
+  swap: '交换'
+}
+
+const HUD_PIECE_COLORS: Record<number, Color> = {
+  2: new Color(248, 236, 220, 255),
+  4: new Color(247, 165, 54, 255),
+  8: new Color(255, 194, 46, 255),
+  16: new Color(155, 200, 73, 255),
+  32: new Color(80, 174, 97, 255),
+  64: new Color(53, 161, 165, 255),
+  128: new Color(63, 136, 199, 255)
+}
 
 @ccclass('PlayUIController')
 export class PlayUIController extends Component {
@@ -127,6 +226,8 @@ export class PlayUIController extends Component {
   private pauseReplayHandler: (() => void) | null = null
   // 暂停弹窗回首页按钮只转交给逻辑层处理，不直接切页面。
   private pauseHomeHandler: (() => void) | null = null
+  private pauseShareHandler: (() => void) | null = null
+  private pauseFeedbackHandler: (() => void) | null = null
   // 第一个技能按钮只通知逻辑层进入炸弹技能，不在 UI 层直接操作棋盘。
   private bombSkillHandler: (() => void) | null = null
   // 第二个技能按钮只通知逻辑层进入锤子技能，不在 UI 层直接操作棋盘。
@@ -142,6 +243,8 @@ export class PlayUIController extends Component {
   // UI 层缓存当前展示状态，便于统一刷新状态栏、按钮和遮罩。
   private currentState: PlayUIState = {
     currentValue: null,
+    nextValue: null,
+    currentColumn: 2,
     score: 0,
     highestValue: 0,
     gameOverCoinReward: 0,
@@ -167,6 +270,10 @@ export class PlayUIController extends Component {
   private pauseButtonLabel: Label | null = null
   // 分数数值文本直接复用 scene 里的 Score/Number 节点，UI 层只负责刷新显示。
   private scoreNumberLabel: Label | null = null
+  private objectiveProgressLabel: Label | null = null
+  private nextValueLabel: Label | null = null
+  private nextValueTile: Graphics | null = null
+  private dropGuideNode: Node | null = null
   // 当前已经显示到界面的分数，数字滚动动画会从这个值补间到目标值。
   private displayedScore = 0
   // Tween 直接驱动这个简单对象，避免去改节点缩放或位置。
@@ -188,7 +295,7 @@ export class PlayUIController extends Component {
   // 缓存第二个技能节点，和第三技能共用同一套技能态表现。
   private hammerSkillNode: Node | null = null
   // 三个技能数量图片由 UI 层统一缓存，具体显示由 Skill/Box 下的节点显隐控制。
-  private skillCountSprites: Record<'bomb' | 'hammer' | 'swap', Sprite | null> = {
+  private skillCountSprites: Record<PlaySkillKind, Sprite | null> = {
     bomb: null,
     hammer: null,
     swap: null
@@ -201,64 +308,57 @@ export class PlayUIController extends Component {
   private skillHintOpacity: UIOpacity | null = null
   // 记录提示当前是否显示，避免每帧刷新状态时重复重启动画。
   private isSkillHintVisible = false
+  private feedbackLayer: Node | null = null
+  private toastNode: Node | null = null
+  private toastOpacity: UIOpacity | null = null
   // 游戏场景顶部只显示金币 Prefab，数值由 PlayUIState 单向渲染。
   private coinBarNode: Node | null = null
   private coinAmountLabel: Label | null = null
   private coinMoreHandler: (() => void) | null = null
 
-  // 由逻辑层在启动时调用，把棋盘尺寸和交互回调交给 UI 层管理。
+  // 由逻辑层在启动时调用，把布局、动作和表现资源分别交给 UI 层管理。
   setup(options: {
-    boardwidth: number
-    boardheight: number
-    pieceSize: number
-    spacing: number
-    onPauseTap: () => void
-    onPauseReplayTap: () => void
-    onPauseHomeTap: () => void
-    onBombSkillTap: () => void
-    onHammerSkillTap: () => void
-    onSwapSkillTap: () => void
-    onGameOverReplayTap: () => void
-    onGameOverHomeTap: () => void
-    onGameOverShareTap: () => void
-    coinBarPrefab?: Prefab | null
-    onCoinMoreTap?: () => void
-    counterNumberSpriteFrames?: SpriteFrame[]
-    gameOverPopupSpriteFrame?: SpriteFrame | null
-    gameOverReplayButtonSpriteFrame?: SpriteFrame | null
-    gameOverHomeButtonSpriteFrame?: SpriteFrame | null
-    gameOverShareButtonSpriteFrame?: SpriteFrame | null
+    layout: PlayUILayout
+    actions: PlayUIActions
+    resources?: PlayUIResources
   }) {
-    this.boardwidth = options.boardwidth
-    this.boardheight = options.boardheight
-    this.pieceSize = options.pieceSize
-    this.spacing = options.spacing
-    this.pauseHandler = options.onPauseTap
-    this.pauseReplayHandler = options.onPauseReplayTap
-    this.pauseHomeHandler = options.onPauseHomeTap
-    this.bombSkillHandler = options.onBombSkillTap
-    this.hammerSkillHandler = options.onHammerSkillTap
-    this.swapSkillHandler = options.onSwapSkillTap
-    this.gameOverReplayHandler = options.onGameOverReplayTap
-    this.gameOverHomeHandler = options.onGameOverHomeTap
-    this.gameOverShareHandler = options.onGameOverShareTap
-    this.coinMoreHandler = options.onCoinMoreTap ?? null
-    this.counterNumberSpriteFrames = options.counterNumberSpriteFrames ?? []
+    const { layout, actions, resources = {} } = options
+    this.boardwidth = layout.boardwidth
+    this.boardheight = layout.boardheight
+    this.pieceSize = layout.pieceSize
+    this.spacing = layout.spacing
+    this.pauseHandler = actions.pause
+    this.pauseReplayHandler = actions.restart
+    this.pauseHomeHandler = actions.homeFromPause
+    this.pauseShareHandler = actions.shareFromPause
+    this.pauseFeedbackHandler = actions.feedbackFromPause
+    this.bombSkillHandler = actions.useBomb
+    this.hammerSkillHandler = actions.useHammer
+    this.swapSkillHandler = actions.useSwap
+    this.gameOverReplayHandler = actions.restart
+    this.gameOverHomeHandler = actions.homeFromGameOver
+    this.gameOverShareHandler = actions.shareFromGameOver
+    this.coinMoreHandler = actions.coinRewardShare
+    this.counterNumberSpriteFrames = resources.counterNumberSpriteFrames ?? []
 
     this.fitBackgroundToScreen()
+    this.ensureGameBackground()
+    this.ensureGamePageLayout()
     this.hideCoinBar()
     this.ensureBoardDecorations()
     this.ensureScoreDisplay()
     this.ensureSkillButtons()
+    this.ensureFeedbackLayer()
     this.ensureSkillHint()
+    this.ensureToast()
     // this.ensureStatusLabel()
     // this.ensurePauseButton()
     this.ensurePauseOverlay()
     this.ensureGameOverOverlay(
-      options.gameOverPopupSpriteFrame ?? null,
-      options.gameOverReplayButtonSpriteFrame ?? null,
-      options.gameOverHomeButtonSpriteFrame ?? null,
-      options.gameOverShareButtonSpriteFrame ?? null
+      resources.gameOverPopupSpriteFrame ?? null,
+      resources.gameOverReplayButtonSpriteFrame ?? null,
+      resources.gameOverHomeButtonSpriteFrame ?? null,
+      resources.gameOverShareButtonSpriteFrame ?? null
     )
     this.configureControlBar()
     this.configureStatusBar()
@@ -279,6 +379,9 @@ export class PlayUIController extends Component {
   renderState(state: PlayUIState) {
     this.currentState = state
     this.refreshScoreDisplay()
+    this.refreshObjectiveDisplay()
+    this.refreshNextPieceDisplay()
+    this.refreshDropGuide()
     this.refreshSkillButtonState()
     // this.refreshStatus()
     // this.refreshPauseButton()
@@ -290,36 +393,41 @@ export class PlayUIController extends Component {
       this.currentState.gameOverCoinReward
     )
   }
+  private skillVisualKeys: Record<PlaySkillKind, string> = {
+    bomb: '',
+    hammer: '',
+    swap: ''
+  }
 
   /**
    * 显示由逻辑层传入的一次性提示，例如技能购买结果或体力不足。
-   * 提示复用技能模式气泡，避免 UI 层再维护一套重复的节点和动画。
+   * Toast 与技能模式提示拆开，避免临时消息破坏仍处于激活状态的技能提示。
    */
   showTransientMessage(message: string) {
-    if (!this.skillHintNode || !this.skillHintOpacity) {
+    if (!this.toastNode || !this.toastOpacity) {
       return
     }
 
-    const label = this.skillHintNode.getComponent(Label)
+    const label = this.toastNode.getChildByName('Text')?.getComponent(Label) ?? null
     if (!label) {
       return
     }
 
-    this.isSkillHintVisible = false
-    Tween.stopAllByTarget(this.skillHintNode)
-    Tween.stopAllByTarget(this.skillHintOpacity)
-    this.updateSkillHintLayout()
-    this.skillHintNode.setSiblingIndex(this.node.children.length - 1)
-    this.skillHintNode.active = true
-    this.skillHintNode.setScale(Vec3.ONE)
-    this.skillHintOpacity.opacity = 255
+    Tween.stopAllByTarget(this.toastNode)
+    Tween.stopAllByTarget(this.toastOpacity)
+    // FeedbackLayer 保持在 OverlayLayer 下方，不能因为一次 Toast 破坏暂停/结算层的输入优先级。
+    this.toastNode.active = true
+    this.toastNode.setScale(new Vec3(0.96, 0.96, 1))
+    this.toastOpacity.opacity = 0
     label.string = message
-    tween(this.skillHintOpacity)
+    tween(this.toastOpacity).to(0.12, { opacity: 255 }, { easing: 'quadOut' }).start()
+    tween(this.toastNode).to(0.12, { scale: Vec3.ONE }, { easing: 'backOut' }).start()
+    tween(this.toastOpacity)
       .delay(1.5)
       .to(0.16, { opacity: 0 }, { easing: 'quadIn' })
       .call(() => {
-        if (this.skillHintNode) {
-          this.skillHintNode.active = false
+        if (this.toastNode) {
+          this.toastNode.active = false
         }
       })
       .start()
@@ -341,6 +449,12 @@ export class PlayUIController extends Component {
     if (this.skillHintOpacity?.isValid) {
       Tween.stopAllByTarget(this.skillHintOpacity)
     }
+    if (this.canUseNode(this.toastNode)) {
+      Tween.stopAllByTarget(this.toastNode)
+    }
+    if (this.toastOpacity?.isValid) {
+      Tween.stopAllByTarget(this.toastOpacity)
+    }
     if (this.canUseNode(this.bombSkillNode)) {
       Tween.stopAllByTarget(this.bombSkillNode)
     }
@@ -351,6 +465,10 @@ export class PlayUIController extends Component {
       Tween.stopAllByTarget(this.swapSkillNode)
     }
     this.scoreNumberLabel = null
+    this.objectiveProgressLabel = null
+    this.nextValueLabel = null
+    this.nextValueTile = null
+    this.dropGuideNode = null
     this.bombSkillNode = null
     this.hammerSkillNode = null
     this.swapSkillNode = null
@@ -359,6 +477,9 @@ export class PlayUIController extends Component {
     this.skillCountSprites.swap = null
     this.skillHintNode = null
     this.skillHintOpacity = null
+    this.toastNode = null
+    this.toastOpacity = null
+    this.feedbackLayer = null
     this.coinBarNode = null
     this.coinAmountLabel = null
     this.pauseOverlayController = null
@@ -378,7 +499,65 @@ export class PlayUIController extends Component {
     const bgSprite = this.node.getComponent(Sprite)
     if (bgSprite) {
       bgSprite.sizeMode = Sprite.SizeMode.CUSTOM
+      bgSprite.enabled = true
     }
+  }
+
+  /**
+   * 强制使用游戏页已压缩的春日草地背景。
+   * Scene 中仍保留序列化引用，UUID 加载用于覆盖预览中可能存在的旧场景缓存。
+   */
+  private ensureGameBackground() {
+    const sprite = this.node.getComponent(Sprite)
+    if (!sprite) {
+      return
+    }
+
+    sprite.enabled = true
+    sprite.sizeMode = Sprite.SizeMode.CUSTOM
+    assetManager.loadAny(GAME_BACKGROUND_SPRITE_FRAME_UUID, (error, asset) => {
+      if (error || !this.node.isValid || !(asset instanceof SpriteFrame)) {
+        return
+      }
+      sprite.spriteFrame = asset
+      sprite.enabled = true
+      sprite.sizeMode = Sprite.SizeMode.CUSTOM
+    })
+  }
+
+  /**
+   * 把历史场景节点收口到游戏页设计稿的 750×1334 坐标。
+   * 仅调整 UI 容器与棋盘节点，棋盘行列、落子和合并规则不变。
+   */
+  private ensureGamePageLayout() {
+    const rootTransform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform)
+    rootTransform.setContentSize(GAME_DESIGN_WIDTH, GAME_DESIGN_HEIGHT)
+
+    const boardNode = this.node.getChildByName('board')
+    if (boardNode) {
+      boardNode.setPosition(0, GAME_BOARD_Y, 0)
+      boardNode.getComponent(UITransform)?.setContentSize(
+        this.getBoardInnerWidth() + BOARD_BORDER_WIDTH * 2,
+        this.getBoardInnerHeight() + BOARD_BORDER_WIDTH * 2
+      )
+    }
+
+    const skillsNode = this.getSkillsContainer()
+    if (skillsNode) {
+      skillsNode.setPosition(0, GAME_SKILLS_Y, 0)
+      skillsNode.getComponent(UITransform)?.setContentSize(520, 124)
+      const positions = [-145, 0, 145]
+      for (let index = 0; index < 3; index += 1) {
+        skillsNode.getChildByName(`Skill${index + 1}`)?.setPosition(positions[index], 0, 0)
+      }
+    }
+
+    const statusNode = this.node.getChildByName('Status')
+    const contentNode = statusNode?.getChildByName('Content')
+    statusNode?.setPosition(0, 0, 0)
+    contentNode?.setPosition(0, 0, 0)
+    statusNode?.getComponent(UITransform)?.setContentSize(GAME_DESIGN_WIDTH, GAME_DESIGN_HEIGHT)
+    contentNode?.getComponent(UITransform)?.setContentSize(GAME_DESIGN_WIDTH, GAME_DESIGN_HEIGHT)
   }
 
   // 纯代码绘制玻璃棋盘、列蒙版和列分隔线，并同步列节点占位尺寸。
@@ -535,6 +714,61 @@ export class PlayUIController extends Component {
       }
       graphics.fill()
     }
+
+    this.ensureDropGuide(boardNode, innerHeight)
+  }
+
+  // 设计稿用浅色通道和橙色虚线表示当前落子列，替代旧版粒子拖尾。
+  private ensureDropGuide(boardNode: Node, innerHeight: number) {
+    let guideNode = boardNode.getChildByName('DropGuide')
+    if (!guideNode) {
+      guideNode = new Node('DropGuide')
+      guideNode.setParent(boardNode)
+      guideNode.addComponent(UITransform)
+      guideNode.addComponent(Graphics)
+    }
+    guideNode.getComponent(UITransform)?.setContentSize(this.pieceSize * 0.8, innerHeight + 62)
+    guideNode.setSiblingIndex(Math.min(3, boardNode.children.length - 1))
+    this.dropGuideNode = guideNode
+    this.drawDropGuide(innerHeight)
+  }
+
+  private drawDropGuide(innerHeight: number) {
+    const graphics = this.dropGuideNode?.getComponent(Graphics)
+    if (!graphics) {
+      return
+    }
+
+    const halfWidth = this.pieceSize * 0.38
+    // 设计稿中的引导线从当前棋子下方开始，不能一路顶到 HUD 区域。
+    const top = innerHeight * 0.5 - 58
+    const bottom = -innerHeight * 0.5 + 30
+    graphics.clear()
+    graphics.fillColor = DROP_GUIDE_FILL_COLOR
+    graphics.roundRect(-halfWidth, bottom, halfWidth * 2, top - bottom, 18)
+    graphics.fill()
+    graphics.fillColor = DROP_GUIDE_COLOR
+    for (let y = top - 18; y > bottom + 38; y -= 27) {
+      graphics.roundRect(-4, y - 9, 8, 18, 4)
+    }
+    graphics.fill()
+    graphics.moveTo(-13, bottom + 42)
+    graphics.lineTo(0, bottom + 27)
+    graphics.lineTo(13, bottom + 42)
+    graphics.lineTo(13, bottom + 52)
+    graphics.lineTo(0, bottom + 38)
+    graphics.lineTo(-13, bottom + 52)
+    graphics.close()
+    graphics.fill()
+  }
+
+  private refreshDropGuide() {
+    if (!this.dropGuideNode) {
+      return
+    }
+    const column = Math.max(0, Math.min(this.boardwidth - 1, this.currentState.currentColumn))
+    this.dropGuideNode.setPosition(this.getBoardColumnCenterX(column), 0, 0)
+    this.dropGuideNode.active = !this.currentState.isGameOver
   }
 
   // 确保状态文字节点存在；如果 scene 中没有，就由 UI 层自行补建。
@@ -602,12 +836,16 @@ export class PlayUIController extends Component {
 
   // PauseOverlay 根节点仍由主 UI 层接入，但节点内部动画和事件完全交给独立组件处理。
   private ensurePauseOverlay() {
-    let overlay = this.node.getChildByName('PauseOverlay')
+    const overlayLayer = this.ensureOverlayLayer()
+    let overlay = overlayLayer.getChildByName('PauseOverlay') ?? this.node.getChildByName('PauseOverlay')
     if (!overlay) {
       overlay = new Node('PauseOverlay')
-      overlay.setParent(this.node)
+      overlay.setParent(overlayLayer)
       overlay.active = false
       overlay.addComponent(UITransform).setContentSize(750, 1334)
+    } else if (overlay.parent !== overlayLayer) {
+      // OverlayLayer 与 Main 使用同一原点，迁移旧节点不会改变暂停面板的局部坐标。
+      overlay.setParent(overlayLayer)
     }
 
     this.pauseOverlayController = overlay.getComponent(PauseOverlayController) ?? overlay.addComponent(PauseOverlayController)
@@ -615,23 +853,28 @@ export class PlayUIController extends Component {
       hostNode: this.node,
       pauseHandler: this.pauseHandler,
       replayHandler: this.pauseReplayHandler,
-      homeHandler: this.pauseHomeHandler
+      homeHandler: this.pauseHomeHandler,
+      shareHandler: this.pauseShareHandler,
+      feedbackHandler: this.pauseFeedbackHandler
     })
   }
 
-  // 游戏结束层运行时生成，避免为了结算弹窗再要求手动维护一套 scene 层级。
+  // 优先绑定场景中的固定 GameOverOverlay 根节点，旧场景缺失时只补最小挂点。
   private ensureGameOverOverlay(
     popupSpriteFrame: SpriteFrame | null,
     replayButtonSpriteFrame: SpriteFrame | null,
     homeButtonSpriteFrame: SpriteFrame | null,
     shareButtonSpriteFrame: SpriteFrame | null
   ) {
-    let overlay = this.node.getChildByName('GameOverOverlay')
+    const overlayLayer = this.ensureOverlayLayer()
+    let overlay = overlayLayer.getChildByName('GameOverOverlay') ?? this.node.getChildByName('GameOverOverlay')
     if (!overlay) {
       overlay = new Node('GameOverOverlay')
-      overlay.setParent(this.node)
+      overlay.setParent(overlayLayer)
       overlay.active = false
       overlay.addComponent(UITransform).setContentSize(750, 1334)
+    } else if (overlay.parent !== overlayLayer) {
+      overlay.setParent(overlayLayer)
     }
 
     this.gameOverOverlayController = overlay.getComponent(GameOverOverlayController) ?? overlay.addComponent(GameOverOverlayController)
@@ -647,17 +890,316 @@ export class PlayUIController extends Component {
     })
   }
 
-  // 分数显示优先复用 Status/Content 下已经配好的 Score/Number 节点，不改 scene 布局。
+  // Scene 中固定提供覆盖层挂点；旧场景缺失时只补一个与 Main 同原点的空容器。
+  private ensureOverlayLayer() {
+    let layer = this.node.getChildByName('OverlayLayer')
+    if (!layer) {
+      layer = new Node('OverlayLayer')
+      layer.setParent(this.node)
+      layer.addComponent(UITransform)
+    }
+    const hostTransform = this.node.getComponent(UITransform)
+    const transform = layer.getComponent(UITransform) ?? layer.addComponent(UITransform)
+    transform.setContentSize(hostTransform?.width ?? 750, hostTransform?.height ?? 1334)
+    layer.setPosition(0, 0, 0)
+    layer.setSiblingIndex(this.node.children.length - 1)
+    return layer
+  }
+
+  // 顶部 HUD 复用 scene 中的固定节点，脚本只统一视觉、触摸热区和动态分数。
   private ensureScoreDisplay() {
     const statusContent = this.node.getChildByName('Status')?.getChildByName('Content')
+    if (!statusContent) {
+      return
+    }
+    this.ensureSettingsButtonVisual(statusContent?.getChildByName('SettingsBtn') ?? null)
+    this.ensureModeCard(statusContent)
+    this.ensureObjectiveCard(statusContent)
+    this.ensureNextPieceCard(statusContent)
     const scoreNode =
       statusContent?.getChildByName('Score') ??
       statusContent?.getChildByName('Source') ??
       this.node.getChildByName('Score') ??
       this.node.getChildByName('Source')
-    this.scoreNumberLabel = scoreNode?.getChildByName('Number')?.getComponent(Label) ?? null
+    if (!scoreNode) {
+      return
+    }
+
+    scoreNode.setPosition(HUD_SCORE_X, HUD_SCORE_Y, 0)
+    const scoreTransform = scoreNode.getComponent(UITransform) ?? scoreNode.addComponent(UITransform)
+    scoreTransform.setContentSize(HUD_SCORE_WIDTH, HUD_SCORE_HEIGHT)
+    this.drawScoreCard(scoreNode)
+
+    const titleNode = scoreNode.getChildByName('Label')
+    const titleLabel = titleNode?.getComponent(Label) ?? null
+    if (titleNode && titleLabel) {
+      titleNode.setPosition(-26, 0, 0)
+      titleNode.getComponent(UITransform)?.setContentSize(58, 36)
+      titleLabel.string = '分数'
+      titleLabel.fontSize = 20
+      titleLabel.lineHeight = 24
+      titleLabel.color = HUD_SCORE_TEXT_COLOR
+      titleLabel.horizontalAlign = Label.HorizontalAlign.CENTER
+      titleLabel.verticalAlign = Label.VerticalAlign.CENTER
+      titleLabel.isBold = true
+      titleLabel.enableOutline = false
+      titleLabel.enableShadow = false
+      const titleOutline = titleNode.getComponent(LabelOutline)
+      if (titleOutline) {
+        titleOutline.enabled = false
+      }
+    }
+
+    this.ensureScoreStar(scoreNode)
+
+    const numberNode = scoreNode.getChildByName('Number')
+    this.scoreNumberLabel = numberNode?.getComponent(Label) ?? null
+    if (numberNode && this.scoreNumberLabel) {
+      numberNode.setPosition(42, 0, 0)
+      numberNode.getComponent(UITransform)?.setContentSize(88, 40)
+      this.scoreNumberLabel.fontSize = 25
+      this.scoreNumberLabel.lineHeight = 30
+      this.scoreNumberLabel.color = HUD_SCORE_TEXT_COLOR
+      this.scoreNumberLabel.horizontalAlign = Label.HorizontalAlign.CENTER
+      this.scoreNumberLabel.verticalAlign = Label.VerticalAlign.CENTER
+      this.scoreNumberLabel.isBold = true
+      this.scoreNumberLabel.enableOutline = false
+      this.scoreNumberLabel.enableShadow = false
+      const numberOutline = numberNode.getComponent(LabelOutline)
+      if (numberOutline) {
+        numberOutline.enabled = false
+      }
+    }
     this.displayedScore = this.currentState.score
     this.scoreTweenState.value = this.currentState.score
+  }
+
+  /** 分数星标独立绘制，避免星星和文字共用一种颜色。 */
+  private ensureScoreStar(scoreNode: Node) {
+    const starNode = this.ensureHudNode(scoreNode, 'Star', -66, 0, 28, 28)
+    const star = starNode.getComponent(Graphics) ?? starNode.addComponent(Graphics)
+    star.clear()
+    star.fillColor = HUD_CARD_BORDER_COLOR
+    this.traceStar(star, 0, 0, 14, 7)
+    star.fill()
+    star.fillColor = new Color(255, 193, 48, 255)
+    this.traceStar(star, 0, 0, 10.5, 5.2)
+    star.fill()
+  }
+
+  private traceStar(graphics: Graphics, x: number, y: number, outerRadius: number, innerRadius: number) {
+    for (let index = 0; index < 10; index += 1) {
+      const radius = index % 2 === 0 ? outerRadius : innerRadius
+      const angle = -Math.PI / 2 + index * Math.PI / 5
+      const pointX = x + Math.cos(angle) * radius
+      const pointY = y + Math.sin(angle) * radius
+      if (index === 0) {
+        graphics.moveTo(pointX, pointY)
+      } else {
+        graphics.lineTo(pointX, pointY)
+      }
+    }
+    graphics.close()
+  }
+
+  private ensureModeCard(parent: Node) {
+    const card = this.ensureHudCard(parent, 'ModeCard', 0, HUD_MODE_Y, HUD_MODE_WIDTH, HUD_MODE_HEIGHT, 20)
+    const markNode = this.ensureHudNode(card, 'Mark', -78, 0, 28, 28)
+    const mark = markNode.getComponent(Graphics) ?? markNode.addComponent(Graphics)
+    mark.clear()
+    mark.fillColor = HUD_CARD_BORDER_COLOR
+    mark.moveTo(0, 14)
+    mark.lineTo(14, 0)
+    mark.lineTo(0, -14)
+    mark.lineTo(-14, 0)
+    mark.close()
+    mark.fill()
+    mark.fillColor = HUD_ACCENT_GREEN
+    mark.moveTo(0, 10)
+    mark.lineTo(10, 0)
+    mark.lineTo(0, -10)
+    mark.lineTo(-10, 0)
+    mark.close()
+    mark.fill()
+    this.ensureHudLabel(card, 'Label', '第12关', 22, 0, 156, 46, 29, HUD_SCORE_TEXT_COLOR)
+  }
+
+  private ensureObjectiveCard(parent: Node) {
+    const card = this.ensureHudCard(
+      parent,
+      'ObjectiveCard',
+      0,
+      HUD_OBJECTIVE_Y,
+      HUD_OBJECTIVE_WIDTH,
+      HUD_OBJECTIVE_HEIGHT,
+      22
+    )
+    const iconNode = this.ensureHudNode(card, 'Icon', -62, 0, 58, 58)
+    const icon = iconNode.getComponent(Graphics) ?? iconNode.addComponent(Graphics)
+    icon.clear()
+    icon.fillColor = HUD_CARD_BORDER_COLOR
+    icon.roundRect(-29, -29, 58, 58, 12)
+    icon.fill()
+    icon.fillColor = new Color(221, 248, 247, 255)
+    icon.roundRect(-25, -25, 50, 50, 9)
+    icon.fill()
+    icon.strokeColor = HUD_ACCENT_BLUE
+    icon.lineWidth = 4
+    icon.moveTo(-13, 0)
+    icon.lineTo(13, 0)
+    icon.moveTo(0, -13)
+    icon.lineTo(0, 13)
+    icon.moveTo(-9, -9)
+    icon.lineTo(9, 9)
+    icon.moveTo(-9, 9)
+    icon.lineTo(9, -9)
+    icon.stroke()
+
+    card.getChildByName('Title')?.destroy()
+    card.getChildByName('Description')?.destroy()
+    const progressNode = this.ensureHudNode(card, 'Progress', 43, 0, 94, 62)
+    progressNode.getComponent(Graphics)?.clear()
+    this.objectiveProgressLabel = this.ensureHudLabel(
+      progressNode,
+      'Value',
+      '0/8',
+      0,
+      0,
+      92,
+      54,
+      38,
+      HUD_SCORE_TEXT_COLOR
+    )
+  }
+
+  private ensureNextPieceCard(parent: Node) {
+    const card = this.ensureHudNode(parent, 'NextPieceCard', HUD_NEXT_X, HUD_NEXT_Y, 108, 108)
+    card.getComponent(Graphics)?.clear()
+    const title = this.ensureHudLabel(card, 'Title', '下一枚', 0, 27, 92, 28, 20, HUD_SCORE_TEXT_COLOR)
+    title.enableOutline = true
+    title.outlineColor = new Color(255, 250, 230, 255)
+    title.outlineWidth = 3
+    const tileNode = this.ensureHudNode(card, 'Tile', 0, -18, 52, 52)
+    this.nextValueTile = tileNode.getComponent(Graphics) ?? tileNode.addComponent(Graphics)
+    this.nextValueLabel = this.ensureHudLabel(tileNode, 'Value', '2', 0, 0, 48, 42, 24, HUD_SCORE_TEXT_COLOR)
+    this.refreshNextPieceDisplay()
+  }
+
+  private ensureHudCard(
+    parent: Node,
+    name: string,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    radius: number
+  ) {
+    const node = this.ensureHudNode(parent, name, x, y, width, height)
+    const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics)
+    graphics.clear()
+    graphics.fillColor = HUD_CARD_BORDER_COLOR
+    graphics.roundRect(-width * 0.5, -height * 0.5, width, height, radius)
+    graphics.fill()
+    graphics.fillColor = HUD_CARD_BG_COLOR
+    graphics.roundRect(-width * 0.5 + 3, -height * 0.5 + 3, width - 6, height - 6, Math.max(1, radius - 3))
+    graphics.fill()
+    return node
+  }
+
+  private ensureHudNode(parent: Node, name: string, x: number, y: number, width: number, height: number) {
+    let node = parent.getChildByName(name)
+    if (!node) {
+      node = new Node(name)
+      node.setParent(parent)
+      node.addComponent(UITransform)
+    }
+    node.setPosition(x, y, 0)
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform)
+    transform.setContentSize(width, height)
+    return node
+  }
+
+  private ensureHudLabel(
+    parent: Node,
+    name: string,
+    text: string,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    fontSize: number,
+    color: Color
+  ) {
+    const node = this.ensureHudNode(parent, name, x, y, width, height)
+    const label = node.getComponent(Label) ?? node.addComponent(Label)
+    label.string = text
+    label.fontSize = fontSize
+    label.lineHeight = Math.ceil(fontSize * 1.18)
+    label.color = color
+    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    label.verticalAlign = Label.VerticalAlign.CENTER
+    label.isBold = true
+    return label
+  }
+
+  // 设置按钮视觉尺寸与触摸热区分离，保证图标克制但左上角仍容易点击。
+  private ensureSettingsButtonVisual(settingsNode: Node | null) {
+    if (!settingsNode) {
+      return
+    }
+
+    settingsNode.setPosition(HUD_SETTINGS_X, HUD_SETTINGS_Y, 0)
+    const settingsTransform = settingsNode.getComponent(UITransform) ?? settingsNode.addComponent(UITransform)
+    settingsTransform.setContentSize(HUD_SETTINGS_HIT_SIZE, HUD_SETTINGS_HIT_SIZE)
+    const settingsWidget = settingsNode.getComponent(Widget)
+    if (settingsWidget) {
+      // HUD 已统一使用游戏页坐标，禁用旧 Widget 防止它在下一帧把设置按钮拉回历史偏移。
+      settingsWidget.enabled = false
+    }
+    // 根节点保留较大的触摸热区，图标单独放在子节点中，避免视觉尺寸跟着热区一起放大。
+    const rootSprite = settingsNode.getComponent(Sprite)
+    if (rootSprite) {
+      rootSprite.enabled = false
+    }
+    let iconNode = settingsNode.getChildByName('Icon')
+    if (!iconNode) {
+      iconNode = new Node('Icon')
+      iconNode.setParent(settingsNode)
+      iconNode.addComponent(UITransform)
+      iconNode.addComponent(Sprite)
+    }
+    iconNode.setPosition(0, 0, 0)
+    iconNode.getComponent(UITransform)?.setContentSize(HUD_SETTINGS_ICON_SIZE, HUD_SETTINGS_ICON_SIZE)
+    const iconSprite = iconNode.getComponent(Sprite)
+    if (!iconSprite) {
+      return
+    }
+    iconSprite.sizeMode = Sprite.SizeMode.CUSTOM
+    assetManager.loadAny(GAME_SETTINGS_SPRITE_FRAME_UUID, (error, asset) => {
+      if (!error && iconSprite.node.isValid && asset instanceof SpriteFrame) {
+        iconSprite.spriteFrame = asset
+        iconSprite.sizeMode = Sprite.SizeMode.CUSTOM
+        iconSprite.node.getComponent(UITransform)?.setContentSize(HUD_SETTINGS_ICON_SIZE, HUD_SETTINGS_ICON_SIZE)
+      }
+    })
+  }
+
+  // 分数卡用轻量 Graphics 绘制，避免为一个可伸缩小面板增加新的大图。
+  private drawScoreCard(scoreNode: Node) {
+    const graphics = scoreNode.getComponent(Graphics) ?? scoreNode.addComponent(Graphics)
+    graphics.clear()
+    graphics.fillColor = HUD_SCORE_BORDER_COLOR
+    graphics.roundRect(-HUD_SCORE_WIDTH * 0.5, -HUD_SCORE_HEIGHT * 0.5, HUD_SCORE_WIDTH, HUD_SCORE_HEIGHT, 18)
+    graphics.fill()
+    graphics.fillColor = HUD_SCORE_BG_COLOR
+    graphics.roundRect(
+      -HUD_SCORE_WIDTH * 0.5 + 3,
+      -HUD_SCORE_HEIGHT * 0.5 + 3,
+      HUD_SCORE_WIDTH - 6,
+      HUD_SCORE_HEIGHT - 6,
+      15
+    )
+    graphics.fill()
   }
 
   // 分数字样改成“数字递增”动画；加分时逐步滚到目标值，减分或清零时直接同步。
@@ -693,6 +1235,35 @@ export class PlayUIController extends Component {
         }
       })
       .start()
+  }
+
+  private refreshObjectiveDisplay() {
+    if (this.objectiveProgressLabel) {
+      // 当前关卡规则尚未接入冰封计数，先保持设计稿占位，避免用最高合成值冒充目标进度。
+      this.objectiveProgressLabel.string = '0/8'
+    }
+  }
+
+  private refreshNextPieceDisplay() {
+    if (!this.nextValueLabel || !this.nextValueTile) {
+      return
+    }
+
+    const value = this.currentState.nextValue ?? 2
+    const bodyColor = HUD_PIECE_COLORS[value] ?? new Color(207, 88, 109, 255)
+    this.nextValueTile.clear()
+    this.nextValueTile.fillColor = HUD_CARD_BORDER_COLOR
+    this.nextValueTile.roundRect(-26, -26, 52, 52, 9)
+    this.nextValueTile.fill()
+    this.nextValueTile.fillColor = bodyColor
+    this.nextValueTile.roundRect(-23, -23, 46, 46, 7)
+    this.nextValueTile.fill()
+    this.nextValueLabel.string = `${value}`
+    this.nextValueLabel.fontSize = value >= 100 ? 19 : value >= 10 ? 21 : 24
+    this.nextValueLabel.color = new Color(255, 249, 234, 255)
+    this.nextValueLabel.enableOutline = true
+    this.nextValueLabel.outlineColor = HUD_CARD_BORDER_COLOR
+    this.nextValueLabel.outlineWidth = 2
   }
 
   // 游戏内不再展示金币余额；金币仍由经济仓库维护，首页和购买弹窗按需展示。
@@ -783,9 +1354,21 @@ export class PlayUIController extends Component {
     }
     const baseHeight = this.controlBarBaseHeight
     const totalHeight = baseHeight + safeBottom
+    const widget = container.getComponent(Widget)
+    if (widget) {
+      widget.enabled = false
+    }
 
-    // 控制栏的贴底位置交给 scene 里的 Widget 处理，这里只根据安全区补高度。
+    // 参考稿中三个技能卡直接落在草地上，不再使用旧版整块灰色托盘。
+    // 只能关闭技能栏的旧托盘，不得在兼容回退时把 Main 背景 Sprite 一起关掉。
+    const background = container === this.node ? null : container.getComponent(Sprite)
+    if (background) {
+      background.enabled = false
+    }
+
+    // 技能栏保持设计稿基准坐标，真机时再整体叠加底部安全区。
     controlTransform.setContentSize(controlTransform.width, totalHeight)
+    container.setPosition(0, GAME_SKILLS_Y + safeBottom, 0)
   }
 
   /**
@@ -857,6 +1440,12 @@ export class PlayUIController extends Component {
     const contentTransform = contentNode?.getComponent(UITransform)
     if (!statusNode || !contentNode || !rootTransform || !contentTransform) {
       return
+    }
+
+    // HUD 必须位于棋盘和棋子之上、技能栏之下，否则全屏棋盘会抢走设置按钮的触摸事件。
+    const skillsNode = this.node.getChildByName('SkliisController') ?? this.node.getChildByName('SkillsController')
+    if (skillsNode) {
+      statusNode.setSiblingIndex(Math.max(0, skillsNode.getSiblingIndex() - 1))
     }
 
     if (!this.statusContentBasePosition) {
@@ -1010,12 +1599,16 @@ export class PlayUIController extends Component {
     if (this.bombSkillNode) {
       this.bombSkillNode.off(Node.EventType.TOUCH_END, this.onBombSkillButtonTap, this)
       this.bombSkillNode.on(Node.EventType.TOUCH_END, this.onBombSkillButtonTap, this)
+      this.ensureSkillCardVisual(this.bombSkillNode, 'bomb')
       this.skillCountSprites.bomb = this.ensureSkillCountSprite(this.bombSkillNode)
+      this.ensureSkillStateDecorations(this.bombSkillNode)
     }
     if (this.hammerSkillNode) {
       this.hammerSkillNode.off(Node.EventType.TOUCH_END, this.onHammerSkillButtonTap, this)
       this.hammerSkillNode.on(Node.EventType.TOUCH_END, this.onHammerSkillButtonTap, this)
+      this.ensureSkillCardVisual(this.hammerSkillNode, 'hammer')
       this.skillCountSprites.hammer = this.ensureSkillCountSprite(this.hammerSkillNode)
+      this.ensureSkillStateDecorations(this.hammerSkillNode)
     }
     if (!this.swapSkillNode) {
       return
@@ -1023,7 +1616,172 @@ export class PlayUIController extends Component {
 
     this.swapSkillNode.off(Node.EventType.TOUCH_END, this.onSwapSkillButtonTap, this)
     this.swapSkillNode.on(Node.EventType.TOUCH_END, this.onSwapSkillButtonTap, this)
+    this.ensureSkillCardVisual(this.swapSkillNode, 'swap')
     this.skillCountSprites.swap = this.ensureSkillCountSprite(this.swapSkillNode)
+    this.ensureSkillStateDecorations(this.swapSkillNode)
+  }
+
+  /** 把历史圆形技能按钮收口为设计稿的方形手绘卡片。 */
+  private ensureSkillCardVisual(skillNode: Node, skill: PlaySkillKind) {
+    const rootTransform = skillNode.getComponent(UITransform) ?? skillNode.addComponent(UITransform)
+    rootTransform.setContentSize(108, 114)
+
+    let cardNode = skillNode.getChildByName('Card')
+    if (!cardNode) {
+      cardNode = new Node('Card')
+      cardNode.setParent(skillNode)
+      cardNode.addComponent(UITransform)
+      cardNode.addComponent(Graphics)
+    }
+    cardNode.setPosition(0, -1, 0)
+    cardNode.setSiblingIndex(0)
+    cardNode.getComponent(UITransform)?.setContentSize(96, 104)
+    const card = cardNode.getComponent(Graphics)
+    if (card) {
+      card.clear()
+      card.fillColor = SKILL_CARD_BORDER_COLOR
+      card.roundRect(-48, -52, 96, 104, 13)
+      card.fill()
+      card.fillColor = SKILL_CARD_INNER_COLORS[skill]
+      card.roundRect(-45, -49, 90, 98, 10)
+      card.fill()
+      card.fillColor = new Color(255, 248, 220, 34)
+      card.roundRect(-41, 19, 82, 24, 7)
+      card.fill()
+    }
+
+    const iconName = skill === 'bomb' ? 'BombBtn' : skill === 'hammer' ? 'HammerBtn' : 'V_RocketBtn'
+    const iconNode = skillNode.getChildByName(iconName)
+    if (iconNode) {
+      iconNode.setPosition(0, 13, 0)
+      iconNode.getComponent(UITransform)?.setContentSize(52, 52)
+      const icon = iconNode.getComponent(Sprite)
+      if (icon) {
+        icon.sizeMode = Sprite.SizeMode.CUSTOM
+        icon.trim = false
+        assetManager.loadAny(SKILL_ICON_SPRITE_FRAME_UUIDS[skill], (error, asset) => {
+          if (!error && icon.node.isValid && asset instanceof SpriteFrame) {
+            icon.spriteFrame = asset
+            icon.sizeMode = Sprite.SizeMode.CUSTOM
+            icon.node.getComponent(UITransform)?.setContentSize(52, 52)
+          }
+        })
+      }
+      iconNode.setSiblingIndex(Math.min(1, skillNode.children.length - 1))
+    }
+
+    let labelNode = skillNode.getChildByName('Name')
+    if (!labelNode) {
+      labelNode = new Node('Name')
+      labelNode.setParent(skillNode)
+      labelNode.addComponent(UITransform)
+      labelNode.addComponent(Label)
+    }
+    labelNode.setPosition(0, -36, 0)
+    labelNode.getComponent(UITransform)?.setContentSize(88, 27)
+    labelNode.setSiblingIndex(Math.min(2, skillNode.children.length - 1))
+    const label = labelNode.getComponent(Label)
+    if (label) {
+      label.string = SKILL_CARD_LABELS[skill]
+      label.fontSize = 18
+      label.lineHeight = 22
+      label.color = new Color(255, 250, 230, 255)
+      label.horizontalAlign = Label.HorizontalAlign.CENTER
+      label.verticalAlign = Label.VerticalAlign.CENTER
+      label.isBold = true
+      label.enableOutline = true
+      label.outlineColor = new Color(75, 53, 40, 240)
+      label.outlineWidth = 2
+    }
+
+    const boxNode = this.getSkillBox(skillNode)
+    boxNode.setSiblingIndex(skillNode.children.length - 1)
+    for (const badgeName of ['MoreBtn', 'AmountBG', 'Count']) {
+      const badgeNode = boxNode.getChildByName(badgeName)
+      badgeNode?.setPosition(39, 41, 0)
+      const badgeSprite = badgeNode?.getComponent(Sprite)
+      if (badgeSprite) {
+        badgeSprite.enabled = false
+      }
+    }
+    this.ensureSkillCountBadge(skillNode)
+  }
+
+  /** 数量角标使用代码绘制的绿色小圆，避免沿用旧版蓝色大圆盘。 */
+  private ensureSkillCountBadge(skillNode: Node) {
+    let badgeNode = skillNode.getChildByName('CountBadge')
+    if (!badgeNode) {
+      badgeNode = new Node('CountBadge')
+      badgeNode.setParent(skillNode)
+      badgeNode.addComponent(UITransform).setContentSize(40, 40)
+      badgeNode.addComponent(Graphics)
+    }
+    badgeNode.setPosition(39, 41, 0)
+    badgeNode.setSiblingIndex(skillNode.children.length - 1)
+    const badge = badgeNode.getComponent(Graphics)
+    if (badge) {
+      badge.clear()
+      badge.fillColor = HUD_CARD_BORDER_COLOR
+      badge.circle(0, 0, 20)
+      badge.fill()
+      badge.fillColor = new Color(92, 170, 47, 255)
+      badge.circle(0, 0, 17)
+      badge.fill()
+    }
+    const label = this.ensureHudLabel(badgeNode, 'Value', '1', 0, 0, 34, 32, 19, new Color(255, 255, 246, 255))
+    label.enableOutline = false
+  }
+
+  private ensureSkillStateDecorations(skillNode: Node) {
+    let ringNode = skillNode.getChildByName('SelectionRing')
+    if (!ringNode) {
+      ringNode = new Node('SelectionRing')
+      ringNode.setParent(skillNode)
+      ringNode.addComponent(UITransform).setContentSize(112, 120)
+      ringNode.addComponent(Graphics)
+    }
+    ringNode.setPosition(0, 0, 0)
+    ringNode.setSiblingIndex(0)
+    ringNode.active = false
+    const ring = ringNode.getComponent(Graphics)
+    if (ring) {
+      ring.clear()
+      ring.lineWidth = 6
+      ring.strokeColor = SKILL_SELECTION_COLOR
+      ring.roundRect(-54, -58, 108, 116, 18)
+      ring.stroke()
+    }
+
+    let usedNode = skillNode.getChildByName('UsedLabel')
+    if (!usedNode) {
+      usedNode = new Node('UsedLabel')
+      usedNode.setParent(skillNode)
+      usedNode.addComponent(UITransform).setContentSize(72, 32)
+      usedNode.addComponent(Graphics)
+    }
+    usedNode.setPosition(0, 0, 0)
+    usedNode.active = false
+    const usedBg = usedNode.getComponent(Graphics)
+    if (usedBg) {
+      usedBg.clear()
+      usedBg.fillColor = new Color(61, 57, 52, 224)
+      usedBg.roundRect(-36, -16, 72, 32, 14)
+      usedBg.fill()
+    }
+    const usedLabel = this.ensureHudLabel(
+      usedNode,
+      'Text',
+      '已用',
+      0,
+      0,
+      68,
+      28,
+      19,
+      new Color(255, 248, 221, 255)
+    )
+    if (usedLabel) {
+      usedLabel.lineHeight = 24
+    }
   }
 
   // 技能数量节点固定在 Box 里；旧场景还没迁移 Box 时，临时兼容直接挂在 Skill 下的节点。
@@ -1112,12 +1870,49 @@ export class PlayUIController extends Component {
     }
   }
 
+  // 反馈层集中容纳技能提示和 Toast，避免临时节点散落在 Main 根节点。
+  private ensureFeedbackLayer() {
+    let layer = this.node.getChildByName('FeedbackLayer')
+    if (!layer) {
+      layer = new Node('FeedbackLayer')
+      layer.setParent(this.node)
+      layer.addComponent(UITransform)
+    }
+
+    const rootTransform = this.node.getComponent(UITransform)
+    const layerTransform = layer.getComponent(UITransform) ?? layer.addComponent(UITransform)
+    layerTransform.setContentSize(rootTransform?.width ?? 750, rootTransform?.height ?? 1334)
+    layer.setPosition(0, 0, 0)
+    this.feedbackLayer = layer
+  }
+
+  private ensureToast() {
+    const parent = this.feedbackLayer ?? this.node
+    let toast = parent.getChildByName('Toast')
+    if (!toast) {
+      toast = new Node('Toast')
+      toast.setParent(parent)
+      toast.addComponent(UITransform)
+    }
+
+    toast.active = false
+    toast.setPosition(0, -360, 0)
+    toast.getComponent(UITransform)?.setContentSize(500, 64)
+    this.drawFeedbackBubble(toast, 500, 64, new Color(54, 75, 71, 235), new Color(255, 248, 220, 245))
+    this.toastNode = toast
+    this.toastOpacity = toast.getComponent(UIOpacity) ?? toast.addComponent(UIOpacity)
+
+    const label = this.ensureFeedbackLabel(toast, 'Text', 23)
+    label.string = ''
+  }
+
   // 技能模式提示放在技能栏上方，明确告诉玩家可以拖动交换，也可以再次点击取消。
   private ensureSkillHint() {
-    let hintNode = this.node.getChildByName('SkillModeHint')
+    const parent = this.feedbackLayer ?? this.node
+    let hintNode = parent.getChildByName('SkillModeHint')
     if (!hintNode) {
       hintNode = new Node('SkillModeHint')
-      hintNode.setParent(this.node)
+      hintNode.setParent(parent)
       hintNode.addComponent(UITransform).setContentSize(520, 48)
     }
 
@@ -1127,17 +1922,49 @@ export class PlayUIController extends Component {
     this.skillHintOpacity = hintNode.getComponent(UIOpacity) ?? hintNode.addComponent(UIOpacity)
     this.skillHintOpacity.opacity = 0
 
-    const label = hintNode.getComponent(Label) ?? hintNode.addComponent(Label)
+    this.drawFeedbackBubble(hintNode, 520, 48, new Color(74, 47, 20, 224), new Color(255, 244, 196, 238))
+    const label = this.ensureFeedbackLabel(hintNode, 'Text', 23)
     label.string = '拖动相邻棋子交换，再点技能取消'
-    label.fontSize = 25
-    label.lineHeight = 32
-    label.horizontalAlign = Label.HorizontalAlign.CENTER
-    label.verticalAlign = Label.VerticalAlign.CENTER
     label.color = new Color(255, 246, 210, 255)
     // 给提示文字加深色描边，保证在棋盘、背景和技能栏上方都能清楚识别。
-    const outline = hintNode.getComponent(LabelOutline) ?? hintNode.addComponent(LabelOutline)
+    const outline = label.node.getComponent(LabelOutline) ?? label.node.addComponent(LabelOutline)
     outline.color = new Color(64, 38, 8, 255)
-    outline.width = 3
+    outline.width = 2
+  }
+
+  private ensureFeedbackLabel(parent: Node, name: string, fontSize: number) {
+    let node = parent.getChildByName(name)
+    if (!node) {
+      node = new Node(name)
+      node.setParent(parent)
+      node.addComponent(UITransform)
+      node.addComponent(Label)
+    }
+
+    node.setPosition(0, 0, 0)
+    const parentTransform = parent.getComponent(UITransform)
+    node.getComponent(UITransform)?.setContentSize(
+      Math.max(0, (parentTransform?.width ?? 500) - 30),
+      Math.max(0, (parentTransform?.height ?? 56) - 8)
+    )
+    const label = node.getComponent(Label) ?? node.addComponent(Label)
+    label.fontSize = fontSize
+    label.lineHeight = Math.ceil(fontSize * 1.25)
+    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    label.verticalAlign = Label.VerticalAlign.CENTER
+    label.isBold = true
+    return label
+  }
+
+  private drawFeedbackBubble(node: Node, width: number, height: number, border: Color, fill: Color) {
+    const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics)
+    graphics.clear()
+    graphics.fillColor = border
+    graphics.roundRect(-width * 0.5, -height * 0.5, width, height, height * 0.5)
+    graphics.fill()
+    graphics.fillColor = fill
+    graphics.roundRect(-width * 0.5 + 3, -height * 0.5 + 3, width - 6, height - 6, height * 0.5 - 3)
+    graphics.fill()
   }
 
   // 第一个技能当前定义为炸弹技能，点击后进入点选爆炸中心模式。
@@ -1158,41 +1985,47 @@ export class PlayUIController extends Component {
     this.swapSkillHandler?.()
   }
 
-  // 交换技能激活时给按钮一个轻量反馈，避免玩家不知道已经进入拖拽选棋状态。
+  // 三个技能统一刷新选中、库存为空和本局已使用状态。
   private refreshSkillButtonState() {
-    const isBombActive = this.currentState.activeSkill === 'bomb'
-    const isHammerActive = this.currentState.activeSkill === 'hammer'
-    const isSwapActive = this.currentState.activeSkill === 'swap'
-    if (this.bombSkillNode) {
-      Tween.stopAllByTarget(this.bombSkillNode)
-      tween(this.bombSkillNode)
-        .to(0.08, { scale: isBombActive ? new Vec3(1.08, 1.08, 1) : Vec3.ONE }, { easing: 'quadOut' })
-        .start()
-    }
-    if (this.hammerSkillNode) {
-      Tween.stopAllByTarget(this.hammerSkillNode)
-      tween(this.hammerSkillNode)
-        .to(0.08, { scale: isHammerActive ? new Vec3(1.08, 1.08, 1) : Vec3.ONE }, { easing: 'quadOut' })
-        .start()
-    }
-    if (this.swapSkillNode) {
-      Tween.stopAllByTarget(this.swapSkillNode)
-      tween(this.swapSkillNode)
-        .to(0.08, { scale: isSwapActive ? new Vec3(1.08, 1.08, 1) : Vec3.ONE }, { easing: 'quadOut' })
-        .start()
-    }
+    this.refreshSingleSkillVisual('bomb', this.bombSkillNode)
+    this.refreshSingleSkillVisual('hammer', this.hammerSkillNode)
+    this.refreshSingleSkillVisual('swap', this.swapSkillNode)
     this.refreshSkillCountDisplay()
     this.refreshSkillHintState(this.currentState.activeSkill)
   }
 
-  // 游戏内只展示技能图标，不展示库存数量；库存逻辑仍由 PlayController 统一判断。
+  private refreshSingleSkillVisual(skill: PlaySkillKind, skillNode: Node | null) {
+    if (!skillNode) {
+      return
+    }
+
+    const isActive = this.currentState.activeSkill === skill
+    const isUsed = this.currentState.skillUsed[skill]
+    const count = Math.max(0, this.currentState.skillCounts[skill])
+    const visualKey = `${isActive}-${isUsed}-${count}`
+    skillNode.getChildByName('SelectionRing')!.active = isActive && !isUsed && count > 0
+    skillNode.getChildByName('UsedLabel')!.active = isUsed
+    const opacity = skillNode.getComponent(UIOpacity) ?? skillNode.addComponent(UIOpacity)
+    opacity.opacity = isUsed ? SKILL_DISABLED_OPACITY : count <= 0 ? SKILL_EMPTY_OPACITY : 255
+
+    if (this.skillVisualKeys[skill] === visualKey) {
+      return
+    }
+    this.skillVisualKeys[skill] = visualKey
+    Tween.stopAllByTarget(skillNode)
+    tween(skillNode)
+      .to(0.1, { scale: isActive ? new Vec3(1.05, 1.05, 1) : Vec3.ONE }, { easing: 'quadOut' })
+      .start()
+  }
+
+  // 技能库存使用小角标展示，库存为零时显示加号，本局已使用仍保留库存但整体置灰。
   private refreshSkillCountDisplay() {
     this.refreshSingleSkillCount('bomb', this.bombSkillNode)
     this.refreshSingleSkillCount('hammer', this.hammerSkillNode)
     this.refreshSingleSkillCount('swap', this.swapSkillNode)
   }
 
-  private refreshSingleSkillCount(skill: 'bomb' | 'hammer' | 'swap', skillNode: Node | null) {
+  private refreshSingleSkillCount(skill: PlaySkillKind, skillNode: Node | null) {
     const hasUsedThisGame = this.currentState.skillUsed[skill]
     if (!skillNode) {
       return
@@ -1203,19 +2036,52 @@ export class PlayUIController extends Component {
     const amountBgNode = boxNode.getChildByName('AmountBG')
     const countNode = boxNode.getChildByName('Count')
 
+    const count = Math.max(0, Math.floor(this.currentState.skillCounts[skill]))
+    const hasStock = count > 0
+    const customBadge = skillNode.getChildByName('CountBadge')
+    const customBadgeLabel = customBadge?.getChildByName('Value')?.getComponent(Label) ?? null
+    if (customBadge) {
+      customBadge.active = hasStock
+    }
+    if (customBadgeLabel) {
+      customBadgeLabel.string = count >= 10 ? '9+' : `${count}`
+    }
     if (moreButtonNode) {
-      moreButtonNode.active = false
+      moreButtonNode.active = !hasStock && !hasUsedThisGame
     }
     if (amountBgNode) {
       amountBgNode.active = false
     }
     if (countNode) {
       countNode.active = false
+      const countSprite = countNode.getComponent(Sprite) ?? countNode.addComponent(Sprite)
+      const spriteFrame = this.getCounterNumberSpriteFrame(count)
+      countSprite.spriteFrame = spriteFrame
+      countSprite.enabled = !!spriteFrame
+      countSprite.sizeMode = Sprite.SizeMode.CUSTOM
+      const fallback = this.ensureSkillCountFallback(countNode)
+      fallback.node.active = !spriteFrame
+      fallback.string = count >= 10 ? '9+' : `${count}`
     }
+  }
 
-    const opacity = skillNode.getComponent(UIOpacity) ?? skillNode.addComponent(UIOpacity)
-    // 每局已使用过的技能仍置灰，避免隐藏数量后误以为还能再次使用。
-    opacity.opacity = hasUsedThisGame ? 120 : 255
+  private ensureSkillCountFallback(countNode: Node) {
+    let fallbackNode = countNode.getChildByName('FallbackLabel')
+    if (!fallbackNode) {
+      fallbackNode = new Node('FallbackLabel')
+      fallbackNode.setParent(countNode)
+      fallbackNode.addComponent(UITransform).setContentSize(28, 24)
+      fallbackNode.addComponent(Label)
+    }
+    fallbackNode.setPosition(0, 0, 0)
+    const label = fallbackNode.getComponent(Label) ?? fallbackNode.addComponent(Label)
+    label.fontSize = 17
+    label.lineHeight = 20
+    label.color = new Color(255, 255, 255, 255)
+    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    label.verticalAlign = Label.VerticalAlign.CENTER
+    label.isBold = true
+    return label
   }
 
   // counterNumberSpriteFrames 里的图片以 0-9 命名，优先按名字找，找不到时用下标兜底。
@@ -1283,7 +2149,7 @@ export class PlayUIController extends Component {
       return
     }
 
-    const label = this.skillHintNode.getComponent(Label)
+    const label = this.skillHintNode.getChildByName('Text')?.getComponent(Label) ?? null
     if (!label) {
       return
     }
@@ -1330,7 +2196,7 @@ export class PlayUIController extends Component {
 
   // 优先复用 scene 中已有的 Controller 节点，方便继续在层级管理器里调样式。
   private getControlContainer() {
-    return this.node.getChildByName('Controller') ?? this.node
+    return this.node.getChildByName('Controller') ?? this.getSkillsContainer() ?? this.node
   }
 
   // 读取棋盘内区宽度，优先使用 BoardFill 的尺寸，避免和逻辑层出现偏差。
