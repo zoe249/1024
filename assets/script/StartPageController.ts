@@ -18,6 +18,7 @@ import {
   UIOpacity,
   Vec3
 } from 'cc'
+import { HomeSwingAnimator } from './HomeSwingAnimator'
 
 const { ccclass, property } = _decorator
 
@@ -90,11 +91,13 @@ const HOMEPAGE_DESIGN_WIDTH = 750
 const HOMEPAGE_DESIGN_HEIGHT = 1625
 
 const HomepageArtwork = {
-  background: 'background-clean',
+  background: 'SwingV14/background-tree-branch',
   start: 'button-start-game',
-  bear: 'character-bear-dandelion',
-  bird: 'character-blue-bird',
-  seeds: 'effect-dandelion-seeds',
+  swingBird: 'SwingV14/swing-bird-seated',
+  swingSeat: 'SwingV14/swing-seat',
+  swingRope: 'SwingV14/swing-rope',
+  swingKnot: 'SwingV14/swing-seat-knot',
+  swingLeaf: 'SwingV14/swing-leaf',
   daily: 'feature-daily-reward',
   leaderboard: 'feature-leaderboard',
   share: 'feature-share',
@@ -529,16 +532,10 @@ export class StartPageController extends Component {
     const background = this.getOrCreatePageNode(this.homepageLayerNode, 'HomepageBackground')
     background.setSiblingIndex(0)
     this.applyHomepageArtwork(background, HomepageArtwork.background, 750, 1625)
+    this.ensureHomepageSwing(background)
 
     const logo = this.getOrCreatePageNode(this.homepageLayerNode, 'HomepageLogo')
     this.applyHomepageArtwork(logo, HomepageArtwork.logo, 560, 318)
-
-    const seeds = this.getOrCreatePageNode(this.homepageLayerNode, 'DandelionSeeds')
-    this.applyHomepageArtwork(seeds, HomepageArtwork.seeds, 330, 460)
-    const bear = this.getOrCreatePageNode(this.homepageLayerNode, 'BearDandelion')
-    this.applyHomepageArtwork(bear, HomepageArtwork.bear, 380, 450)
-    const bird = this.getOrCreatePageNode(this.homepageLayerNode, 'BlueBird')
-    this.applyHomepageArtwork(bird, HomepageArtwork.bird, 132, 132)
 
     this.settingsButtonNode = this.getOrCreatePageNode(this.homepageLayerNode, 'SettingsButton')
     this.applyHomepageArtwork(this.settingsButtonNode, HomepageArtwork.settings, 76, 79)
@@ -682,6 +679,56 @@ export class StartPageController extends Component {
   }
 
   /**
+   * 秋千动画作为背景子层创建，背景执行 cover 缩放时挂点与活动素材保持同一坐标系。
+   * 动画组件只接收节点引用，不处理首页按钮、经济数据或页面跳转。
+   */
+  private ensureHomepageSwing(background: Node) {
+    const swingLayer = this.getOrCreatePageNode(background, 'SwingAnimation')
+    swingLayer.active = true
+    swingLayer.setPosition(0, 0, 0)
+    ;(swingLayer.getComponent(UITransform) ?? swingLayer.addComponent(UITransform)).setContentSize(
+      HOMEPAGE_DESIGN_WIDTH,
+      HOMEPAGE_DESIGN_HEIGHT
+    )
+
+    const leftRope = this.getOrCreatePageNode(swingLayer, 'LeftRope')
+    this.applyHomepageArtwork(leftRope, HomepageArtwork.swingRope, 14, 335)
+    const rightRope = this.getOrCreatePageNode(swingLayer, 'RightRope')
+    this.applyHomepageArtwork(rightRope, HomepageArtwork.swingRope, 14, 335)
+
+    const seatRoot = this.getOrCreatePageNode(swingLayer, 'SwingSeatRoot')
+    ;(seatRoot.getComponent(UITransform) ?? seatRoot.addComponent(UITransform)).setContentSize(260, 230)
+    const seat = this.getOrCreatePageNode(seatRoot, 'Seat')
+    this.applyHomepageArtwork(seat, HomepageArtwork.swingSeat, 250, 88)
+    seat.setPosition(0, 0, 0)
+
+    const leftKnot = this.getOrCreatePageNode(seatRoot, 'LeftKnot')
+    this.applyHomepageArtwork(leftKnot, HomepageArtwork.swingKnot, 36, 48)
+    leftKnot.setPosition(-102, 28, 0)
+    const rightKnot = this.getOrCreatePageNode(seatRoot, 'RightKnot')
+    this.applyHomepageArtwork(rightKnot, HomepageArtwork.swingKnot, 36, 48)
+    rightKnot.setPosition(102, 28, 0)
+
+    const bird = this.getOrCreatePageNode(seatRoot, 'SwingBird')
+    this.applyHomepageArtwork(bird, HomepageArtwork.swingBird, 176, 176)
+    bird.setPosition(0, 88, 0)
+
+    const leaves = Array.from({ length: 3 }, (_, index) => {
+      const leaf = this.getOrCreatePageNode(swingLayer, `FloatingLeaf${index + 1}`)
+      this.applyHomepageArtwork(leaf, HomepageArtwork.swingLeaf, 54, 54)
+      return leaf
+    })
+
+    leftRope.setSiblingIndex(0)
+    rightRope.setSiblingIndex(1)
+    seatRoot.setSiblingIndex(2)
+    leaves.forEach((leaf, index) => leaf.setSiblingIndex(3 + index))
+
+    const animator = swingLayer.getComponent(HomeSwingAnimator) ?? swingLayer.addComponent(HomeSwingAnimator)
+    animator.setup({ leftRope, rightRope, seatRoot, bird, leaves })
+  }
+
+  /**
    * 定稿坐标以 750 × 1625 为基准：横向按画布宽度等比缩放，短屏压缩纵向间距；
    * 背景独立使用 cover 铺满实际画布，前景素材本身始终保持比例、不做拉伸。
    */
@@ -702,10 +749,6 @@ export class StartPageController extends Component {
     background?.setScale(coverScale, coverScale, 1)
 
     this.homepageLayerNode.getChildByName('HomepageLogo')?.setPosition(0, 455 * verticalScale, 0)
-    this.homepageLayerNode.getChildByName('DandelionSeeds')?.setPosition(80, 122 * verticalScale, 0)
-    this.homepageLayerNode.getChildByName('BearDandelion')?.setPosition(28, -140 * verticalScale, 0)
-    this.homepageLayerNode.getChildByName('BlueBird')?.setPosition(275, -82 * verticalScale, 0)
-
     this.settingsButtonNode?.setPosition(-318, 705 * verticalScale, 0)
     this.coinResourceButtonNode?.setPosition(-164, 705 * verticalScale, 0)
     this.staminaResourceButtonNode?.setPosition(90, 705 * verticalScale, 0)
