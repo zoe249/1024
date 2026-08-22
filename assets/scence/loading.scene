@@ -433,15 +433,15 @@
     "targetSceneName": "game",
     "minimumDisplaySeconds": 1.8,
     "bombSpriteFrame": {
-      "__uuid__": "27aac6ed-362d-4da1-94e0-99d98ed627e5@f9941",
+      "__uuid__": "c2bd34f2-a783-4855-8af8-fa07fe942dc1@f9941",
       "__expectedType__": "cc.SpriteFrame"
     },
     "hammerSpriteFrame": {
-      "__uuid__": "309b84ed-e372-49f1-9e91-c2002872bab6@f9941",
+      "__uuid__": "a7c0480a-a4dd-46dc-ab94-4c0df29d1bd8@f9941",
       "__expectedType__": "cc.SpriteFrame"
     },
     "swapSpriteFrame": {
-      "__uuid__": "ca2c64ed-30e4-4bc5-8519-dee8744d9c3d@f9941",
+      "__uuid__": "32927f70-f651-471d-b8a1-7c2bbe5ddc17@f9941",
       "__expectedType__": "cc.SpriteFrame"
     },
     "backgroundNodeRef": null,

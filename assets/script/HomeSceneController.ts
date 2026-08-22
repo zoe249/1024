@@ -49,7 +49,7 @@ export class HomeSceneController extends Component {
   @property({ type: Prefab, tooltip: 'Home energy bar prefab' })
   energyBarPrefab: Prefab | null = null
 
-  // 开始游戏前展示的技能购买弹窗，布局和素材封装在独立 Prefab 中。
+  // 首页商店入口使用的技能购买弹窗，布局和素材封装在独立 Prefab 中。
   @property({ type: Prefab, tooltip: 'Pre-game skill shop popup prefab' })
   skillShopPopupPrefab: Prefab | null = null
 
@@ -73,7 +73,7 @@ export class HomeSceneController extends Component {
     const resources = this.economy.getSnapshot()
     this.startPageController = this.getComponent(StartPageController) ?? this.addComponent(StartPageController)
     this.startPageController.setup({
-      onStartTap: () => this.openSkillShop(),
+      onStartTap: () => this.startGameFromHome(),
       onShareTap: () => this.shareGameFromStartPage(),
       backgroundSpriteFrame: this.startPageBackgroundSpriteFrame,
       rankButtonSpriteFrame: this.startPageRankButtonSpriteFrame,
@@ -109,8 +109,31 @@ export class HomeSceneController extends Component {
   }
 
   /**
-   * 有未结束对局时直接续局；只有新开一局才展示技能购买弹窗。
+   * 首页主按钮直接进入游戏。
+   *
+   * 有未结束对局时直接续局；新开一局只做体力校验和扣除，不再强制展示技能购买弹窗。
    */
+  private startGameFromHome() {
+    if (this.isLoadingGameScene) {
+      return
+    }
+
+    if (OngoingGameSession.hasActiveGame()) {
+      this.enterOngoingGameScene()
+      return
+    }
+
+    if (!this.canStartNewGame()) {
+      this.closeSkillShop()
+      this.startPageController?.showMessage('体力不足，请先点击体力条补充')
+      this.refreshPlayerResources()
+      return
+    }
+
+    this.enterGameScene()
+  }
+
+  // 首页商店入口用于手动补充技能；已有未结束对局时仍直接续局，避免覆盖当前棋盘快照。
   private openSkillShop() {
     if (this.isLoadingGameScene) {
       return
@@ -148,7 +171,7 @@ export class HomeSceneController extends Component {
     }
 
     this.skillShopController.renderState(this.economy.getSnapshot())
-    this.skillShopController.showMessage('可在开始前补充技能')
+    this.skillShopController.showMessage('可在首页商店补充技能')
     this.skillShopController.syncLayout()
     this.skillShopController.show()
   }

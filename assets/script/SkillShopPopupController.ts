@@ -410,7 +410,7 @@ export class SkillShopPopupController extends Component {
     this.messageLabel = this.ensureLabel(
       this.panelNode,
       'Message',
-      '可在开始前补充技能',
+      '可在首页商店补充技能',
       22,
       new Vec3(0, -216, 0),
       520,

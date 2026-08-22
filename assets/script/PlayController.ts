@@ -2576,7 +2576,7 @@ export class PlayController extends Component {
     this.refreshUiState()
   }
 
-  // 技能统一在开局前购买；对局中库存不足时只提示，不临时扣金币打断玩法节奏。
+  // 技能统一通过首页商店购买；对局中库存不足时只提示，不临时扣金币打断玩法节奏。
   private ensureSkillAvailable(skill: SkillKind) {
     if (this.usedSkillsThisGame[skill]) {
       const skillName = this.getSkillDisplayName(skill)
@@ -2589,7 +2589,7 @@ export class PlayController extends Component {
     }
 
     const skillName = this.getSkillDisplayName(skill)
-    this.uiController?.showTransientMessage(`${skillName}数量不足，请在下一局开始前购买`)
+    this.uiController?.showTransientMessage(`${skillName}数量不足，请在首页商店补充`)
     return false
   }
 

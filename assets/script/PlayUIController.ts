@@ -204,6 +204,12 @@ const SKILL_CARD_LABELS: Record<PlaySkillKind, string> = {
   hammer: '木槌',
   swap: '交换'
 }
+// 新版技能素材是透明图标，不再带旧圆形按钮底座；运行时需要在卡片里放大到主视觉尺寸。
+const SKILL_ICON_LAYOUTS: Record<PlaySkillKind, { width: number; height: number; y: number }> = {
+  bomb: { width: 72, height: 76, y: 14 },
+  hammer: { width: 76, height: 76, y: 14 },
+  swap: { width: 78, height: 78, y: 14 }
+}
 
 const HUD_PIECE_COLORS: Record<number, Color> = {
   2: new Color(248, 236, 220, 255),
@@ -1719,8 +1725,9 @@ export class PlayUIController extends Component {
     const iconName = skill === 'bomb' ? 'BombBtn' : skill === 'hammer' ? 'HammerBtn' : 'V_RocketBtn'
     const iconNode = skillNode.getChildByName(iconName)
     if (iconNode) {
-      iconNode.setPosition(0, 13, 0)
-      iconNode.getComponent(UITransform)?.setContentSize(52, 52)
+      const iconLayout = SKILL_ICON_LAYOUTS[skill]
+      iconNode.setPosition(0, iconLayout.y, 0)
+      iconNode.getComponent(UITransform)?.setContentSize(iconLayout.width, iconLayout.height)
       const icon = iconNode.getComponent(Sprite)
       if (icon) {
         icon.sizeMode = Sprite.SizeMode.CUSTOM
@@ -1729,7 +1736,7 @@ export class PlayUIController extends Component {
           if (!error && icon.node.isValid && asset instanceof SpriteFrame) {
             icon.spriteFrame = asset
             icon.sizeMode = Sprite.SizeMode.CUSTOM
-            icon.node.getComponent(UITransform)?.setContentSize(52, 52)
+            icon.node.getComponent(UITransform)?.setContentSize(iconLayout.width, iconLayout.height)
           }
         })
       }
