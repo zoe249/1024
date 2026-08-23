@@ -1,9 +1,13 @@
-import { AudioClip, AudioSource, Node } from 'cc'
+import { assetManager, AudioClip, AudioSource, Node } from 'cc'
+
+const DEFAULT_BUTTON_CLICK_AUDIO_UUID = 'b0c7278f-5a0b-4b77-acd9-1f92b427a817'
 
 // 集中管理游戏音频节点，避免 PlayController 同时承担玩法和音频生命周期。
 export class GameAudioManager {
   private bgmAudioSource: AudioSource | null = null
   private sfxAudioSource: AudioSource | null = null
+  private defaultButtonClickClip: AudioClip | null = null
+  private isLoadingButtonClickClip = false
 
   constructor(private readonly ownerNode: Node) {}
 
@@ -11,6 +15,7 @@ export class GameAudioManager {
   setup() {
     this.bgmAudioSource = this.ensureAudioSourceNode('GameBgmAudioSource')
     this.sfxAudioSource = this.ensureAudioSourceNode('GameSfxAudioSource')
+    this.preloadDefaultButtonClickClip()
   }
 
   // 首页音乐使用独立入口，当前没有绑定资源时不会播放任何背景音乐。
@@ -39,6 +44,17 @@ export class GameAudioManager {
     this.sfxAudioSource.playOneShot(clip)
   }
 
+  // 按钮点击反馈统一从这里播放；场景未显式绑定时兜底使用内置 click.bubble 音效。
+  playButtonClickEffect(clip: AudioClip | null) {
+    const targetClip = clip ?? this.defaultButtonClickClip
+    if (targetClip) {
+      this.playSoundEffect(targetClip)
+      return
+    }
+
+    this.preloadDefaultButtonClickClip()
+  }
+
   // 音频节点不存在时自动创建；已存在则直接复用，避免重复加组件。
   private ensureAudioSourceNode(nodeName: string) {
     let audioNode = this.ownerNode.getChildByName(nodeName)
@@ -49,6 +65,22 @@ export class GameAudioManager {
     }
 
     return audioNode.getComponent(AudioSource) ?? audioNode.addComponent(AudioSource)
+  }
+
+  private preloadDefaultButtonClickClip() {
+    if (this.defaultButtonClickClip || this.isLoadingButtonClickClip) {
+      return
+    }
+
+    this.isLoadingButtonClickClip = true
+    assetManager.loadAny(DEFAULT_BUTTON_CLICK_AUDIO_UUID, (error, asset) => {
+      this.isLoadingButtonClickClip = false
+      if (error || !(asset instanceof AudioClip)) {
+        return
+      }
+
+      this.defaultButtonClickClip = asset
+    })
   }
 
   /**

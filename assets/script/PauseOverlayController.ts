@@ -115,6 +115,8 @@ export class PauseOverlayController extends Component {
   // 分享和反馈只派发平台意图，暂停组件自身不访问平台 API。
   private shareHandler: (() => void) | null = null
   private feedbackHandler: (() => void) | null = null
+  // 按钮音效由宿主场景提供，暂停层只在确认点击时派发反馈。
+  private buttonClickHandler: (() => void) | null = null
   // 回首页会销毁当前游戏场景，点击后只派发一次，避免连续触摸重复触发解绑和切场景。
   private isReturningHome = false
   // 关闭弹窗的按钮
@@ -141,6 +143,7 @@ export class PauseOverlayController extends Component {
     homeHandler: (() => void) | null
     shareHandler: (() => void) | null
     feedbackHandler: (() => void) | null
+    onButtonClick?: () => void
     mode?: 'game' | 'home'
   }) {
     this.hostNode = options.hostNode
@@ -149,6 +152,7 @@ export class PauseOverlayController extends Component {
     this.homeHandler = options.homeHandler
     this.shareHandler = options.shareHandler
     this.feedbackHandler = options.feedbackHandler
+    this.buttonClickHandler = options.onButtonClick ?? null
     this.isHomeMode = options.mode === 'home'
     this.isReturningHome = false
     this.ensureOverlayStructure()
@@ -393,11 +397,13 @@ export class PauseOverlayController extends Component {
 
   private onCloseButtonTap(event: EventTouch) {
     event.propagationStopped = true
+    this.playButtonClickFeedback()
     this.pauseHandler?.()
   }
 
   private onReplayButtonTap(event: EventTouch) {
     event.propagationStopped = true
+    this.playButtonClickFeedback()
     this.replayHandler?.()
   }
 
@@ -407,6 +413,7 @@ export class PauseOverlayController extends Component {
       return
     }
 
+    this.playButtonClickFeedback()
     this.isReturningHome = true
     this.stopPauseOverlayTweens()
     // 等当前 TOUCH_END 派发结束后再切场景，避免按钮节点被销毁时事件系统还在继续访问它。
@@ -415,12 +422,18 @@ export class PauseOverlayController extends Component {
 
   private onShareButtonTap(event: EventTouch) {
     event.propagationStopped = true
+    this.playButtonClickFeedback()
     this.shareHandler?.()
   }
 
   private onFeedbackButtonTap(event: EventTouch) {
     event.propagationStopped = true
+    this.playButtonClickFeedback()
     this.feedbackHandler?.()
+  }
+
+  private playButtonClickFeedback() {
+    this.buttonClickHandler?.()
   }
 
   // 定稿通过右上角关闭按钮继续游戏，旧 Play 节点只保留序列化兼容，不再占用底部空间。

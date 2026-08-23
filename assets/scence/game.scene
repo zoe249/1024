@@ -7073,6 +7073,10 @@
       "__uuid__": "b49a4ea7-0646-441e-b94f-cc80a14bdcac",
       "__expectedType__": "cc.AudioClip"
     },
+    "buttonClickAudioClip": {
+      "__uuid__": "b0c7278f-5a0b-4b77-acd9-1f92b427a817",
+      "__expectedType__": "cc.AudioClip"
+    },
     "soundEffectClips": {
       "__id__": 185
     },

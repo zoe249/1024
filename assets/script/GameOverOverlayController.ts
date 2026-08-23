@@ -32,15 +32,14 @@ const SettlementArtwork = {
   starHollow: 'star-hollow',
   starFilled: 'star-filled',
   rewardCoin: 'reward-coin',
-  doubleReward: 'button-double-reward',
   continue: 'button-continue'
 } as const
 
 type GameOverOverlayOptions = {
   hostNode: Node
   replayHandler: (() => void) | null
-  shareHandler: (() => void) | null
   homeHandler: (() => void) | null
+  onButtonClick?: () => void
   // 旧资源参数只保留接口兼容；新结算页统一从 resources/Settlement 加载拆分素材。
   popupSpriteFrame?: SpriteFrame | null
   replayButtonSpriteFrame?: SpriteFrame | null
@@ -61,21 +60,19 @@ export class GameOverOverlayController extends Component {
   private contentNode: Node | null = null
   private statisticsLabel: Label | null = null
   private rewardValueLabel: Label | null = null
-  private doubleRewardButtonNode: Node | null = null
   private continueButtonNode: Node | null = null
   private overlayOpacity: UIOpacity | null = null
   private settlementStars: SettlementStar[] = []
   private replayHandler: (() => void) | null = null
-  private doubleRewardHandler: (() => void) | null = null
+  private buttonClickHandler: (() => void) | null = null
   private isVisible = false
-  private isRewardDoubled = false
   private earnedStarCount = 1
   private contentLayoutScale = 1
 
   setup(options: GameOverOverlayOptions) {
     this.hostNode = options.hostNode
     this.replayHandler = options.replayHandler
-    this.doubleRewardHandler = options.shareHandler
+    this.buttonClickHandler = options.onButtonClick ?? null
     this.ensureOverlayStructure()
     this.bindTouchEvents()
     this.syncLayout()
@@ -107,14 +104,11 @@ export class GameOverOverlayController extends Component {
     isGameOver: boolean,
     score: number,
     highestValue: number,
-    coinReward: number,
-    rewardDoubled = false
+    coinReward: number
   ) {
-    this.isRewardDoubled = rewardDoubled
     this.refreshStatistics(score, highestValue)
-    this.refreshReward(coinReward * (rewardDoubled ? 2 : 1))
+    this.refreshReward(coinReward)
     this.earnedStarCount = this.calculateStarCount(score, highestValue)
-    this.refreshDoubleRewardButton()
     this.bringNodeToTop(this.node)
 
     if (isGameOver) {
@@ -127,7 +121,6 @@ export class GameOverOverlayController extends Component {
   onDestroy() {
     this.unbindSwallowNode(this.maskNode)
     this.unbindSwallowNode(this.contentNode)
-    this.unbindButtonTouchEvents(this.doubleRewardButtonNode, this.onDoubleRewardButtonTap)
     this.unbindButtonTouchEvents(this.continueButtonNode, this.onContinueButtonTap)
     this.stopNodeTreeTweens(this.node)
   }
@@ -282,20 +275,15 @@ export class GameOverOverlayController extends Component {
     actions.setPosition(0, -490, 0)
     ;(actions.getComponent(UITransform) ?? actions.addComponent(UITransform)).setContentSize(700, 132)
 
-    this.doubleRewardButtonNode = this.ensureArtworkButton(
-      actions,
-      'DoubleRewardButton',
-      SettlementArtwork.doubleReward,
-      -171,
-      0,
-      316,
-      102
-    )
+    // 结算页现在只保留继续入口，旧版操作按钮统一关闭，避免老场景节点重新露出。
+    for (const child of actions.children) {
+      child.active = false
+    }
     this.continueButtonNode = this.ensureArtworkButton(
       actions,
       'ContinueButton',
       SettlementArtwork.continue,
-      171,
+      0,
       0,
       316,
       114
@@ -396,13 +384,6 @@ export class GameOverOverlayController extends Component {
     return 1
   }
 
-  private refreshDoubleRewardButton() {
-    const opacity = this.doubleRewardButtonNode?.getComponent(UIOpacity) ?? this.doubleRewardButtonNode?.addComponent(UIOpacity)
-    if (opacity) {
-      opacity.opacity = this.isRewardDoubled ? 125 : 255
-    }
-  }
-
   private resetStars() {
     for (const star of this.settlementStars) {
       Tween.stopAllByTarget(star.filled)
@@ -454,7 +435,6 @@ export class GameOverOverlayController extends Component {
   private bindTouchEvents() {
     this.bindSwallowNode(this.maskNode)
     this.bindSwallowNode(this.contentNode)
-    this.bindButtonTouchEvents(this.doubleRewardButtonNode, this.onDoubleRewardButtonTap)
     this.bindButtonTouchEvents(this.continueButtonNode, this.onContinueButtonTap)
   }
 
@@ -494,16 +474,14 @@ export class GameOverOverlayController extends Component {
     node.off(Node.EventType.TOUCH_END, endHandler, this)
   }
 
-  private onDoubleRewardButtonTap(event: EventTouch) {
-    event.propagationStopped = true
-    if (!this.isRewardDoubled) {
-      this.doubleRewardHandler?.()
-    }
-  }
-
   private onContinueButtonTap(event: EventTouch) {
     event.propagationStopped = true
+    this.playButtonClickFeedback()
     this.replayHandler?.()
+  }
+
+  private playButtonClickFeedback() {
+    this.buttonClickHandler?.()
   }
 
   private swallowTouch(event: EventTouch) {

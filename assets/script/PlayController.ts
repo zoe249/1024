@@ -97,6 +97,8 @@ type SwapDragState = {
 const MAX_ACTIVE_FX = 18
 // 连续消除音效之间保留最小听感间隔，避免连锁时音效糊成一片。
 const MERGE_SOUND_MIN_INTERVAL = 0.46
+// 点击后立即切场景会销毁当前音源节点，这里给按钮反馈留出短暂播放窗口。
+const BUTTON_CLICK_SCENE_DELAY_SECONDS = 0.18
 // 单局金币结算参数集中在玩法层，方便后续按关卡、活动或难度做倍率扩展。
 const GAME_OVER_SCORE_COIN_DIVISOR = 120
 const GAME_OVER_HIGHEST_BASE_POWER = 7
@@ -172,6 +174,10 @@ export class PlayController extends Component {
   // 交换后无法形成消除时，回退动画播放的提示音。
   @property({ type: AudioClip, tooltip: 'Swap rollback sound effect' })
   swapRollbackAudioClip: AudioClip | null = null
+
+  // 游戏内所有按钮共用的点击反馈音效。
+  @property({ type: AudioClip, tooltip: 'Button click sound effect' })
+  buttonClickAudioClip: AudioClip | null = null
 
   // 玩法短音效合集，便于在 Creator 面板里集中拖入技能、结算等反馈音。
   @property({ type: PlaySoundEffectClips, tooltip: 'Gameplay sound effect clips' })
@@ -271,9 +277,6 @@ export class PlayController extends Component {
   private lastMergeSoundTimeMs = -Infinity
   // 本局结束时发放的金币数，只用于结算弹窗展示，重开或回首页后清零。
   private gameOverCoinReward = 0
-  // 单局双倍奖励只能成功领取一次，重新开局时重置。
-  private gameOverRewardDoubled = false
-  private isGameOverDoubleRewardPending = false
   // 每局每种技能最多成功使用一次；库存可以大于 1，但本局按钮会在使用后置灰。
   private usedSkillsThisGame: Record<SkillKind, boolean> = this.createEmptySkillUsageState()
   // 生命周期入口：先准备棋盘数据，再把界面初始化交给独立的 UI 组件。
@@ -318,9 +321,7 @@ export class PlayController extends Component {
         shareFromGameOver: () => {
           void this.shareGameFromGameOver()
         },
-        doubleGameOverReward: () => {
-          void this.doubleGameOverReward()
-        },
+        onButtonClick: () => this.playButtonClickFeedback(),
         coinRewardShare: () => {
           void this.shareForCoinReward()
         }
@@ -398,6 +399,10 @@ export class PlayController extends Component {
   // 所有玩法短音效统一从这里转给音频管理器，空资源会被安全忽略。
   private playSoundEffect(clip: AudioClip | null) {
     this.audioManager?.playSoundEffect(clip)
+  }
+
+  private playButtonClickFeedback() {
+    this.audioManager?.playButtonClickEffect(this.buttonClickAudioClip)
   }
 
   /**
@@ -607,8 +612,6 @@ export class PlayController extends Component {
     // 重开或首次进入时，分数统计要和棋盘一起清零。
     this.scoreManager.reset()
     this.gameOverCoinReward = 0
-    this.gameOverRewardDoubled = false
-    this.isGameOverDoubleRewardPending = false
     this.usedSkillsThisGame = this.createEmptySkillUsageState()
     this.currentColumn = Math.floor(this.boardwidth / 2)
     this.nextPieceValue = this.randomBasePieceValue()
@@ -2293,7 +2296,6 @@ export class PlayController extends Component {
       score: boardScore + this.scoreManager.getBonusScore(),
       highestValue: this.scoreManager.getHighestPieceValue(),
       gameOverCoinReward: this.gameOverCoinReward,
-      gameOverRewardDoubled: this.gameOverRewardDoubled,
       isGameOver: this.isGameOver,
       isPaused: this.isPaused,
       isResolving: this.isResolving,
@@ -2355,7 +2357,7 @@ export class PlayController extends Component {
     this.swapDragState = null
     this.resetBoard()
     // 即将离开游戏场景，不再刷新暂停 UI，避免触摸收尾时触发弹窗关闭动画和事件解绑。
-    this.scheduleOnce(() => director.loadScene(this.homeSceneName), 0)
+    this.loadHomeSceneAfterButtonFeedback()
   }
 
   // 结算弹窗点击回首页时，本局已经结束，因此不保存进行中快照，也不消耗体力。
@@ -2381,7 +2383,11 @@ export class PlayController extends Component {
     this.currentPiece = null
     this.resetBoard()
     // 没体力无法重开时，首页 icon 是结算弹窗的兜底出口。
-    this.scheduleOnce(() => director.loadScene(this.homeSceneName), 0)
+    this.loadHomeSceneAfterButtonFeedback()
+  }
+
+  private loadHomeSceneAfterButtonFeedback() {
+    this.scheduleOnce(() => director.loadScene(this.homeSceneName), BUTTON_CLICK_SCENE_DELAY_SECONDS)
   }
 
   // 分享入口只负责适配平台能力；没有平台 API 时保持静默降级，避免打断暂停弹窗。
@@ -2410,41 +2416,6 @@ export class PlayController extends Component {
     } else if (result === 'unsupported') {
       this.uiController?.showTransientMessage('当前平台暂不支持分享')
     }
-  }
-
-  /**
-   * 结算页双倍领取复用现有分享平台适配。
-   * 基础奖励已在 endGame 入账，因此分享完成后只补发等额金币，并用单局状态阻止重复领取。
-   */
-  private async doubleGameOverReward() {
-    if (
-      !this.isGameOver ||
-      this.gameOverRewardDoubled ||
-      this.isGameOverDoubleRewardPending ||
-      this.gameOverCoinReward <= 0
-    ) {
-      return
-    }
-
-    this.isGameOverDoubleRewardPending = true
-    const result = await this.shareAdapter.shareScore(this.scoreManager.getTotalScore(this.board), 'game_over_double_reward')
-    this.isGameOverDoubleRewardPending = false
-    if (!this.node.isValid || !this.isGameOver) {
-      return
-    }
-    if (result === 'cancelled') {
-      this.uiController?.showTransientMessage('分享未完成，奖励未翻倍')
-      return
-    }
-    if (result === 'unsupported') {
-      this.uiController?.showTransientMessage('当前平台暂不支持双倍领取')
-      return
-    }
-
-    this.economy.addCoins(this.gameOverCoinReward)
-    this.gameOverRewardDoubled = true
-    this.refreshUiState()
-    this.uiController?.showTransientMessage(`双倍奖励：金币 +${this.gameOverCoinReward}`)
   }
 
   // 客服能力统一交给平台适配器；设置弹窗只派发意图，不直接依赖微信 API。
@@ -2620,8 +2591,6 @@ export class PlayController extends Component {
     const finalScore = this.scoreManager.getTotalScore(this.board)
     const highestValue = this.scoreManager.getHighestPieceValue()
     this.gameOverCoinReward = this.calculateGameOverCoinReward(finalScore, highestValue)
-    this.gameOverRewardDoubled = false
-    this.isGameOverDoubleRewardPending = false
     this.economy.addCoins(this.gameOverCoinReward)
     this.isSwapSkillActive = false
     this.isHammerSkillActive = false
@@ -2673,8 +2642,6 @@ export class PlayController extends Component {
     this.transientFx.clear()
     this.isGameOver = false
     this.gameOverCoinReward = 0
-    this.gameOverRewardDoubled = false
-    this.isGameOverDoubleRewardPending = false
     this.isFastDropping = false
     this.isResolving = false
     this.isPaused = false

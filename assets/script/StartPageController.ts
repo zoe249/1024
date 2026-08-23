@@ -25,6 +25,7 @@ const { ccclass, property } = _decorator
 type StartPageOptions = {
   onStartTap: () => void
   onShareTap?: () => void
+  onButtonClick?: () => void
   backgroundSpriteFrame?: SpriteFrame | null
   rankButtonSpriteFrame?: SpriteFrame | null
   settingsButtonSpriteFrame?: SpriteFrame | null
@@ -78,6 +79,10 @@ const ACTION_ICON_HEIGHT = 82
 const ACTION_ICON_PAIR_OFFSET = 62
 // 资源条保持已经确认的小尺寸，以下常量统一用于胶囊避让和标题间距计算。
 const AMOUNT_BAR_SCALE = 0.36
+const DEFAULT_MAX_ENERGY = 10
+const ENERGY_HEART_LEFT_X = -132
+const ENERGY_HEART_RIGHT_X = 132
+const ENERGY_HEART_Y = 2
 const AMOUNT_BAR_SOURCE_HEIGHT = 155
 const AMOUNT_BAR_DEFAULT_TOP_INSET = 92
 const AMOUNT_BAR_TITLE_GAP = 20
@@ -175,13 +180,14 @@ export class StartPageController extends Component {
 
   private startHandler: (() => void) | null = null
   private shareHandler: (() => void) | null = null
+  private buttonClickHandler: (() => void) | null = null
   private energyMoreHandler: (() => void) | null = null
   private settingsHandler: (() => void) | null = null
   private dailyRewardHandler: (() => void) | null = null
   private shopHandler: (() => void) | null = null
   private currentCoins = 0
   private currentEnergy = 0
-  private currentMaxEnergy = 4
+  private currentMaxEnergy = DEFAULT_MAX_ENERGY
   private rootNode: Node | null = null
   private pageCardNode: Node | null = null
   private rankMaskNode: Node | null = null
@@ -222,6 +228,7 @@ export class StartPageController extends Component {
   setup(options: StartPageOptions) {
     this.startHandler = options.onStartTap
     this.shareHandler = options.onShareTap ?? null
+    this.buttonClickHandler = options.onButtonClick ?? null
     this.backgroundSpriteFrame = options.backgroundSpriteFrame ?? null
     this.rankButtonSpriteFrame = options.rankButtonSpriteFrame ?? null
     this.settingsButtonSpriteFrame = options.settingsButtonSpriteFrame ?? null
@@ -232,12 +239,12 @@ export class StartPageController extends Component {
     this.shopHandler = options.onShopTap ?? null
     this.currentCoins = Math.max(0, Math.floor(options.coins ?? 0))
     this.currentEnergy = Math.max(0, Math.floor(options.energy ?? 0))
-    this.currentMaxEnergy = Math.max(1, Math.floor(options.maxEnergy ?? 4))
+    this.currentMaxEnergy = Math.max(1, Math.floor(options.maxEnergy ?? DEFAULT_MAX_ENERGY))
     this.ensurePage()
     if (!this.usesHierarchyNodes) {
       this.ensureEnergyBar(options.energyBarPrefab ?? null)
     }
-    this.renderPlayerResources(options.energy ?? 0, options.maxEnergy ?? 4)
+    this.renderPlayerResources(options.energy ?? 0, options.maxEnergy ?? DEFAULT_MAX_ENERGY)
     this.syncLayout()
     this.show()
   }
@@ -278,13 +285,15 @@ export class StartPageController extends Component {
     this.currentEnergy = Math.max(0, Math.floor(energy))
     this.currentMaxEnergy = Math.max(1, Math.floor(maxEnergy))
     this.currentCoins = Math.max(0, Math.floor(coins))
+    this.ensureEnergyHeartCapacity(this.currentMaxEnergy)
+    this.layoutEnergyHearts(this.currentMaxEnergy)
     const visibleEnergy = Math.min(
       this.energyHeartNodes.length,
       Math.max(0, Math.floor(maxEnergy)),
       Math.max(0, Math.floor(energy))
     )
     this.energyHeartNodes.forEach((heartNode, index) => {
-      heartNode.active = index < visibleEnergy
+      heartNode.active = index < visibleEnergy && index < this.currentMaxEnergy
     })
     if (this.coinValueLabel) {
       this.coinValueLabel.string = `${this.currentCoins}`
@@ -622,7 +631,7 @@ export class StartPageController extends Component {
     coverGraphics.roundRect(-38, stamina ? -21 : -19, 76, stamina ? 42 : 38, 10)
     coverGraphics.fill()
 
-    const value = this.ensureHomepageValueLabel(bar, 'DynamicValue', stamina ? '0/4' : '0')
+    const value = this.ensureHomepageValueLabel(bar, 'DynamicValue', stamina ? `0/${DEFAULT_MAX_ENERGY}` : '0')
     value.node.setPosition(0, stamina ? 0 : 1, 0)
     value.node.getComponent(UITransform)?.setContentSize(76, 42)
     if (stamina) {
@@ -777,15 +786,72 @@ export class StartPageController extends Component {
       this.energyBarNode.setParent(this.pageCardNode)
     }
     this.energyHeartNodes = this.energyBarNode
-      ? [1, 2, 3, 4]
-          .map(index => this.energyBarNode?.getChildByName(`Heart${index}`) ?? null)
-          .filter((node): node is Node => !!node)
+      ? this.collectEnergyHeartNodes()
       : []
+    this.ensureEnergyHeartCapacity(this.currentMaxEnergy)
+    this.layoutEnergyHearts(this.currentMaxEnergy)
     // 整个体力 Prefab 都是分享入口，加号只是视觉提示。
     this.energyMoreButtonNode = this.energyBarNode
 
     this.unbindAmountBar(this.energyMoreButtonNode, this.handleEnergyMoreTap)
     this.bindAmountBar(this.energyMoreButtonNode, this.handleEnergyMoreTap)
+  }
+
+  private collectEnergyHeartNodes() {
+    if (!this.energyBarNode) {
+      return []
+    }
+
+    return this.energyBarNode.children
+      .filter(child => /^Heart\d+$/.test(child.name))
+      .sort((a, b) => this.getHeartIndex(a) - this.getHeartIndex(b))
+  }
+
+  // 旧版体力条 Prefab 只有 4 颗心；体力上限调到 10 后运行时补齐，不改 Prefab 资源。
+  private ensureEnergyHeartCapacity(maxEnergy: number) {
+    if (!this.energyBarNode) {
+      return
+    }
+
+    const hearts = this.collectEnergyHeartNodes()
+    const template = hearts[hearts.length - 1]
+    if (!template) {
+      this.energyHeartNodes = []
+      return
+    }
+
+    for (let index = hearts.length + 1; index <= maxEnergy; index++) {
+      const heart = instantiate(template)
+      heart.name = `Heart${index}`
+      heart.setParent(this.energyBarNode)
+      hearts.push(heart)
+    }
+    this.energyHeartNodes = hearts
+  }
+
+  private layoutEnergyHearts(maxEnergy: number) {
+    if (this.energyHeartNodes.length <= 0) {
+      return
+    }
+
+    const count = Math.max(1, Math.min(maxEnergy, this.energyHeartNodes.length))
+    const step = count <= 1 ? 0 : (ENERGY_HEART_RIGHT_X - ENERGY_HEART_LEFT_X) / (count - 1)
+    const scale = count > 4 ? Math.max(0.58, Math.min(1, 4 / count + 0.25)) : 1
+    this.energyHeartNodes.forEach((heartNode, index) => {
+      if (index >= maxEnergy) {
+        heartNode.active = false
+        return
+      }
+
+      const x = count <= 1 ? 0 : ENERGY_HEART_LEFT_X + step * index
+      heartNode.setPosition(x, ENERGY_HEART_Y, 0)
+      heartNode.setScale(scale, scale, 1)
+    })
+  }
+
+  private getHeartIndex(node: Node) {
+    const match = node.name.match(/^Heart(\d+)$/)
+    return match ? Number(match[1]) : 0
   }
 
   /**
@@ -1613,6 +1679,7 @@ export class StartPageController extends Component {
     const invite = this.createPrimaryButton(panel, 'InviteBtn', '邀请好友', BLUE_COLOR, -318)
     invite.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
       event.propagationStopped = true
+      this.playButtonClickFeedback()
       this.showToast('邀请功能待小游戏能力接入')
     })
   }
@@ -1942,6 +2009,9 @@ export class StartPageController extends Component {
     if (this.canUseNode(node)) {
       node.setScale(Vec3.ONE)
     }
+    if (event.type === Node.EventType.TOUCH_END) {
+      this.playButtonClickFeedback()
+    }
   }
 
   private handleAmountBarPressStart(event: EventTouch) {
@@ -1955,6 +2025,9 @@ export class StartPageController extends Component {
     const node = event.currentTarget as Node | null
     if (this.canUseNode(node)) {
       node.setScale(AMOUNT_BAR_SCALE, AMOUNT_BAR_SCALE, 1)
+    }
+    if (event.type === Node.EventType.TOUCH_END) {
+      this.playButtonClickFeedback()
     }
   }
 
@@ -1971,6 +2044,7 @@ export class StartPageController extends Component {
 
   private handleRankCloseTap(event: EventTouch) {
     event.propagationStopped = true
+    this.playButtonClickFeedback()
     this.hideRankModal()
   }
 
@@ -2002,6 +2076,10 @@ export class StartPageController extends Component {
   private handleEnergyMoreTap(event: EventTouch) {
     event.propagationStopped = true
     this.energyMoreHandler?.()
+  }
+
+  private playButtonClickFeedback() {
+    this.buttonClickHandler?.()
   }
 
   private hideRankModal(event?: EventTouch) {

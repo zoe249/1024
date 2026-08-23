@@ -25,6 +25,7 @@ type SkillShopOptions = {
   onPurchase: (skill: SkillKind) => void
   onStart: () => void
   onClose: () => void
+  onButtonClick?: () => void
 }
 
 type SkillRowConfig = {
@@ -86,6 +87,7 @@ export class SkillShopPopupController extends Component {
   private purchaseHandler: ((skill: SkillKind) => void) | null = null
   private startHandler: (() => void) | null = null
   private closeHandler: (() => void) | null = null
+  private buttonClickHandler: (() => void) | null = null
   private purchaseButtonNodes = new Map<SkillKind, Node>()
   private purchaseButtonLabels = new Map<SkillKind, Label>()
   private skillCountSprites = new Map<SkillKind, Sprite>()
@@ -103,6 +105,7 @@ export class SkillShopPopupController extends Component {
     this.purchaseHandler = options.onPurchase
     this.startHandler = options.onStart
     this.closeHandler = options.onClose
+    this.buttonClickHandler = options.onButtonClick ?? null
     this.ensureStructure()
     this.bindTouchEvents()
     this.syncLayout()
@@ -596,6 +599,7 @@ export class SkillShopPopupController extends Component {
 
   private onPurchaseTap(event: EventTouch, skill: SkillKind) {
     event.propagationStopped = true
+    this.playButtonClickFeedback()
     this.restoreButtonScale(event.currentTarget as Node)
     if (this.currentSkillCounts[skill] >= ECONOMY_CONFIG.maxSkillCount) {
       this.showMessage(`${this.getSkillName(skill)}最多持有 ${ECONOMY_CONFIG.maxSkillCount} 个`, true)
@@ -611,14 +615,20 @@ export class SkillShopPopupController extends Component {
 
   private onStartTap(event: EventTouch) {
     event.propagationStopped = true
+    this.playButtonClickFeedback()
     this.restoreButtonScale(event.currentTarget as Node)
     this.startHandler?.()
   }
 
   private onCloseTap(event: EventTouch) {
     event.propagationStopped = true
+    this.playButtonClickFeedback()
     this.restoreButtonScale(event.currentTarget as Node)
     this.closeHandler?.()
+  }
+
+  private playButtonClickFeedback() {
+    this.buttonClickHandler?.()
   }
 
   private restoreButtonScale(node: Node) {

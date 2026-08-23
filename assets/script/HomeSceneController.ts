@@ -10,6 +10,9 @@ import type { SkillKind } from './SkillStock'
 import { OngoingGameSession } from './PlayController'
 
 const { ccclass, property } = _decorator
+const HOME_RESOURCE_REFRESH_INTERVAL_SECONDS = 30
+// 切场景前给按钮 one-shot 留出起声时间，避免当前场景销毁时把点击反馈截断。
+const BUTTON_CLICK_SCENE_DELAY_SECONDS = 0.18
 
 @ccclass('HomeSceneController')
 export class HomeSceneController extends Component {
@@ -28,6 +31,10 @@ export class HomeSceneController extends Component {
   // 旧版首页背景音乐字段，保留用于兼容已经绑定过 startPageBgmClip 的场景。
   @property({ type: AudioClip, tooltip: 'Start page background music' })
   startPageBgmClip: AudioClip | null = null
+
+  // 所有首页按钮共用的点击反馈音效。
+  @property({ type: AudioClip, tooltip: 'Button click sound effect' })
+  buttonClickAudioClip: AudioClip | null = null
 
   // 首页背景图，建议在 home.scene 的层级中维护 Sprite，脚本只做兜底传入。
   @property({ type: SpriteFrame, tooltip: 'Start page background sprite frame' })
@@ -64,6 +71,7 @@ export class HomeSceneController extends Component {
   private readonly economy = PlayerEconomyStore.getInstance()
   private isLoadingGameScene = false
   private dailyLoginReward = 0
+  private readonly refreshResourceTick = () => this.refreshPlayerResources()
 
   onLoad() {
     this.audioManager = new GameAudioManager(this.node)
@@ -75,6 +83,7 @@ export class HomeSceneController extends Component {
     this.startPageController.setup({
       onStartTap: () => this.startGameFromHome(),
       onShareTap: () => this.shareGameFromStartPage(),
+      onButtonClick: () => this.playButtonClickFeedback(),
       backgroundSpriteFrame: this.startPageBackgroundSpriteFrame,
       rankButtonSpriteFrame: this.startPageRankButtonSpriteFrame,
       settingsButtonSpriteFrame: this.startPageSettingsButtonSpriteFrame,
@@ -97,11 +106,13 @@ export class HomeSceneController extends Component {
     this.homeSettingsController?.syncLayout()
     this.audioManager?.playStartPageBackgroundMusic(this.getHomeBgmClip())
     if (this.dailyLoginReward > 0) {
-      this.startPageController?.showMessage(`每日登录奖励：金币 +${this.dailyLoginReward}`)
+      this.startPageController?.showMessage(`每日登录奖励：金币 +${this.dailyLoginReward}，体力已补满`)
     }
+    this.schedule(this.refreshResourceTick, HOME_RESOURCE_REFRESH_INTERVAL_SECONDS)
   }
 
   onDestroy() {
+    this.unschedule(this.refreshResourceTick)
     this.skillShopController = null
     this.skillShopNode = null
     this.homeSettingsController = null
@@ -166,7 +177,8 @@ export class HomeSceneController extends Component {
         hostNode: this.node,
         onPurchase: (skill) => this.purchaseSkill(skill),
         onStart: () => this.enterGameScene(),
-        onClose: () => this.closeSkillShop()
+        onClose: () => this.closeSkillShop(),
+        onButtonClick: () => this.playButtonClickFeedback()
       })
     }
 
@@ -212,9 +224,7 @@ export class HomeSceneController extends Component {
     this.refreshPlayerResources()
     this.skillShopController?.hide()
     const sceneName = this.getStartTargetSceneName()
-    // 点击事件分发结束前直接切场景，部分平台会在销毁按钮节点时触发事件系统空引用。
-    // 这里只延后一帧进入目标场景，每次从首页开始都先展示一条随机加载提示。
-    this.scheduleOnce(() => director.loadScene(sceneName), 0)
+    this.loadSceneAfterButtonFeedback(sceneName)
   }
 
   // 续局不重复扣体力，也不经过开始前的技能购买弹窗和 loading 提示页。
@@ -226,7 +236,11 @@ export class HomeSceneController extends Component {
     this.isLoadingGameScene = true
     this.skillShopController?.hide()
     const sceneName = this.gameSceneName || this.getStartTargetSceneName()
-    this.scheduleOnce(() => director.loadScene(sceneName), 0)
+    this.loadSceneAfterButtonFeedback(sceneName)
+  }
+
+  private loadSceneAfterButtonFeedback(sceneName: string) {
+    this.scheduleOnce(() => director.loadScene(sceneName), BUTTON_CLICK_SCENE_DELAY_SECONDS)
   }
 
   // 每次从首页进入游戏都走 loading；若场景名未配置，再直接进入玩法场景兜底。
@@ -304,6 +318,7 @@ export class HomeSceneController extends Component {
         homeHandler: null,
         shareHandler: () => this.shareGameFromStartPage(),
         feedbackHandler: () => void this.openHomeFeedback(),
+        onButtonClick: () => this.playButtonClickFeedback(),
         mode: 'home'
       })
     }
@@ -325,7 +340,7 @@ export class HomeSceneController extends Component {
   private showDailyRewardStatus() {
     this.startPageController?.showMessage(
       this.dailyLoginReward > 0
-        ? `每日奖励：金币 +${this.dailyLoginReward}`
+        ? `每日奖励：金币 +${this.dailyLoginReward}，体力已补满`
         : '今日奖励已领取'
     )
   }
@@ -333,5 +348,9 @@ export class HomeSceneController extends Component {
   // 首页分享还没有本局分数，使用邀请挑战文案更符合入口语境。
   private shareGameFromStartPage() {
     void this.shareAdapter.shareStartPage('start_share')
+  }
+
+  private playButtonClickFeedback() {
+    this.audioManager?.playButtonClickEffect(this.buttonClickAudioClip)
   }
 }

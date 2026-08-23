@@ -14,6 +14,7 @@ export type RewardClaimResult = {
   claimed: boolean
   amount: number
   reason: 'claimed' | 'already-claimed' | 'energy-full'
+  energyFilled?: number
 }
 
 export type SkillPurchaseResult = {
@@ -25,14 +26,15 @@ export type SkillPurchaseResult = {
 
 // 所有经济数值集中在这里，策划调参时不需要进入首页或玩法流程代码。
 export const ECONOMY_CONFIG = {
-  initialEnergy: 3,
-  maxEnergy: 4,
+  initialEnergy: 10,
+  maxEnergy: 10,
   initialCoins: 99999,
   initialSkillCount: 1,
   maxSkillCount: 9,
   dailyLoginCoins: 500,
   shareCoins: 200,
   shareEnergy: 1,
+  energyRecoverySeconds: 5 * 60,
   gameEnergyCost: 1,
   skillPrices: {
     bomb: 500,
@@ -44,6 +46,7 @@ export const ECONOMY_CONFIG = {
 type PersistedEconomyState = EconomySnapshot & {
   version: 1
   lastDailyLoginDate: string
+  lastEnergyRecoveryAtMs: number
 }
 
 const STORAGE_KEY = 'number-garden-player-economy-v1'
@@ -70,6 +73,7 @@ export class PlayerEconomyStore {
   }
 
   getSnapshot(): EconomySnapshot {
+    this.syncEnergyRecovery()
     return {
       energy: this.state.energy,
       maxEnergy: this.state.maxEnergy,
@@ -78,25 +82,36 @@ export class PlayerEconomyStore {
     }
   }
 
-  // 每个本地自然日首次进入首页领取一次金币。
+  // 每个本地自然日首次进入首页领取金币，并把体力补满。
   claimDailyLogin(now = new Date()): RewardClaimResult {
+    this.syncEnergyRecovery(now.getTime())
     const today = this.getLocalDateKey(now)
     if (this.state.lastDailyLoginDate === today) {
       return { claimed: false, amount: 0, reason: 'already-claimed' }
     }
 
+    const energyBeforeFill = this.state.energy
     this.state.lastDailyLoginDate = today
     this.state.coins += ECONOMY_CONFIG.dailyLoginCoins
+    this.state.energy = this.state.maxEnergy
+    this.state.lastEnergyRecoveryAtMs = now.getTime()
     this.saveState()
-    return { claimed: true, amount: ECONOMY_CONFIG.dailyLoginCoins, reason: 'claimed' }
+    return {
+      claimed: true,
+      amount: ECONOMY_CONFIG.dailyLoginCoins,
+      reason: 'claimed',
+      energyFilled: Math.max(0, this.state.energy - energyBeforeFill)
+    }
   }
 
   canClaimShareReward(kind: ShareRewardKind) {
+    this.syncEnergyRecovery()
     return kind !== 'energy' || this.state.energy < this.state.maxEnergy
   }
 
   // 分享奖励不限制每日次数；体力只受体力槽容量限制，金币每次成功分享都可领取。
   claimShareReward(kind: ShareRewardKind): RewardClaimResult {
+    this.syncEnergyRecovery()
     if (kind === 'energy' && this.state.energy >= this.state.maxEnergy) {
       return { claimed: false, amount: 0, reason: 'energy-full' }
     }
@@ -106,6 +121,9 @@ export class PlayerEconomyStore {
       this.state.coins += amount
     } else {
       this.state.energy = Math.min(this.state.maxEnergy, this.state.energy + amount)
+      if (this.state.energy >= this.state.maxEnergy) {
+        this.state.lastEnergyRecoveryAtMs = Date.now()
+      }
     }
     this.saveState()
     return { claimed: true, amount, reason: 'claimed' }
@@ -131,12 +149,16 @@ export class PlayerEconomyStore {
 
   // 开始一局和重玩都必须先成功扣除体力。
   tryConsumeEnergy(amount = ECONOMY_CONFIG.gameEnergyCost) {
+    this.syncEnergyRecovery()
     const cost = Math.max(0, Math.floor(amount))
     if (this.state.energy < cost) {
       return false
     }
 
     this.state.energy -= cost
+    if (this.state.energy < this.state.maxEnergy) {
+      this.state.lastEnergyRecoveryAtMs = Date.now()
+    }
     this.saveState()
     return true
   }
@@ -197,7 +219,8 @@ export class PlayerEconomyStore {
         hammer: ECONOMY_CONFIG.initialSkillCount,
         swap: ECONOMY_CONFIG.initialSkillCount
       },
-      lastDailyLoginDate: ''
+      lastDailyLoginDate: '',
+      lastEnergyRecoveryAtMs: Date.now()
     }
   }
 
@@ -210,7 +233,7 @@ export class PlayerEconomyStore {
       }
 
       const parsed = JSON.parse(raw) as Partial<PersistedEconomyState>
-      const maxEnergy = Math.max(1, Math.floor(parsed.maxEnergy ?? fallback.maxEnergy))
+      const maxEnergy = ECONOMY_CONFIG.maxEnergy
       return {
         version: 1,
         energy: Math.min(maxEnergy, Math.max(0, Math.floor(parsed.energy ?? fallback.energy))),
@@ -221,7 +244,8 @@ export class PlayerEconomyStore {
           hammer: this.clampSkillCount(parsed.skills?.hammer ?? fallback.skills.hammer),
           swap: this.clampSkillCount(parsed.skills?.swap ?? fallback.skills.swap)
         },
-        lastDailyLoginDate: parsed.lastDailyLoginDate ?? ''
+        lastDailyLoginDate: parsed.lastDailyLoginDate ?? '',
+        lastEnergyRecoveryAtMs: this.normalizeRecoveryTime(parsed.lastEnergyRecoveryAtMs)
       }
     } catch (error) {
       console.warn('玩家经济存档读取失败，已使用默认值', error)
@@ -239,6 +263,50 @@ export class PlayerEconomyStore {
 
   private clampSkillCount(count: number) {
     return Math.min(ECONOMY_CONFIG.maxSkillCount, Math.max(0, Math.floor(count)))
+  }
+
+  /**
+   * 按自然时间恢复体力。
+   *
+   * 这里不依赖首页定时器；任何读取、消费或领取体力的入口都会先同步一次，
+   * 保证切场景或重新打开游戏后也能得到正确体力。
+   */
+  private syncEnergyRecovery(nowMs = Date.now()) {
+    const intervalMs = ECONOMY_CONFIG.energyRecoverySeconds * 1000
+    const maxEnergy = ECONOMY_CONFIG.maxEnergy
+    const previousEnergy = this.state.energy
+    const previousMaxEnergy = this.state.maxEnergy
+    this.state.maxEnergy = maxEnergy
+
+    if (previousEnergy >= maxEnergy) {
+      this.state.energy = maxEnergy
+      if (previousEnergy !== this.state.energy || previousMaxEnergy !== maxEnergy) {
+        this.saveState()
+      }
+      return
+    }
+
+    const lastRecoveryAtMs = this.normalizeRecoveryTime(this.state.lastEnergyRecoveryAtMs, nowMs)
+    const elapsedMs = Math.max(0, nowMs - lastRecoveryAtMs)
+    const recovered = Math.floor(elapsedMs / intervalMs)
+    if (recovered <= 0) {
+      this.state.lastEnergyRecoveryAtMs = lastRecoveryAtMs
+      if (previousMaxEnergy !== maxEnergy) {
+        this.saveState()
+      }
+      return
+    }
+
+    this.state.energy = Math.min(maxEnergy, this.state.energy + recovered)
+    this.state.lastEnergyRecoveryAtMs = this.state.energy >= maxEnergy
+      ? nowMs
+      : lastRecoveryAtMs + recovered * intervalMs
+    this.saveState()
+  }
+
+  private normalizeRecoveryTime(value: unknown, fallback = Date.now()) {
+    const time = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : fallback
+    return Math.max(0, time)
   }
 
   // 使用本地日期而非 UTC，保证“每日”切换符合玩家所在时区的自然日。

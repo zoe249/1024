@@ -2100,6 +2100,10 @@
       "__uuid__": "17f88a7b-8f41-41c5-9f2f-1ac30461c010",
       "__expectedType__": "cc.AudioClip"
     },
+    "buttonClickAudioClip": {
+      "__uuid__": "b0c7278f-5a0b-4b77-acd9-1f92b427a817",
+      "__expectedType__": "cc.AudioClip"
+    },
     "startPageBackgroundSpriteFrame": {
       "__uuid__": "663b0bf8-bb80-4e52-a3a3-eb9566fedada@f9941",
       "__expectedType__": "cc.SpriteFrame"

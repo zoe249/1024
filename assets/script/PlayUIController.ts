@@ -1,6 +1,7 @@
 ﻿import {
   _decorator,
   assetManager,
+  Button,
   Color,
   Component,
   EventTouch,
@@ -37,7 +38,6 @@ export type PlayUIState = {
   score: number
   highestValue: number
   gameOverCoinReward: number
-  gameOverRewardDoubled: boolean
   isGameOver: boolean
   isPaused: boolean
   isResolving: boolean
@@ -74,7 +74,7 @@ export type PlayUIActions = {
   useSwap: () => void
   homeFromGameOver: () => void
   shareFromGameOver: () => void
-  doubleGameOverReward: () => void
+  onButtonClick?: () => void
   coinRewardShare: () => void
 }
 
@@ -187,8 +187,6 @@ const HUD_CARD_BG_COLOR = new Color(255, 250, 234, 246)
 const HUD_CARD_BORDER_COLOR = new Color(75, 53, 40, 255)
 const HUD_ACCENT_GREEN = new Color(101, 190, 54, 255)
 const HUD_ACCENT_BLUE = new Color(74, 183, 205, 255)
-const DROP_GUIDE_COLOR = new Color(255, 144, 35, 218)
-const DROP_GUIDE_FILL_COLOR = new Color(109, 225, 238, 30)
 // 技能状态层只做轻量描边和标签，不创建独立材质。
 const SKILL_SELECTION_COLOR = new Color(255, 242, 142, 245)
 const SKILL_DISABLED_OPACITY = 118
@@ -259,7 +257,6 @@ export class PlayUIController extends Component {
     score: 0,
     highestValue: 0,
     gameOverCoinReward: 0,
-    gameOverRewardDoubled: false,
     isGameOver: false,
     isPaused: false,
     isResolving: false,
@@ -285,7 +282,6 @@ export class PlayUIController extends Component {
   private objectiveProgressLabel: Label | null = null
   private nextValueLabel: Label | null = null
   private nextValueTile: Graphics | null = null
-  private dropGuideNode: Node | null = null
   // 当前已经显示到界面的分数，数字滚动动画会从这个值补间到目标值。
   private displayedScore = 0
   // Tween 直接驱动这个简单对象，避免去改节点缩放或位置。
@@ -298,8 +294,6 @@ export class PlayUIController extends Component {
   private gameOverReplayHandler: (() => void) | null = null
   // 结算弹窗分享按钮只通知逻辑层做平台分享适配。
   private gameOverShareHandler: (() => void) | null = null
-  // 双倍奖励按钮只通知玩法层完成平台流程和经济入账，UI 不直接增加金币。
-  private gameOverDoubleRewardHandler: (() => void) | null = null
   // 结算弹窗首页 icon 只通知逻辑层切回首页，不在 UI 层直接改对局状态。
   private gameOverHomeHandler: (() => void) | null = null
   // 缓存第一个技能节点，和其他技能共用选中态与取消提示。
@@ -329,6 +323,7 @@ export class PlayUIController extends Component {
   private coinBarNode: Node | null = null
   private coinAmountLabel: Label | null = null
   private coinMoreHandler: (() => void) | null = null
+  private buttonClickHandler: (() => void) | null = null
   // 背景独立于游戏内容节点铺放，避免长屏适配时连棋盘和 HUD 一起缩放。
   private gameBackgroundNode: Node | null = null
 
@@ -354,8 +349,8 @@ export class PlayUIController extends Component {
     this.gameOverReplayHandler = actions.restart
     this.gameOverHomeHandler = actions.homeFromGameOver
     this.gameOverShareHandler = actions.shareFromGameOver
-    this.gameOverDoubleRewardHandler = actions.doubleGameOverReward
     this.coinMoreHandler = actions.coinRewardShare
+    this.buttonClickHandler = actions.onButtonClick ?? null
     this.counterNumberSpriteFrames = resources.counterNumberSpriteFrames ?? []
 
     // 竖屏小游戏固定按宽度适配，让 Canvas 覆盖完整窗口；额外高度交给背景和安全区布局吸收。
@@ -402,7 +397,6 @@ export class PlayUIController extends Component {
     this.refreshScoreDisplay()
     this.refreshObjectiveDisplay()
     this.refreshNextPieceDisplay()
-    this.refreshDropGuide()
     this.refreshSkillButtonState()
     // this.refreshStatus()
     // this.refreshPauseButton()
@@ -411,8 +405,7 @@ export class PlayUIController extends Component {
       this.currentState.isGameOver,
       this.currentState.score,
       this.currentState.highestValue,
-      this.currentState.gameOverCoinReward,
-      this.currentState.gameOverRewardDoubled
+      this.currentState.gameOverCoinReward
     )
   }
   private skillVisualKeys: Record<PlaySkillKind, string> = {
@@ -459,7 +452,14 @@ export class PlayUIController extends Component {
     // UI 组件自己负责解绑按钮事件，避免逻辑层还要知道具体节点层级。
     const controlContainer = this.canUseNode(this.node) ? this.getControlContainer() : null
     const pauseButtonNode = this.canUseNode(controlContainer) ? controlContainer.getChildByName('PauseButton') : null
+    const settingsButtonNode = this.canUseNode(this.node)
+      ? this.node
+        .getChildByName('Status')
+        ?.getChildByName('Content')
+        ?.getChildByName('SettingsBtn') ?? null
+      : null
     this.safeOff(pauseButtonNode, Node.EventType.TOUCH_END, this.onPauseButtonTap)
+    this.safeOff(settingsButtonNode, Node.EventType.TOUCH_END, this.onPauseButtonTap)
     this.safeOff(this.bombSkillNode, Node.EventType.TOUCH_END, this.onBombSkillButtonTap)
     this.safeOff(this.hammerSkillNode, Node.EventType.TOUCH_END, this.onHammerSkillButtonTap)
     this.safeOff(this.swapSkillNode, Node.EventType.TOUCH_END, this.onSwapSkillButtonTap)
@@ -490,7 +490,6 @@ export class PlayUIController extends Component {
     this.objectiveProgressLabel = null
     this.nextValueLabel = null
     this.nextValueTile = null
-    this.dropGuideNode = null
     this.bombSkillNode = null
     this.hammerSkillNode = null
     this.swapSkillNode = null
@@ -773,60 +772,18 @@ export class PlayUIController extends Component {
       graphics.fill()
     }
 
-    this.ensureDropGuide(boardNode, innerHeight)
+    this.disableDropGuide(boardNode)
   }
 
-  // 设计稿用浅色通道和橙色虚线表示当前落子列，替代旧版粒子拖尾。
-  private ensureDropGuide(boardNode: Node, innerHeight: number) {
-    let guideNode = boardNode.getChildByName('DropGuide')
+  // 当前版本不再显示下落指引轨道；保留清理逻辑，兼容旧场景里已经存在的 DropGuide 节点。
+  private disableDropGuide(boardNode: Node) {
+    const guideNode = boardNode.getChildByName('DropGuide')
     if (!guideNode) {
-      guideNode = new Node('DropGuide')
-      guideNode.setParent(boardNode)
-      guideNode.addComponent(UITransform)
-      guideNode.addComponent(Graphics)
-    }
-    guideNode.getComponent(UITransform)?.setContentSize(this.pieceSize * 0.8, innerHeight + 62)
-    guideNode.setSiblingIndex(Math.min(3, boardNode.children.length - 1))
-    this.dropGuideNode = guideNode
-    this.drawDropGuide(innerHeight)
-  }
-
-  private drawDropGuide(innerHeight: number) {
-    const graphics = this.dropGuideNode?.getComponent(Graphics)
-    if (!graphics) {
       return
     }
 
-    const halfWidth = this.pieceSize * 0.38
-    // 设计稿中的引导线从当前棋子下方开始，不能一路顶到 HUD 区域。
-    const top = innerHeight * 0.5 - 58
-    const bottom = -innerHeight * 0.5 + 30
-    graphics.clear()
-    graphics.fillColor = DROP_GUIDE_FILL_COLOR
-    graphics.roundRect(-halfWidth, bottom, halfWidth * 2, top - bottom, 18)
-    graphics.fill()
-    graphics.fillColor = DROP_GUIDE_COLOR
-    for (let y = top - 18; y > bottom + 38; y -= 27) {
-      graphics.roundRect(-4, y - 9, 8, 18, 4)
-    }
-    graphics.fill()
-    graphics.moveTo(-13, bottom + 42)
-    graphics.lineTo(0, bottom + 27)
-    graphics.lineTo(13, bottom + 42)
-    graphics.lineTo(13, bottom + 52)
-    graphics.lineTo(0, bottom + 38)
-    graphics.lineTo(-13, bottom + 52)
-    graphics.close()
-    graphics.fill()
-  }
-
-  private refreshDropGuide() {
-    if (!this.dropGuideNode) {
-      return
-    }
-    const column = Math.max(0, Math.min(this.boardwidth - 1, this.currentState.currentColumn))
-    this.dropGuideNode.setPosition(this.getBoardColumnCenterX(column), 0, 0)
-    this.dropGuideNode.active = !this.currentState.isGameOver
+    guideNode.getComponent(Graphics)?.clear()
+    guideNode.active = false
   }
 
   // 确保状态文字节点存在；如果 scene 中没有，就由 UI 层自行补建。
@@ -913,7 +870,8 @@ export class PlayUIController extends Component {
       replayHandler: this.pauseReplayHandler,
       homeHandler: this.pauseHomeHandler,
       shareHandler: this.pauseShareHandler,
-      feedbackHandler: this.pauseFeedbackHandler
+      feedbackHandler: this.pauseFeedbackHandler,
+      onButtonClick: this.buttonClickHandler ?? undefined
     })
   }
 
@@ -940,7 +898,7 @@ export class PlayUIController extends Component {
       hostNode: this.node,
       replayHandler: this.gameOverReplayHandler,
       homeHandler: this.gameOverHomeHandler,
-      shareHandler: this.gameOverDoubleRewardHandler,
+      onButtonClick: this.buttonClickHandler ?? undefined,
       popupSpriteFrame,
       replayButtonSpriteFrame,
       homeButtonSpriteFrame,
@@ -1228,6 +1186,12 @@ export class PlayUIController extends Component {
       // HUD 已统一使用游戏页坐标，禁用旧 Widget 防止它在下一帧把设置按钮拉回历史偏移。
       settingsWidget.enabled = false
     }
+    const settingsButton = settingsNode.getComponent(Button)
+    if (settingsButton) {
+      settingsButton.enabled = false
+    }
+    settingsNode.off(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
+    settingsNode.on(Node.EventType.TOUCH_END, this.onPauseButtonTap, this)
     // 根节点保留较大的触摸热区，图标单独放在子节点中，避免视觉尺寸跟着热区一起放大。
     const rootSprite = settingsNode.getComponent(Sprite)
     if (rootSprite) {
@@ -1398,6 +1362,7 @@ export class PlayUIController extends Component {
 
   private handleCoinMoreTap(event: EventTouch) {
     event.propagationStopped = true
+    this.playButtonClickFeedback()
     this.coinMoreHandler?.()
   }
 
@@ -1659,6 +1624,7 @@ export class PlayUIController extends Component {
   // 暂停按钮只负责把点击事件转交给逻辑层，避免 UI 层直接改状态。
   private onPauseButtonTap(event: EventTouch) {
     event.propagationStopped = true
+    this.playButtonClickFeedback()
     this.pauseHandler?.()
   }
 
@@ -2043,19 +2009,26 @@ export class PlayUIController extends Component {
   // 第一个技能当前定义为炸弹技能，点击后进入点选爆炸中心模式。
   private onBombSkillButtonTap(event: EventTouch) {
     event.propagationStopped = true
+    this.playButtonClickFeedback()
     this.bombSkillHandler?.()
   }
 
   // 第二个技能当前定义为锤子技能，点击后进入点选敲碎模式。
   private onHammerSkillButtonTap(event: EventTouch) {
     event.propagationStopped = true
+    this.playButtonClickFeedback()
     this.hammerSkillHandler?.()
   }
 
   // 第三个技能当前定义为交换技能，点击后只把意图交给 PlayController 处理。
   private onSwapSkillButtonTap(event: EventTouch) {
     event.propagationStopped = true
+    this.playButtonClickFeedback()
     this.swapSkillHandler?.()
+  }
+
+  private playButtonClickFeedback() {
+    this.buttonClickHandler?.()
   }
 
   // 三个技能统一刷新选中、库存为空和本局已使用状态。
