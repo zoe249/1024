@@ -467,13 +467,15 @@ export class StartPageController extends Component {
       return
     }
 
-    if (!this.backgroundNode) {
+    // 新版首页已经静态放入场景时，不再补建旧版背景和提示节点，避免首帧出现两套首页。
+    const hasDesignedHomepage = !!this.pageCardNode?.getChildByName('HomepageArtwork')
+    if (!hasDesignedHomepage && !this.backgroundNode) {
       this.backgroundNode = new Node('Background')
       this.backgroundNode.setParent(this.rootNode)
       this.backgroundNode.addComponent(UITransform)
       this.backgroundNode.addComponent(Graphics)
     }
-    if (!this.backgroundImageNode && this.backgroundNode) {
+    if (!hasDesignedHomepage && !this.backgroundImageNode && this.backgroundNode) {
       this.backgroundImageNode = new Node('BackgroundImage')
       this.backgroundImageNode.setParent(this.backgroundNode)
       this.backgroundImageNode.addComponent(UITransform)
@@ -497,7 +499,7 @@ export class StartPageController extends Component {
     if (!this.toastNode) {
       this.buildToast(this.rootNode)
     }
-    if (!this.tipLabel && this.pageCardNode) {
+    if (!hasDesignedHomepage && !this.tipLabel && this.pageCardNode) {
       this.buildTipText(this.pageCardNode)
     }
   }
@@ -666,6 +668,11 @@ export class StartPageController extends Component {
     sprite.sizeMode = Sprite.SizeMode.CUSTOM
     sprite.trim = false
     sprite.color = Color.WHITE
+
+    // 场景中已经绑定的新版素材可直接参与首帧渲染，不再重复走异步 resources.load。
+    if (sprite.spriteFrame) {
+      return
+    }
 
     resources.load(`${HOMEPAGE_ART_ROOT}${artwork}/spriteFrame`, SpriteFrame, (error, spriteFrame) => {
       if (error || !spriteFrame || !this.canUseNode(node)) {

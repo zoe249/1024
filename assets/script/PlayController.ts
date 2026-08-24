@@ -219,9 +219,9 @@ export class PlayController extends Component {
   @property({ tooltip: 'Fast fall speed' })
   fastFallSpeed = 1800
 
-  // 新棋子出生在棋盘顶部之外的偏移量，给玩家留出观察和拖动时间。
+  // 新棋子额外出生在棋盘顶部两个格子步长之外，从屏幕顶部进入并给高堆叠状态保留反应时间。
   @property({ tooltip: 'Spawn offset above board' })
-  spawnOffsetY = 0
+  spawnOffsetY = 260
 
   @property({ type: [SpriteFrame], tooltip: '技能计数数字贴图' })
   counterNumberSpriteFrames: SpriteFrame[] = []
@@ -281,8 +281,6 @@ export class PlayController extends Component {
   private usedSkillsThisGame: Record<SkillKind, boolean> = this.createEmptySkillUsageState()
   // 生命周期入口：先准备棋盘数据，再把界面初始化交给独立的 UI 组件。
   onLoad() {
-    // 750×1334 游戏页中出生棋子紧贴棋盘上方，避免和顶部目标卡重叠。
-    this.spawnOffsetY = 0
     const ongoingSnapshot = OngoingGameSession.consumeSnapshot()
     if (!OngoingGameSession.hasActiveGame()) {
       // 兼容 Creator 直接预览 game.scene 的开发入口。

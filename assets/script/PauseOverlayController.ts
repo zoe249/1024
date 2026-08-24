@@ -581,22 +581,33 @@ export class PauseOverlayController extends Component {
     sprite.trim = false
     sprite.color = Color.WHITE
 
+    const finishArtworkSetup = () => {
+      transform.setContentSize(width, height)
+      if (artwork !== SettingsArtwork.sliderFill) {
+        return
+      }
+      const base = node.parent?.getChildByName('SliderBase') ?? null
+      const controller = node.parent?.getChildByName('Controller') ?? null
+      const range = this.getSliderRange(base, controller)
+      if (range) {
+        this.prepareSliderFill(node, range.trackWidth, range.trackMinX)
+        this.refreshAudioControls()
+      }
+    }
+
+    // game.scene 已绑定新版 Settings 素材时直接用于首帧，动态创建的首页设置层才异步加载。
+    if (sprite.spriteFrame) {
+      finishArtworkSetup()
+      return
+    }
+
     resources.load(`${SETTINGS_ART_ROOT}${artwork}/spriteFrame`, SpriteFrame, (error, spriteFrame) => {
       if (error || !spriteFrame || !this.canUseNode(node)) {
         console.warn(`[设置弹窗] 素材加载失败: ${artwork}`, error)
         return
       }
       sprite.spriteFrame = spriteFrame
-      transform.setContentSize(width, height)
-      if (artwork === SettingsArtwork.sliderFill) {
-        const base = node.parent?.getChildByName('SliderBase') ?? null
-        const controller = node.parent?.getChildByName('Controller') ?? null
-        const range = this.getSliderRange(base, controller)
-        if (range) {
-          this.prepareSliderFill(node, range.trackWidth, range.trackMinX)
-          this.refreshAudioControls()
-        }
-      }
+      finishArtworkSetup()
     })
   }
 
