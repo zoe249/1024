@@ -432,21 +432,14 @@
     "__prefab": null,
     "targetSceneName": "game",
     "minimumDisplaySeconds": 1.8,
-    "bombSpriteFrame": {
-      "__uuid__": "c2bd34f2-a783-4855-8af8-fa07fe942dc1@f9941",
+    "backgroundSpriteFrame": {
+      "__uuid__": "5ad49fb5-9e08-4dc5-9ee9-1451320c9378@f9941",
       "__expectedType__": "cc.SpriteFrame"
     },
-    "hammerSpriteFrame": {
-      "__uuid__": "a7c0480a-a4dd-46dc-ab94-4c0df29d1bd8@f9941",
+    "leafSpriteFrame": {
+      "__uuid__": "5a98b6ab-c693-4223-bb9a-ffa59067abfd@f9941",
       "__expectedType__": "cc.SpriteFrame"
     },
-    "swapSpriteFrame": {
-      "__uuid__": "32927f70-f651-471d-b8a1-7c2bbe5ddc17@f9941",
-      "__expectedType__": "cc.SpriteFrame"
-    },
-    "backgroundNodeRef": null,
-    "progressFillNodeRef": null,
-    "percentLabelNodeRef": null,
     "_id": "loadingSceneController"
   },
   {
