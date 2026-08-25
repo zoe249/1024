@@ -176,14 +176,13 @@ export class HomeSceneController extends Component {
       this.skillShopController.setup({
         hostNode: this.node,
         onPurchase: (skill) => this.purchaseSkill(skill),
-        onStart: () => this.enterGameScene(),
         onClose: () => this.closeSkillShop(),
         onButtonClick: () => this.playButtonClickFeedback()
       })
     }
 
     this.skillShopController.renderState(this.economy.getSnapshot())
-    this.skillShopController.showMessage('可在首页商店补充技能')
+    this.skillShopController.showMessage('点击价格即可购买')
     this.skillShopController.syncLayout()
     this.skillShopController.show()
   }
@@ -191,7 +190,7 @@ export class HomeSceneController extends Component {
   // 购买结果由经济仓库生成，弹窗只渲染最新余额并展示反馈。
   private purchaseSkill(skill: SkillKind) {
     const result = this.economy.purchaseSkill(skill)
-    const skillName = skill === 'bomb' ? '炸弹' : skill === 'hammer' ? '锤子' : '交换'
+    const skillName = skill === 'bomb' ? '炸弹' : skill === 'hammer' ? '木槌' : '交换'
     this.skillShopController?.renderState(this.economy.getSnapshot())
     this.skillShopController?.showMessage(
       result.purchased
@@ -199,7 +198,8 @@ export class HomeSceneController extends Component {
         : result.reason === 'max-reached'
           ? `${skillName}最多持有 ${ECONOMY_CONFIG.maxSkillCount} 个`
           : `金币不足，购买${skillName}需要 ${result.price} 金币`,
-      !result.purchased
+      !result.purchased,
+      result.purchased
     )
   }
 
