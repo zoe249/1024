@@ -133,17 +133,6 @@ const BOARD_DASH_INSET = 16
 const BOARD_DASH_RADIUS = 2
 // 虚线颜色改成浅冷柔光，配合新的玻璃蒙版而不是原来的实色样式。
 const BOARD_DASH_COLOR = new Color(255, 255, 255, 0)
-// 技能次数角标的默认位置参考左侧第一个技能的 MoreBtn，也就是无次数时视觉正确的加号位置。
-const SKILL_BADGE_FALLBACK_X = -45.529
-const SKILL_BADGE_FALLBACK_Y = -40.613
-// 角标底图和加号图在 scene 中都是 40x40；只有找不到参考节点时才使用这个默认尺寸。
-const SKILL_BADGE_FALLBACK_SIZE = 40
-// AmountBG 是数字背后的底盘，不需要和加号一样大；按 40x40 参考尺寸收成约 24x24。
-const SKILL_AMOUNT_BG_WIDTH_SCALE = 0.6
-const SKILL_AMOUNT_BG_HEIGHT_SCALE = 0.6
-// 数字层按 scene 里 Count 小图的视觉尺寸收口，避免有次数时数字显得过大。
-const SKILL_COUNT_WIDTH = 10
-const SKILL_COUNT_HEIGHT = 20
 // 首页和游戏资源条统一缩放，游戏内再根据设置按钮位置单独布局。
 const PLAYER_AMOUNT_BAR_SCALE = 0.36
 const PLAYER_AMOUNT_BAR_SOURCE_HEIGHT = 155
@@ -200,11 +189,6 @@ const SKILL_CARD_INNER_COLORS: Record<PlaySkillKind, Color> = {
   hammer: new Color(61, 148, 208, 255),
   swap: new Color(255, 190, 53, 255)
 }
-const SKILL_CARD_LABELS: Record<PlaySkillKind, string> = {
-  bomb: '炸弹',
-  hammer: '木槌',
-  swap: '交换'
-}
 const SKILL_NODE_NAMES: Record<PlaySkillKind, string> = {
   bomb: 'Skill1',
   hammer: 'Skill2',
@@ -217,9 +201,9 @@ const SKILL_ICON_NODE_NAMES: Record<PlaySkillKind, string> = {
 }
 // 新版技能素材是透明图标，不再带旧圆形按钮底座；运行时需要在卡片里放大到主视觉尺寸。
 const SKILL_ICON_LAYOUTS: Record<PlaySkillKind, { width: number; height: number; y: number }> = {
-  bomb: { width: 72, height: 76, y: 14 },
-  hammer: { width: 76, height: 76, y: 14 },
-  swap: { width: 78, height: 78, y: 14 }
+  bomb: { width: 72, height: 76, y: 0 },
+  hammer: { width: 76, height: 76, y: 0 },
+  swap: { width: 78, height: 78, y: 0 }
 }
 
 const HUD_PIECE_COLORS: Record<number, Color> = {
@@ -1712,13 +1696,6 @@ export class PlayUIController extends Component {
     iconSprite.type = Sprite.Type.SIMPLE
     iconSprite.trim = false
 
-    // Box 作为次数节点容器；旧场景保留原 Box，新场景则交给现有计数逻辑补子节点。
-    let boxNode = skillNode.getChildByName('Box')
-    if (!boxNode) {
-      boxNode = new Node('Box')
-      boxNode.setParent(skillNode)
-      boxNode.addComponent(UITransform).setContentSize(100, 100)
-    }
     return skillNode
   }
 
@@ -1730,7 +1707,7 @@ export class PlayUIController extends Component {
     skillNode.off(Node.EventType.TOUCH_END, tapHandler, this)
     skillNode.on(Node.EventType.TOUCH_END, tapHandler, this)
     this.ensureSkillCardVisual(skillNode, skill)
-    this.skillCountSprites[skill] = this.ensureSkillCountSprite(skillNode)
+    this.skillCountSprites[skill] = this.getExistingSkillCountSprite(skillNode)
     this.ensureSkillStateDecorations(skillNode)
   }
 
@@ -1799,32 +1776,16 @@ export class PlayUIController extends Component {
       iconNode.setSiblingIndex(Math.min(1, skillNode.children.length - 1))
     }
 
-    let labelNode = skillNode.getChildByName('Name')
-    if (!labelNode) {
-      labelNode = new Node('Name')
-      labelNode.setParent(skillNode)
-      labelNode.addComponent(UITransform)
-      labelNode.addComponent(Label)
-    }
-    labelNode.setPosition(0, -36, 0)
-    labelNode.getComponent(UITransform)?.setContentSize(88, 27)
-    labelNode.setSiblingIndex(Math.min(2, skillNode.children.length - 1))
-    const label = labelNode.getComponent(Label)
-    if (label) {
-      label.string = SKILL_CARD_LABELS[skill]
-      label.fontSize = 18
-      label.lineHeight = 22
-      label.color = new Color(255, 250, 230, 255)
-      label.horizontalAlign = Label.HorizontalAlign.CENTER
-      label.verticalAlign = Label.VerticalAlign.CENTER
-      label.isBold = true
-      label.enableOutline = true
-      label.outlineColor = new Color(75, 53, 40, 240)
-      label.outlineWidth = 2
+    // 技能图标已经足够直观，旧名称节点会挤压图标和卡片空间，统一关闭且不再动态补建。
+    const labelNode = skillNode.getChildByName('Name')
+    if (labelNode) {
+      labelNode.active = false
     }
 
     const boxNode = this.getSkillBox(skillNode)
-    boxNode.setSiblingIndex(skillNode.children.length - 1)
+    if (boxNode !== skillNode) {
+      boxNode.setSiblingIndex(skillNode.children.length - 1)
+    }
     for (const badgeName of ['MoreBtn', 'AmountBG', 'Count']) {
       const badgeNode = boxNode.getChildByName(badgeName)
       badgeNode?.setPosition(39, 41, 0)
@@ -1918,85 +1879,11 @@ export class PlayUIController extends Component {
     return skillNode.getChildByName('Box') ?? skillNode
   }
 
-  // Count 是数字图片节点，不再使用 Label 文本，样式由场景里的节点尺寸和位置决定。
-  private ensureSkillCountSprite(skillNode: Node) {
+  // 新版场景直接使用 CountBadge；这里只读取历史 Count 图片，不再为新版层级动态补旧节点。
+  private getExistingSkillCountSprite(skillNode: Node) {
     const boxNode = this.getSkillBox(skillNode)
-    if (boxNode !== skillNode) {
-      boxNode.setSiblingIndex(skillNode.children.length - 1)
-    }
-    this.ensureSkillBoxChild(boxNode, 'MoreBtn')
-    this.ensureSkillBoxChild(boxNode, 'AmountBG')
-    const countNode = this.ensureSkillBoxChild(boxNode, 'Count')
-    this.syncSkillBoxLayer(boxNode)
-    return countNode.getComponent(Sprite) ?? countNode.addComponent(Sprite)
-  }
-
-  // 三个技能的角标结构共用一套逻辑，缺失的节点从其它技能复制图片和尺寸，位置贴当前技能已有角标。
-  private ensureSkillBoxChild(boxNode: Node, nodeName: 'MoreBtn' | 'AmountBG' | 'Count') {
-    const currentNode = boxNode.getChildByName(nodeName)
-    if (currentNode) {
-      return currentNode
-    }
-
-    const referenceNode = this.findSkillBoxChild(nodeName, boxNode)
-    const localMoreButtonNode = boxNode.getChildByName('MoreBtn')
-    const positionReferenceNode =
-      localMoreButtonNode ??
-      boxNode.getChildByName('Count') ??
-      boxNode.getChildByName('AmountBG') ??
-      referenceNode
-    const node = new Node(nodeName)
-    node.setParent(boxNode)
-    node.setPosition(
-      positionReferenceNode?.position.x ?? SKILL_BADGE_FALLBACK_X,
-      positionReferenceNode?.position.y ?? SKILL_BADGE_FALLBACK_Y,
-      positionReferenceNode?.position.z ?? 0
-    )
-
-    const transform = node.addComponent(UITransform)
-    const referenceTransform = (nodeName === 'AmountBG' ? localMoreButtonNode : referenceNode)?.getComponent(UITransform)
-    transform.setContentSize(
-      referenceTransform?.width ?? (nodeName === 'Count' ? SKILL_COUNT_WIDTH : SKILL_BADGE_FALLBACK_SIZE),
-      referenceTransform?.height ?? (nodeName === 'Count' ? SKILL_COUNT_HEIGHT : SKILL_BADGE_FALLBACK_SIZE)
-    )
-
-    const sprite = node.addComponent(Sprite)
-    const referenceSpriteFrame = referenceNode?.getComponent(Sprite)?.spriteFrame ?? null
-    if (referenceSpriteFrame) {
-      sprite.spriteFrame = referenceSpriteFrame
-    }
-    sprite.sizeMode = Sprite.SizeMode.CUSTOM
-    return node
-  }
-
-  // 从其它技能上找同名角标节点，保证 Skill1/Skill2/Skill3 缺图时可以复用同一套视觉资源。
-  private findSkillBoxChild(nodeName: 'MoreBtn' | 'AmountBG' | 'Count', ignoredBoxNode: Node) {
-    const skillNodes = [this.bombSkillNode, this.hammerSkillNode, this.swapSkillNode]
-    for (const skillNode of skillNodes) {
-      const boxNode = skillNode ? this.getSkillBox(skillNode) : null
-      const childNode = boxNode?.getChildByName(nodeName) ?? null
-      if (boxNode && boxNode !== ignoredBoxNode && childNode) {
-        return childNode
-      }
-    }
-    return null
-  }
-
-  // AmountBG 必须在 Count 下层；这里只调整同父节点下的渲染顺序，不改坐标、尺寸、缩放。
-  private syncSkillBoxLayer(boxNode: Node) {
-    const moreButtonNode = boxNode.getChildByName('MoreBtn')
-    const amountBgNode = boxNode.getChildByName('AmountBG')
     const countNode = boxNode.getChildByName('Count')
-
-    if (amountBgNode) {
-      amountBgNode.setSiblingIndex(boxNode.children.length - 1)
-    }
-    if (moreButtonNode) {
-      moreButtonNode.setSiblingIndex(boxNode.children.length - 1)
-    }
-    if (countNode) {
-      countNode.setSiblingIndex(boxNode.children.length - 1)
-    }
+    return countNode?.getComponent(Sprite) ?? null
   }
 
   // 反馈层集中容纳技能提示和 Toast，避免临时节点散落在 Main 根节点。
