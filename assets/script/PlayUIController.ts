@@ -164,6 +164,9 @@ const SKILL_ICON_SPRITE_FRAME_UUIDS: Record<PlaySkillKind, string> = {
 }
 const GAME_BOARD_Y = -60
 const GAME_SKILLS_Y = -568
+const GAME_SKILLS_WIDTH = 520
+const GAME_SKILLS_HEIGHT = 124
+const GAME_SKILL_X_POSITIONS = [-145, 0, 145] as const
 const HUD_SETTINGS_HIT_SIZE = 76
 const HUD_SETTINGS_ICON_SIZE = 64
 const HUD_SETTINGS_X = -325
@@ -201,6 +204,16 @@ const SKILL_CARD_LABELS: Record<PlaySkillKind, string> = {
   bomb: '炸弹',
   hammer: '木槌',
   swap: '交换'
+}
+const SKILL_NODE_NAMES: Record<PlaySkillKind, string> = {
+  bomb: 'Skill1',
+  hammer: 'Skill2',
+  swap: 'Skill3'
+}
+const SKILL_ICON_NODE_NAMES: Record<PlaySkillKind, string> = {
+  bomb: 'BombBtn',
+  hammer: 'HammerBtn',
+  swap: 'V_RocketBtn'
 }
 // 新版技能素材是透明图标，不再带旧圆形按钮底座；运行时需要在卡片里放大到主视觉尺寸。
 const SKILL_ICON_LAYOUTS: Record<PlaySkillKind, { width: number; height: number; y: number }> = {
@@ -598,12 +611,7 @@ export class PlayUIController extends Component {
 
     const skillsNode = this.getSkillsContainer()
     if (skillsNode) {
-      skillsNode.setPosition(0, GAME_SKILLS_Y, 0)
-      skillsNode.getComponent(UITransform)?.setContentSize(520, 124)
-      const positions = [-145, 0, 145]
-      for (let index = 0; index < 3; index += 1) {
-        skillsNode.getChildByName(`Skill${index + 1}`)?.setPosition(positions[index], 0, 0)
-      }
+      this.layoutSkillsContainer(skillsNode)
     }
 
     const statusNode = this.node.getChildByName('Status')
@@ -615,6 +623,18 @@ export class PlayUIController extends Component {
     contentNode?.getComponent(UITransform)?.setContentSize(GAME_DESIGN_WIDTH, GAME_DESIGN_HEIGHT)
     this.statusContentBasePosition = { x: 0, y: topAlignedOffsetY, z: 0 }
     this.statusContentBaseSize = { width: GAME_DESIGN_WIDTH, height: GAME_DESIGN_HEIGHT }
+  }
+
+  // 无论技能栏来自 scene 还是运行时，都使用同一套定稿坐标。
+  private layoutSkillsContainer(skillsNode: Node) {
+    skillsNode.setPosition(0, GAME_SKILLS_Y, 0)
+    ;(skillsNode.getComponent(UITransform) ?? skillsNode.addComponent(UITransform)).setContentSize(
+      GAME_SKILLS_WIDTH,
+      GAME_SKILLS_HEIGHT
+    )
+    for (let index = 0; index < GAME_SKILL_X_POSITIONS.length; index += 1) {
+      skillsNode.getChildByName(`Skill${index + 1}`)?.setPosition(GAME_SKILL_X_POSITIONS[index], 0, 0)
+    }
   }
 
   // 纯代码绘制玻璃棋盘、列蒙版和列分隔线，并同步列节点占位尺寸。
@@ -1628,35 +1648,105 @@ export class PlayUIController extends Component {
     this.pauseHandler?.()
   }
 
-  // 技能按钮节点来自 scene 层级，UI 层只负责绑定点击事件和表现选中状态。
+  /**
+   * 技能栏优先复用 scene 中的新旧节点；静态层级被删除时，在运行时补齐同名结构。
+   * 点击仍只通过回调通知玩法层，技能次数仍由 PlayUIState 单向渲染。
+   */
   private ensureSkillButtons() {
-    const skillsContainer = this.getSkillsContainer()
-    this.bombSkillNode = skillsContainer?.getChildByName('Skill1') ?? null
-    this.hammerSkillNode = skillsContainer?.getChildByName('Skill2') ?? null
-    this.swapSkillNode = skillsContainer?.getChildByName('Skill3') ?? null
-    if (this.bombSkillNode) {
-      this.bombSkillNode.off(Node.EventType.TOUCH_END, this.onBombSkillButtonTap, this)
-      this.bombSkillNode.on(Node.EventType.TOUCH_END, this.onBombSkillButtonTap, this)
-      this.ensureSkillCardVisual(this.bombSkillNode, 'bomb')
-      this.skillCountSprites.bomb = this.ensureSkillCountSprite(this.bombSkillNode)
-      this.ensureSkillStateDecorations(this.bombSkillNode)
+    const skillsContainer = this.ensureSkillsContainer()
+    this.bombSkillNode = this.ensureSkillButtonNode(skillsContainer, 'bomb')
+    this.hammerSkillNode = this.ensureSkillButtonNode(skillsContainer, 'hammer')
+    this.swapSkillNode = this.ensureSkillButtonNode(skillsContainer, 'swap')
+
+    this.configureSkillButton(this.bombSkillNode, 'bomb', this.onBombSkillButtonTap)
+    this.configureSkillButton(this.hammerSkillNode, 'hammer', this.onHammerSkillButtonTap)
+    this.configureSkillButton(this.swapSkillNode, 'swap', this.onSwapSkillButtonTap)
+    this.layoutSkillsContainer(skillsContainer)
+  }
+
+  /** 新场景使用 SkillsController，历史场景的 SkliisController 仍可直接复用。 */
+  private ensureSkillsContainer() {
+    let skillsContainer = this.getSkillsContainer()
+    if (!skillsContainer) {
+      skillsContainer = new Node('SkillsController')
+      skillsContainer.setParent(this.node)
+      skillsContainer.addComponent(UITransform)
     }
-    if (this.hammerSkillNode) {
-      this.hammerSkillNode.off(Node.EventType.TOUCH_END, this.onHammerSkillButtonTap, this)
-      this.hammerSkillNode.on(Node.EventType.TOUCH_END, this.onHammerSkillButtonTap, this)
-      this.ensureSkillCardVisual(this.hammerSkillNode, 'hammer')
-      this.skillCountSprites.hammer = this.ensureSkillCountSprite(this.hammerSkillNode)
-      this.ensureSkillStateDecorations(this.hammerSkillNode)
+
+    skillsContainer.active = true
+    const transform = skillsContainer.getComponent(UITransform) ?? skillsContainer.addComponent(UITransform)
+    transform.setContentSize(GAME_SKILLS_WIDTH, GAME_SKILLS_HEIGHT)
+    this.keepSkillsBelowFeedbackLayers(skillsContainer)
+    return skillsContainer
+  }
+
+  /** 局部缺节点时也单独补齐，避免一个技能缺失导致整栏无法交互。 */
+  private ensureSkillButtonNode(skillsContainer: Node, skill: PlaySkillKind) {
+    const nodeName = SKILL_NODE_NAMES[skill]
+    let skillNode = skillsContainer.getChildByName(nodeName)
+    if (!skillNode) {
+      skillNode = new Node(nodeName)
+      skillNode.setParent(skillsContainer)
+      skillNode.addComponent(UITransform)
     }
-    if (!this.swapSkillNode) {
+    skillNode.active = true
+    ;(skillNode.getComponent(UITransform) ?? skillNode.addComponent(UITransform)).setContentSize(108, 114)
+
+    const iconName = SKILL_ICON_NODE_NAMES[skill]
+    let iconNode = skillNode.getChildByName(iconName)
+    if (!iconNode) {
+      iconNode = new Node(iconName)
+      iconNode.setParent(skillNode)
+      iconNode.addComponent(UITransform)
+      iconNode.addComponent(Sprite)
+    }
+    iconNode.active = true
+    const iconLayout = SKILL_ICON_LAYOUTS[skill]
+    iconNode.setPosition(0, iconLayout.y, 0)
+    ;(iconNode.getComponent(UITransform) ?? iconNode.addComponent(UITransform)).setContentSize(
+      iconLayout.width,
+      iconLayout.height
+    )
+    const iconSprite = iconNode.getComponent(Sprite) ?? iconNode.addComponent(Sprite)
+    iconSprite.sizeMode = Sprite.SizeMode.CUSTOM
+    iconSprite.type = Sprite.Type.SIMPLE
+    iconSprite.trim = false
+
+    // Box 作为次数节点容器；旧场景保留原 Box，新场景则交给现有计数逻辑补子节点。
+    let boxNode = skillNode.getChildByName('Box')
+    if (!boxNode) {
+      boxNode = new Node('Box')
+      boxNode.setParent(skillNode)
+      boxNode.addComponent(UITransform).setContentSize(100, 100)
+    }
+    return skillNode
+  }
+
+  private configureSkillButton(
+    skillNode: Node,
+    skill: PlaySkillKind,
+    tapHandler: (event: EventTouch) => void
+  ) {
+    skillNode.off(Node.EventType.TOUCH_END, tapHandler, this)
+    skillNode.on(Node.EventType.TOUCH_END, tapHandler, this)
+    this.ensureSkillCardVisual(skillNode, skill)
+    this.skillCountSprites[skill] = this.ensureSkillCountSprite(skillNode)
+    this.ensureSkillStateDecorations(skillNode)
+  }
+
+  /** 技能栏必须位于反馈和弹窗层下方，否则运行时后追加的按钮会拦截暂停页点击。 */
+  private keepSkillsBelowFeedbackLayers(skillsContainer: Node) {
+    const upperLayers = ['FeedbackLayer', 'OverlayLayer']
+      .map((name) => this.node.getChildByName(name))
+      .filter((node): node is Node => !!node && node !== skillsContainer)
+    if (upperLayers.length === 0) {
       return
     }
 
-    this.swapSkillNode.off(Node.EventType.TOUCH_END, this.onSwapSkillButtonTap, this)
-    this.swapSkillNode.on(Node.EventType.TOUCH_END, this.onSwapSkillButtonTap, this)
-    this.ensureSkillCardVisual(this.swapSkillNode, 'swap')
-    this.skillCountSprites.swap = this.ensureSkillCountSprite(this.swapSkillNode)
-    this.ensureSkillStateDecorations(this.swapSkillNode)
+    const firstUpperIndex = Math.min(...upperLayers.map((node) => node.getSiblingIndex()))
+    if (skillsContainer.getSiblingIndex() > firstUpperIndex) {
+      skillsContainer.setSiblingIndex(firstUpperIndex)
+    }
   }
 
   /** 把历史圆形技能按钮收口为设计稿的方形手绘卡片。 */
@@ -1688,7 +1778,7 @@ export class PlayUIController extends Component {
       card.fill()
     }
 
-    const iconName = skill === 'bomb' ? 'BombBtn' : skill === 'hammer' ? 'HammerBtn' : 'V_RocketBtn'
+    const iconName = SKILL_ICON_NODE_NAMES[skill]
     const iconNode = skillNode.getChildByName(iconName)
     if (iconNode) {
       const iconLayout = SKILL_ICON_LAYOUTS[skill]
@@ -2087,13 +2177,14 @@ export class PlayUIController extends Component {
     const customBadge = skillNode.getChildByName('CountBadge')
     const customBadgeLabel = customBadge?.getChildByName('Value')?.getComponent(Label) ?? null
     if (customBadge) {
-      customBadge.active = hasStock
+      customBadge.active = hasStock || !hasUsedThisGame
     }
     if (customBadgeLabel) {
-      customBadgeLabel.string = count >= 10 ? '9+' : `${count}`
+      customBadgeLabel.string = hasStock ? (count >= 10 ? '9+' : `${count}`) : '+'
     }
     if (moreButtonNode) {
-      moreButtonNode.active = !hasStock && !hasUsedThisGame
+      // 静态层移除后不再依赖旧版 MoreBtn 图片，零库存统一由绿色角标显示加号。
+      moreButtonNode.active = false
     }
     if (amountBgNode) {
       amountBgNode.active = false
