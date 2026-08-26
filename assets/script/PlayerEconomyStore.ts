@@ -10,10 +10,18 @@ export type EconomySnapshot = {
   skills: SkillCounts
 }
 
+export type DailyRewardState = {
+  rewards: number[]
+  currentDay: number
+  todayAmount: number
+  canClaim: boolean
+  claimedToday: boolean
+}
+
 export type RewardClaimResult = {
   claimed: boolean
   amount: number
-  reason: 'claimed' | 'already-claimed' | 'energy-full'
+  reason: 'claimed' | 'already-claimed' | 'energy-full' | 'storage-failed'
   energyFilled?: number
 }
 
@@ -31,7 +39,7 @@ export const ECONOMY_CONFIG = {
   initialCoins: 99999,
   initialSkillCount: 1,
   maxSkillCount: 9,
-  dailyLoginCoins: 500,
+  dailyLoginRewards: [1000, 1500, 2000, 3000, 5000, 8000, 12000] as const,
   shareCoins: 200,
   shareEnergy: 1,
   energyRecoverySeconds: 5 * 60,
@@ -44,8 +52,9 @@ export const ECONOMY_CONFIG = {
 } as const
 
 type PersistedEconomyState = EconomySnapshot & {
-  version: 1
+  version: 2
   lastDailyLoginDate: string
+  dailyLoginStreak: number
   lastEnergyRecoveryAtMs: number
 }
 
@@ -82,25 +91,58 @@ export class PlayerEconomyStore {
     }
   }
 
-  // 每个本地自然日首次进入首页领取金币，并把体力补满。
+  /**
+   * 获取七日金币奖励的纯展示状态。
+   *
+   * 连续登录会向后推进一天，第七天之后从第一天重新循环；中断一天以上则重置。
+   * 未来日期视为已经领取，避免玩家回拨设备时间重复领取。
+   */
+  getDailyRewardState(now = new Date()): DailyRewardState {
+    const todayOrdinal = this.getLocalDayOrdinal(now)
+    const lastClaimOrdinal = this.getDateKeyOrdinal(this.state.lastDailyLoginDate)
+    const dayGap = lastClaimOrdinal === null ? null : todayOrdinal - lastClaimOrdinal
+    const claimedToday = dayGap !== null && dayGap <= 0
+    const streak = this.clampDailyLoginStreak(this.state.dailyLoginStreak)
+    const rewardCount = ECONOMY_CONFIG.dailyLoginRewards.length
+    const currentDay = claimedToday
+      ? Math.max(1, streak)
+      : dayGap === 1 && streak > 0
+        ? streak % rewardCount + 1
+        : 1
+
+    return {
+      rewards: [...ECONOMY_CONFIG.dailyLoginRewards],
+      currentDay,
+      todayAmount: ECONOMY_CONFIG.dailyLoginRewards[currentDay - 1],
+      canClaim: !claimedToday,
+      claimedToday
+    }
+  }
+
+  // 每个本地自然日只允许手动领取一次金币，数据变更仍由经济仓库原子完成。
   claimDailyLogin(now = new Date()): RewardClaimResult {
     this.syncEnergyRecovery(now.getTime())
-    const today = this.getLocalDateKey(now)
-    if (this.state.lastDailyLoginDate === today) {
+    const rewardState = this.getDailyRewardState(now)
+    if (!rewardState.canClaim) {
       return { claimed: false, amount: 0, reason: 'already-claimed' }
     }
 
-    const energyBeforeFill = this.state.energy
-    this.state.lastDailyLoginDate = today
-    this.state.coins += ECONOMY_CONFIG.dailyLoginCoins
-    this.state.energy = this.state.maxEnergy
-    this.state.lastEnergyRecoveryAtMs = now.getTime()
-    this.saveState()
+    const previousDate = this.state.lastDailyLoginDate
+    const previousStreak = this.state.dailyLoginStreak
+    const previousCoins = this.state.coins
+    this.state.lastDailyLoginDate = this.getLocalDateKey(now)
+    this.state.dailyLoginStreak = rewardState.currentDay
+    this.state.coins += rewardState.todayAmount
+    if (!this.saveState()) {
+      this.state.lastDailyLoginDate = previousDate
+      this.state.dailyLoginStreak = previousStreak
+      this.state.coins = previousCoins
+      return { claimed: false, amount: 0, reason: 'storage-failed' }
+    }
     return {
       claimed: true,
-      amount: ECONOMY_CONFIG.dailyLoginCoins,
-      reason: 'claimed',
-      energyFilled: Math.max(0, this.state.energy - energyBeforeFill)
+      amount: rewardState.todayAmount,
+      reason: 'claimed'
     }
   }
 
@@ -210,7 +252,7 @@ export class PlayerEconomyStore {
 
   private createDefaultState(): PersistedEconomyState {
     return {
-      version: 1,
+      version: 2,
       energy: ECONOMY_CONFIG.initialEnergy,
       maxEnergy: ECONOMY_CONFIG.maxEnergy,
       coins: ECONOMY_CONFIG.initialCoins,
@@ -220,6 +262,7 @@ export class PlayerEconomyStore {
         swap: ECONOMY_CONFIG.initialSkillCount
       },
       lastDailyLoginDate: '',
+      dailyLoginStreak: 0,
       lastEnergyRecoveryAtMs: Date.now()
     }
   }
@@ -234,8 +277,9 @@ export class PlayerEconomyStore {
 
       const parsed = JSON.parse(raw) as Partial<PersistedEconomyState>
       const maxEnergy = ECONOMY_CONFIG.maxEnergy
+      const lastDailyLoginDate = parsed.lastDailyLoginDate ?? ''
       return {
-        version: 1,
+        version: 2,
         energy: Math.min(maxEnergy, Math.max(0, Math.floor(parsed.energy ?? fallback.energy))),
         maxEnergy,
         coins: Math.max(0, Math.floor(parsed.coins ?? fallback.coins)),
@@ -244,7 +288,11 @@ export class PlayerEconomyStore {
           hammer: this.clampSkillCount(parsed.skills?.hammer ?? fallback.skills.hammer),
           swap: this.clampSkillCount(parsed.skills?.swap ?? fallback.skills.swap)
         },
-        lastDailyLoginDate: parsed.lastDailyLoginDate ?? '',
+        lastDailyLoginDate,
+        // v1 存档没有连续天数；只要曾领过奖励，就从第一天兼容，避免升级当天重复领取。
+        dailyLoginStreak: this.clampDailyLoginStreak(
+          parsed.dailyLoginStreak ?? (lastDailyLoginDate ? 1 : 0)
+        ),
         lastEnergyRecoveryAtMs: this.normalizeRecoveryTime(parsed.lastEnergyRecoveryAtMs)
       }
     } catch (error) {
@@ -256,13 +304,22 @@ export class PlayerEconomyStore {
   private saveState() {
     try {
       sys.localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state))
+      return true
     } catch (error) {
       console.warn('玩家经济存档写入失败', error)
+      return false
     }
   }
 
   private clampSkillCount(count: number) {
     return Math.min(ECONOMY_CONFIG.maxSkillCount, Math.max(0, Math.floor(count)))
+  }
+
+  private clampDailyLoginStreak(count: number) {
+    return Math.min(
+      ECONOMY_CONFIG.dailyLoginRewards.length,
+      Math.max(0, Math.floor(Number.isFinite(count) ? count : 0))
+    )
   }
 
   /**
@@ -317,5 +374,31 @@ export class PlayerEconomyStore {
     const month = monthValue < 10 ? `0${monthValue}` : `${monthValue}`
     const day = dayValue < 10 ? `0${dayValue}` : `${dayValue}`
     return `${year}-${month}-${day}`
+  }
+
+  // 使用 UTC 只做公历日期序号换算，输入仍取设备本地年月日，因此不受夏令时小时数影响。
+  private getLocalDayOrdinal(date: Date) {
+    return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000)
+  }
+
+  private getDateKeyOrdinal(dateKey: string) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey)
+    if (!match) {
+      return null
+    }
+
+    const year = Number(match[1])
+    const month = Number(match[2])
+    const day = Number(match[3])
+    const time = Date.UTC(year, month - 1, day)
+    const normalized = new Date(time)
+    if (
+      normalized.getUTCFullYear() !== year ||
+      normalized.getUTCMonth() !== month - 1 ||
+      normalized.getUTCDate() !== day
+    ) {
+      return null
+    }
+    return Math.floor(time / 86_400_000)
   }
 }

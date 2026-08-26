@@ -574,6 +574,10 @@
       "__uuid__": "35502ab1-26b6-4b64-b4be-cd402e21136f",
       "__expectedType__": "cc.Prefab"
     },
+    "dailyRewardPopupPrefab": {
+      "__uuid__": "442535b5-28e4-4ded-bbad-b4f53a78bdab",
+      "__expectedType__": "cc.Prefab"
+    },
     "_id": "homeSceneController"
   },
   {

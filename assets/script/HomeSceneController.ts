@@ -6,6 +6,7 @@ import { GameShareAdapter } from './GameShareAdapter'
 import { PauseOverlayController } from './PauseOverlayController'
 import { ECONOMY_CONFIG, PlayerEconomyStore } from './PlayerEconomyStore'
 import { SkillShopPopupController } from './SkillShopPopupController'
+import { DailyRewardPopupController } from './DailyRewardPopupController'
 import type { SkillKind } from './SkillStock'
 import { OngoingGameSession } from './PlayController'
 
@@ -60,9 +61,15 @@ export class HomeSceneController extends Component {
   @property({ type: Prefab, tooltip: 'Pre-game skill shop popup prefab' })
   skillShopPopupPrefab: Prefab | null = null
 
+  // 首页每日奖励弹窗，奖励状态由经济仓库提供，Prefab 只负责渲染和交互。
+  @property({ type: Prefab, tooltip: 'Daily reward popup prefab' })
+  dailyRewardPopupPrefab: Prefab | null = null
+
   private startPageController: StartPageController | null = null
   private skillShopNode: Node | null = null
   private skillShopController: SkillShopPopupController | null = null
+  private dailyRewardNode: Node | null = null
+  private dailyRewardController: DailyRewardPopupController | null = null
   private homeSettingsNode: Node | null = null
   private homeSettingsController: PauseOverlayController | null = null
   private audioManager: GameAudioManager | null = null
@@ -70,14 +77,12 @@ export class HomeSceneController extends Component {
   private readonly feedbackAdapter = new GameFeedbackAdapter()
   private readonly economy = PlayerEconomyStore.getInstance()
   private isLoadingGameScene = false
-  private dailyLoginReward = 0
+  private dailyRewardStateKey = ''
   private readonly refreshResourceTick = () => this.refreshPlayerResources()
 
   onLoad() {
     this.audioManager = new GameAudioManager(this.node)
     this.audioManager.setup()
-    const dailyResult = this.economy.claimDailyLogin()
-    this.dailyLoginReward = dailyResult.claimed ? dailyResult.amount : 0
     const resources = this.economy.getSnapshot()
     this.startPageController = this.getComponent(StartPageController) ?? this.addComponent(StartPageController)
     this.startPageController.setup({
@@ -94,7 +99,7 @@ export class HomeSceneController extends Component {
       coins: resources.coins,
       onEnergyMoreTap: () => void this.shareForEnergyReward(),
       onSettingsTap: () => this.openHomeSettings(),
-      onDailyRewardTap: () => this.showDailyRewardStatus(),
+      onDailyRewardTap: () => this.openDailyReward(),
       onShopTap: () => this.openSkillShop()
     })
   }
@@ -103,11 +108,9 @@ export class HomeSceneController extends Component {
     // 首帧后再同步一次布局，兼容微信安全区和 Creator 预览尺寸变化。
     this.startPageController?.syncLayout()
     this.skillShopController?.syncLayout()
+    this.dailyRewardController?.syncLayout()
     this.homeSettingsController?.syncLayout()
     this.audioManager?.playStartPageBackgroundMusic(this.getHomeBgmClip())
-    if (this.dailyLoginReward > 0) {
-      this.startPageController?.showMessage(`每日登录奖励：金币 +${this.dailyLoginReward}，体力已补满`)
-    }
     this.schedule(this.refreshResourceTick, HOME_RESOURCE_REFRESH_INTERVAL_SECONDS)
   }
 
@@ -115,6 +118,8 @@ export class HomeSceneController extends Component {
     this.unschedule(this.refreshResourceTick)
     this.skillShopController = null
     this.skillShopNode = null
+    this.dailyRewardController = null
+    this.dailyRewardNode = null
     this.homeSettingsController = null
     this.homeSettingsNode = null
   }
@@ -299,6 +304,9 @@ export class HomeSceneController extends Component {
       snapshot.maxEnergy,
       snapshot.coins
     )
+    if (this.dailyRewardNode?.active) {
+      this.refreshDailyRewardState()
+    }
   }
 
   private openHomeSettings() {
@@ -337,12 +345,70 @@ export class HomeSceneController extends Component {
     )
   }
 
-  private showDailyRewardStatus() {
-    this.startPageController?.showMessage(
-      this.dailyLoginReward > 0
-        ? `每日奖励：金币 +${this.dailyLoginReward}，体力已补满`
-        : '今日奖励已领取'
-    )
+  private openDailyReward() {
+    if (this.isLoadingGameScene) {
+      return
+    }
+
+    if (!this.dailyRewardNode?.isValid || !this.dailyRewardController?.isValid) {
+      if (!this.dailyRewardPopupPrefab) {
+        this.startPageController?.showMessage('每日奖励弹窗资源未配置')
+        return
+      }
+
+      this.dailyRewardNode = instantiate(this.dailyRewardPopupPrefab)
+      this.dailyRewardNode.setParent(this.node)
+      this.dailyRewardNode.setPosition(0, 0, 0)
+      this.dailyRewardController = this.dailyRewardNode.getComponent(DailyRewardPopupController)
+        ?? this.dailyRewardNode.addComponent(DailyRewardPopupController)
+      this.dailyRewardController.setup({
+        hostNode: this.node,
+        onClaim: () => this.claimDailyReward(),
+        onClose: () => this.closeDailyReward(),
+        onButtonClick: () => this.playButtonClickFeedback()
+      })
+    }
+
+    this.refreshDailyRewardState(true)
+    this.dailyRewardController.syncLayout()
+    this.dailyRewardController.show()
+  }
+
+  private claimDailyReward() {
+    const result = this.economy.claimDailyLogin()
+    this.refreshDailyRewardState(true)
+    if (!result.claimed) {
+      this.dailyRewardController?.showMessage(
+        result.reason === 'storage-failed' ? '领取失败，请稍后重试' : '今日奖励已经领取'
+      )
+      return
+    }
+
+    this.refreshPlayerResources()
+    this.dailyRewardController?.showMessage(`领取成功：金币 +${result.amount}`, true)
+  }
+
+  private closeDailyReward() {
+    this.dailyRewardController?.hide()
+  }
+
+  /**
+   * 弹窗保持开启并跨过本地零点时刷新领取日，避免展示金额与实际入账金额不一致。
+   * 状态未变化时不重复 render，保留领取成功提示。
+   */
+  private refreshDailyRewardState(force = false) {
+    if (!this.dailyRewardController?.isValid) {
+      return
+    }
+
+    const state = this.economy.getDailyRewardState()
+    const stateKey = `${state.currentDay}:${state.todayAmount}:${state.canClaim ? 1 : 0}`
+    if (!force && stateKey === this.dailyRewardStateKey) {
+      return
+    }
+
+    this.dailyRewardStateKey = stateKey
+    this.dailyRewardController.renderState(state)
   }
 
   // 首页分享还没有本局分数，使用邀请挑战文案更符合入口语境。
