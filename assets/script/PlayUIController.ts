@@ -25,6 +25,12 @@
 } from 'cc'
 import { PauseOverlayController } from './PauseOverlayController'
 import { GameOverOverlayController } from './GameOverOverlayController'
+import {
+  getBoardCellCenterOffset,
+  getBoardGridSize,
+  getBoardGridStep,
+  getBoardSeparatorOffset
+} from './BoardGeometry'
 
 const { ccclass } = _decorator
 
@@ -107,6 +113,8 @@ type WechatWindowInfo = {
 
 // 棋盘边框厚度，UI 绘制和棋盘内区布局都会基于这个值计算。
 const BOARD_BORDER_WIDTH = 8
+// 场景中保留五个可编辑的静态列占位；更宽棋盘才按需补运行时节点。
+const STATIC_BOARD_COLUMN_COUNT = 5
 // 棋盘内层圆角与棋子圆角保持一致，保证视觉统一。
 const BOARD_INNER_RADIUS = 14
 // 棋盘外层玻璃阴影色，用很低透明度替代原来的实色边框。
@@ -586,10 +594,13 @@ export class PlayUIController extends Component {
 
     const boardNode = this.node.getChildByName('board')
     if (boardNode) {
+      const gridSize = this.getExpectedBoardGridSize()
       boardNode.setPosition(0, GAME_BOARD_Y, 0)
+      // 先同步内区，再同步外框，避免动态行列首次布局时仍读取 scene 中的 5×7 旧尺寸。
+      boardNode.getChildByName('BoardFill')?.getComponent(UITransform)?.setContentSize(gridSize.width, gridSize.height)
       boardNode.getComponent(UITransform)?.setContentSize(
-        this.getBoardInnerWidth() + BOARD_BORDER_WIDTH * 2,
-        this.getBoardInnerHeight() + BOARD_BORDER_WIDTH * 2
+        gridSize.width + BOARD_BORDER_WIDTH * 2,
+        gridSize.height + BOARD_BORDER_WIDTH * 2
       )
     }
 
@@ -700,24 +711,7 @@ export class PlayUIController extends Component {
       fillGraphics.clear()
     }
 
-    for (let column = 0; column < this.boardwidth; column++) {
-      const columnNode = boardNode.getChildByName(`column${column + 1}`)
-      if (!columnNode) {
-        continue
-      }
-
-      columnNode.setPosition(this.getBoardColumnCenterX(column), 0, 0)
-      const columnTransform = columnNode.getComponent(UITransform)
-      if (columnTransform) {
-        columnTransform.setContentSize(innerWidth / this.boardwidth, innerHeight)
-      }
-
-      const columnSprite = columnNode.getComponent(Sprite)
-      if (columnSprite) {
-        // 列节点只保留占位，不再使用半透明底色。
-        columnSprite.enabled = false
-      }
-    }
+    this.syncBoardColumnPlaceholders(boardNode, innerHeight)
 
     let dashedLines = boardNode.getChildByName('BoardDashedLines')
     if (!dashedLines) {
@@ -737,8 +731,8 @@ export class PlayUIController extends Component {
 
     const top = innerHeight / 2 - BOARD_DASH_INSET
     const bottom = -innerHeight / 2 + BOARD_DASH_INSET
-    const columnWidth = innerWidth / this.boardwidth
-    // 使用交替列蒙版表达五等分列，同时透明度很低，不会抢棋子的视觉焦点。
+    const columnWidth = this.getBoardStepSize()
+    // 使用交替列蒙版表达当前列数，同时透明度很低，不会抢棋子的视觉焦点。
     for (let column = 0; column < this.boardwidth; column++) {
       if (column % 2 !== 0) {
         continue
@@ -777,6 +771,61 @@ export class PlayUIController extends Component {
     }
 
     this.disableDropGuide(boardNode)
+  }
+
+  /**
+   * 同步场景中的列占位节点。
+   *
+   * column1～column5 始终保留为静态可编辑节点：配置列数变小时只隐藏多余节点；
+   * 只有棋盘超过五列时才补建额外占位，避免普通关卡被无意义的运行时层级替代。
+   */
+  private syncBoardColumnPlaceholders(boardNode: Node, innerHeight: number) {
+    const activeColumnCount = Math.max(0, Math.floor(this.boardwidth))
+    const columnNodes = new Map<number, Node>()
+
+    for (const child of boardNode.children) {
+      const match = /^column(\d+)$/.exec(child.name)
+      if (!match) {
+        continue
+      }
+
+      const columnNumber = Number(match[1])
+      if (!Number.isInteger(columnNumber) || columnNumber < 1) {
+        continue
+      }
+
+      columnNodes.set(columnNumber, child)
+      child.active = columnNumber <= activeColumnCount
+    }
+
+    for (let column = 0; column < activeColumnCount; column += 1) {
+      const columnNumber = column + 1
+      let columnNode = columnNodes.get(columnNumber) ?? null
+      if (!columnNode && columnNumber > STATIC_BOARD_COLUMN_COUNT) {
+        columnNode = new Node(`column${columnNumber}`)
+        columnNode.setParent(boardNode)
+        columnNode.addComponent(UITransform)
+        columnNodes.set(columnNumber, columnNode)
+      }
+
+      // 前五列如果被误删，不在这里偷偷补建，让场景层级问题能在编辑器里直接暴露。
+      if (!columnNode) {
+        continue
+      }
+
+      columnNode.active = true
+      columnNode.setPosition(this.getBoardColumnCenterX(column), 0, 0)
+      ;(columnNode.getComponent(UITransform) ?? columnNode.addComponent(UITransform)).setContentSize(
+        this.getBoardStepSize(),
+        innerHeight
+      )
+
+      const columnSprite = columnNode.getComponent(Sprite)
+      if (columnSprite) {
+        // 列节点只保留占位，不再使用半透明底色。
+        columnSprite.enabled = false
+      }
+    }
   }
 
   // 当前版本不再显示下落指引轨道；保留清理逻辑，兼容旧场景里已经存在的 DropGuide 节点。
@@ -2223,45 +2272,42 @@ export class PlayUIController extends Component {
     return this.node.getChildByName('Controller') ?? this.getSkillsContainer() ?? this.node
   }
 
-  // 读取棋盘内区宽度，优先使用 BoardFill 的尺寸，避免和逻辑层出现偏差。
+  private getBoardStepSize() {
+    return getBoardGridStep(this.pieceSize, this.spacing)
+  }
+
+  // 行列配置是棋盘有效内区的唯一来源，5×7 时结果仍为原来的 610×854。
+  private getExpectedBoardGridSize() {
+    return getBoardGridSize(this.boardwidth, this.boardheight, this.pieceSize, this.spacing)
+  }
+
+  // 读取棋盘内区宽度；BoardFill 缺失时和逻辑层共用标准网格公式兜底。
   private getBoardInnerWidth() {
     const fillTransform = this.node.getChildByName('board')?.getChildByName('BoardFill')?.getComponent(UITransform)
-    if (fillTransform) {
+    if (fillTransform && fillTransform.width > 0) {
       return fillTransform.width
     }
 
-    const boardTransform = this.node.getChildByName('board')?.getComponent(UITransform)
-    if (boardTransform) {
-      return boardTransform.width - BOARD_BORDER_WIDTH * 2
-    }
-
-    return this.boardwidth * (this.pieceSize + this.spacing)
+    return this.getExpectedBoardGridSize().width
   }
 
-  // 读取棋盘内区高度，优先使用 BoardFill 的尺寸，保证 UI 与逻辑共用一套内区。
+  // 高度使用与宽度相同的兜底规则，不再从外框反推隐式边距。
   private getBoardInnerHeight() {
     const fillTransform = this.node.getChildByName('board')?.getChildByName('BoardFill')?.getComponent(UITransform)
-    if (fillTransform) {
+    if (fillTransform && fillTransform.height > 0) {
       return fillTransform.height
     }
 
-    const boardTransform = this.node.getChildByName('board')?.getComponent(UITransform)
-    if (boardTransform) {
-      return boardTransform.height - BOARD_BORDER_WIDTH * 2
-    }
-
-    return this.boardheight * (this.pieceSize + this.spacing)
+    return this.getExpectedBoardGridSize().height
   }
 
-  // 根据棋盘内区宽度计算每一列的中心点。
+  // 列中心与落子几何使用同一个“总宽居中 + 单格步长”公式。
   private getBoardColumnCenterX(column: number) {
-    const columnWidth = this.getBoardInnerWidth() / this.boardwidth
-    return -this.getBoardInnerWidth() / 2 + columnWidth * (column + 0.5)
+    return getBoardCellCenterOffset(column, this.boardwidth, this.getBoardStepSize())
   }
 
-  // 根据棋盘内区宽度计算列分隔线的位置。
+  // 分隔线也以相同网格原点计算，动态列数下不会产生半格偏移。
   private getBoardSeparatorX(column: number) {
-    const columnWidth = this.getBoardInnerWidth() / this.boardwidth
-    return -this.getBoardInnerWidth() / 2 + columnWidth * (column + 1)
+    return getBoardSeparatorOffset(column, this.boardwidth, this.getBoardStepSize())
   }
 }

@@ -1,4 +1,4 @@
-import { EventTouch, Node, UITransform, Vec2, Vec3 } from 'cc'
+import { EventTouch, Node, UITransform, Vec3 } from 'cc'
 
 type BoardGeometryOptions = {
   boardWidth: number
@@ -8,9 +8,49 @@ type BoardGeometryOptions = {
   spawnOffsetY: number
 }
 
+export type BoardGridSize = {
+  width: number
+  height: number
+}
+
 export type BoardCellPosition = {
   row: number
   column: number
+}
+
+// 棋盘尺寸、触摸换列与 UI 列占位必须共享同一个步长定义。
+export function getBoardGridStep(pieceSize: number, spacing: number) {
+  return pieceSize + spacing
+}
+
+// 棋盘有效内区只由行列数和单格步长决定，避免场景静态尺寸成为第二套数据源。
+export function getBoardGridSize(
+  boardWidth: number,
+  boardHeight: number,
+  pieceSize: number,
+  spacing: number
+): BoardGridSize {
+  const step = getBoardGridStep(pieceSize, spacing)
+  return {
+    width: boardWidth * step,
+    height: boardHeight * step
+  }
+}
+
+/**
+ * 返回某一轴上的格子中心偏移。
+ *
+ * @param index 从左到右或从下到上的格子索引。
+ * @param count 当前轴的格子数量。
+ * @param step 单格步长。
+ */
+export function getBoardCellCenterOffset(index: number, count: number, step: number) {
+  return -count * step / 2 + step / 2 + index * step
+}
+
+// 返回相邻格子之间的分隔线偏移，供 UI 列装饰和触摸几何共用同一原点。
+export function getBoardSeparatorOffset(index: number, count: number, step: number) {
+  return -count * step / 2 + (index + 1) * step
 }
 
 // 棋盘几何计算集中在这里，避免玩法流程到处关心 BoardFill 尺寸和坐标换算细节。
@@ -28,7 +68,7 @@ export class BoardGeometry {
 
   // 单格步长 = 棋子尺寸 + 列间距，这是所有坐标换算的基础。
   getStepSize() {
-    return this.options.pieceSize + this.options.spacing
+    return getBoardGridStep(this.options.pieceSize, this.options.spacing)
   }
 
   isInsideBoard(row: number, column: number) {
@@ -38,7 +78,7 @@ export class BoardGeometry {
   /**
    * 把触摸点换算成列索引。
    *
-   * 先用棋盘节点的世界包围盒过滤棋盘外触摸，再转换到当前节点本地坐标，
+   * 先用棋盘有效内区过滤棋盘外触摸，再转换到当前节点本地坐标，
    * 最后基于实时网格原点计算列，避免 BoardFill 尺寸变化后落列偏移。
    *
    * @param event Cocos 触摸事件。
@@ -56,8 +96,11 @@ export class BoardGeometry {
       return -1
     }
 
-    const column = Math.round((local.x - this.getBoardGridOriginX()) / this.getStepSize())
-    return Math.max(0, Math.min(this.options.boardWidth - 1, column))
+    return this.getGridIndexFromLocalCoordinate(
+      local.x,
+      this.getBoardGridOriginX(),
+      this.options.boardWidth
+    )
   }
 
   /**
@@ -80,9 +123,16 @@ export class BoardGeometry {
       return null
     }
 
-    const step = this.getStepSize()
-    const column = Math.round((local.x - this.getBoardGridOriginX()) / step)
-    const row = Math.round((local.y - this.getBoardGridOriginY()) / step)
+    const column = this.getGridIndexFromLocalCoordinate(
+      local.x,
+      this.getBoardGridOriginX(),
+      this.options.boardWidth
+    )
+    const row = this.getGridIndexFromLocalCoordinate(
+      local.y,
+      this.getBoardGridOriginY(),
+      this.options.boardHeight
+    )
     if (!this.isInsideBoard(row, column)) {
       return null
     }
@@ -101,14 +151,36 @@ export class BoardGeometry {
     return uiTransform.convertToNodeSpaceAR(new Vec3(uiLocation.x, uiLocation.y, 0))
   }
 
-  // 使用棋盘节点的世界包围盒判断触摸是否真的落在棋盘区域内。
+  // 使用棋盘有效内区判断触摸，避免外框宽度变化后触摸区域跟着漂移。
   isTouchInsideBoard(x: number, y: number) {
-    const boardTransform = this.ownerNode.getChildByName('board')?.getComponent(UITransform)
-    if (!boardTransform) {
+    const ownerTransform = this.ownerNode.getComponent(UITransform)
+    const boardNode = this.ownerNode.getChildByName('board')
+    if (!ownerTransform || !boardNode) {
       return false
     }
 
-    return boardTransform.getBoundingBoxToWorld().contains(new Vec2(x, y))
+    const local = ownerTransform.convertToNodeSpaceAR(new Vec3(x, y, 0))
+    const boardPosition = boardNode.position
+    const halfWidth = this.getBoardInnerWidth() / 2
+    const halfHeight = this.getBoardInnerHeight() / 2
+    return (
+      local.x >= boardPosition.x - halfWidth &&
+      local.x < boardPosition.x + halfWidth &&
+      local.y >= boardPosition.y - halfHeight &&
+      local.y < boardPosition.y + halfHeight
+    )
+  }
+
+  /**
+   * 使用格子左边界和 floor 统一解析行列。
+   *
+   * 普通落子和三个技能都走这里，确保边界触摸不会一边吸附到末列、另一边却返回空目标。
+   */
+  private getGridIndexFromLocalCoordinate(coordinate: number, firstCenter: number, count: number) {
+    const step = this.getStepSize()
+    const firstEdge = firstCenter - step / 2
+    const index = Math.floor((coordinate - firstEdge) / step)
+    return index >= 0 && index < count ? index : -1
   }
 
   /**
@@ -147,55 +219,56 @@ export class BoardGeometry {
   /**
    * 读取棋盘有效内区宽度。
    *
-   * 优先读取 BoardFill，缺失时退回 board 节点尺寸并扣除边距，最后再使用格子步长兜底。
+   * 优先读取 BoardFill，缺失时使用行列数与格子步长计算。
    * 这样棋盘装饰样式变化时，逻辑层仍以真实可落子区域为准。
    *
    * @returns 棋盘有效内区宽度。
    */
   private getBoardInnerWidth() {
     const fillTransform = this.ownerNode.getChildByName('board')?.getChildByName('BoardFill')?.getComponent(UITransform)
-    if (fillTransform) {
+    if (fillTransform && fillTransform.width > 0) {
       return fillTransform.width
     }
 
-    const boardTransform = this.ownerNode.getChildByName('board')?.getComponent(UITransform)
-    if (boardTransform) {
-      return boardTransform.width - 40
-    }
-
-    return this.getStepSize() * this.options.boardWidth
+    // BoardFill 缺失时不再从外框反推，直接复用 UI 的标准网格公式。
+    return this.getExpectedBoardGridSize().width
   }
 
   /**
    * 读取棋盘有效内区高度。
    *
-   * 优先读取 BoardFill，缺失时退回 board 节点尺寸并扣除边距，最后再使用格子步长兜底。
+   * 优先读取 BoardFill，缺失时使用行列数与格子步长计算。
    * 这样棋盘装饰样式变化时，逻辑层仍以真实可落子区域为准。
    *
    * @returns 棋盘有效内区高度。
    */
   private getBoardInnerHeight() {
     const fillTransform = this.ownerNode.getChildByName('board')?.getChildByName('BoardFill')?.getComponent(UITransform)
-    if (fillTransform) {
+    if (fillTransform && fillTransform.height > 0) {
       return fillTransform.height
     }
 
-    const boardTransform = this.ownerNode.getChildByName('board')?.getComponent(UITransform)
-    if (boardTransform) {
-      return boardTransform.height - 40
-    }
+    // 与宽度使用完全相同的兜底来源，避免横纵轴出现不同的隐式边距。
+    return this.getExpectedBoardGridSize().height
+  }
 
-    return this.getStepSize() * this.options.boardHeight
+  private getExpectedBoardGridSize() {
+    return getBoardGridSize(
+      this.options.boardWidth,
+      this.options.boardHeight,
+      this.options.pieceSize,
+      this.options.spacing
+    )
   }
 
   // 根据棋盘当前内区宽度计算左下角第一个格子的中心 x 坐标。
   private getBoardGridOriginX() {
-    return this.getBoardLocalPosition().x - this.getBoardInnerWidth() / 2 + this.getStepSize() / 2
+    return this.getBoardLocalPosition().x + getBoardCellCenterOffset(0, this.options.boardWidth, this.getStepSize())
   }
 
   // 根据棋盘当前内区高度计算左下角第一个格子的中心 y 坐标。
   private getBoardGridOriginY() {
-    return this.getBoardLocalPosition().y - this.getBoardInnerHeight() / 2 + this.getStepSize() / 2
+    return this.getBoardLocalPosition().y + getBoardCellCenterOffset(0, this.options.boardHeight, this.getStepSize())
   }
 
   // board 可以在 UI 重构时整体移动，棋子和触摸换算必须同步这个局部偏移。

@@ -11,6 +11,17 @@ import { BoardGeometry } from './BoardGeometry'
 import { ScoreManager, type ScoreRewardEvent } from './ScoreManager'
 import { BoardModel, type BoardCell } from './BoardModel'
 import { TransientFxRegistry } from './TransientFxRegistry'
+import {
+  areBoardConfigsEqual,
+  isBoardMatrixCompatible,
+  normalizeBoardConfig,
+  type BoardConfig
+} from './BoardConfig'
+import { OngoingGameSession, type OngoingGameSnapshot } from './OngoingGameSession'
+
+// 保留原有导入路径，避免首页和后续关卡入口因会话模块拆分而立即迁移。
+export { OngoingGameSession } from './OngoingGameSession'
+export type { OngoingGameSnapshot } from './OngoingGameSession'
 
 const { ccclass, property } = _decorator
 
@@ -32,51 +43,6 @@ type MergeGroup = {
 type DirectedMergeResult = {
   anchor: PieceController | null
   changed: boolean
-}
-
-export type OngoingGameSnapshot = {
-  boardValues: Array<Array<number | null>>
-  currentPieceValue: number | null
-  nextPieceValue?: number | null
-  currentPieceY: number | null
-  currentColumn: number
-  bonusScore: number
-  highestPieceValue: number
-  usedSkillsThisGame: Record<SkillKind, boolean>
-}
-
-/**
- * 首页与玩法场景之间只传递纯数据快照，不让首页直接持有棋盘节点。
- * 模块状态会在 director.loadScene 切场景时保留，结束游戏后统一清空。
- */
-export const OngoingGameSession = {
-  active: false,
-  snapshot: null as OngoingGameSnapshot | null,
-
-  hasActiveGame() {
-    return this.active
-  },
-
-  beginNewGame() {
-    this.active = true
-    this.snapshot = null
-  },
-
-  save(snapshot: OngoingGameSnapshot) {
-    this.active = true
-    this.snapshot = snapshot
-  },
-
-  consumeSnapshot() {
-    const snapshot = this.snapshot
-    this.snapshot = null
-    return snapshot
-  },
-
-  finishGame() {
-    this.active = false
-    this.snapshot = null
-  }
 }
 
 // 交换技能拖拽时需要记录起点和原始表现，方便无效释放时回到原位。
@@ -127,11 +93,11 @@ export class PlaySoundEffectClips {
 
 @ccclass('PlayController')
 export class PlayController extends Component {
-  // 棋盘列数，当前玩法固定为 5 列。
+  // 棋盘列数；场景序列化值保留为 5，进入关卡时会先被会话配置覆盖。
   @property({ tooltip: 'Board columns' })
   boardwidth = 5
 
-  // 棋盘行数，当前玩法固定为 7 行。
+  // 棋盘行数；场景序列化值保留为 7，进入关卡时会先被会话配置覆盖。
   @property({ tooltip: 'Board rows' })
   boardheight = 7
 
@@ -283,9 +249,14 @@ export class PlayController extends Component {
   onLoad() {
     const ongoingSnapshot = OngoingGameSession.consumeSnapshot()
     if (!OngoingGameSession.hasActiveGame()) {
-      // 兼容 Creator 直接预览 game.scene 的开发入口。
-      OngoingGameSession.beginNewGame()
+      // Creator 直接预览 game.scene 时沿用 Inspector 尺寸，便于直接验证 3×7 等关卡布局。
+      OngoingGameSession.beginNewGame({
+        columns: this.boardwidth,
+        rows: this.boardheight
+      })
     }
+    // 必须在 resetBoard、BoardGeometry 和 UI setup 之前应用本局尺寸，三者才能共享同一份配置。
+    this.applyBoardConfig(OngoingGameSession.getBoardConfig())
     this.resetBoard()
     this.ensureGameplayLayers()
     this.boardGeometry = new BoardGeometry(this.node, this.buildBoardGeometryOptions())
@@ -604,6 +575,25 @@ export class PlayController extends Component {
     await this.executeBombSkill(target)
   }
 
+  /**
+   * 应用本局棋盘配置。
+   *
+   * 该方法只在创建棋盘数组、几何对象和 UI 之前调用；运行中不会直接改变尺寸，
+   * 避免旧棋子数组与新边界同时存在。
+   */
+  private applyBoardConfig(config: BoardConfig) {
+    const normalized = normalizeBoardConfig(config)
+    this.boardwidth = normalized.columns
+    this.boardheight = normalized.rows
+  }
+
+  private buildBoardConfig(): BoardConfig {
+    return normalizeBoardConfig({
+      columns: this.boardwidth,
+      rows: this.boardheight
+    })
+  }
+
   // 重置棋盘数据，并把默认目标列放在中间列。
   private resetBoard() {
     this.board = this.boardModel.createEmptyBoard(this.boardheight, this.boardwidth)
@@ -619,6 +609,7 @@ export class PlayController extends Component {
   // 返回首页前生成纯数据快照，节点和组件不会跨场景泄漏。
   private buildOngoingGameSnapshot(): OngoingGameSnapshot {
     return {
+      boardConfig: this.buildBoardConfig(),
       boardValues: this.board.map((row) => row.map((piece) => piece?.getValue() ?? null)),
       currentPieceValue: this.currentPiece?.getValue() ?? null,
       nextPieceValue: this.nextPieceValue,
@@ -639,6 +630,17 @@ export class PlayController extends Component {
   private restoreOngoingGame(snapshot: OngoingGameSnapshot) {
     if (!this.basePieceController) {
       OngoingGameSession.finishGame()
+      return
+    }
+
+    const currentBoardConfig = this.buildBoardConfig()
+    if (
+      !snapshot.boardConfig ||
+      !areBoardConfigsEqual(snapshot.boardConfig, currentBoardConfig) ||
+      !isBoardMatrixCompatible(snapshot.boardValues, currentBoardConfig)
+    ) {
+      // 快照尺寸异常时保留当前关卡配置并开始空棋盘，绝不裁剪或越界恢复旧棋子。
+      OngoingGameSession.beginNewGame(currentBoardConfig)
       return
     }
 
@@ -2241,7 +2243,7 @@ export class PlayController extends Component {
     return this.boardGeometry?.getLocalPositionFromTouch(event) ?? null
   }
 
-  // 使用棋盘节点的世界包围盒判断触摸是否真的落在棋盘区域内。
+  // 使用棋盘有效内区判断触摸是否真的落在可操作区域内。
   private isTouchInsideBoard(x: number, y: number) {
     return this.boardGeometry?.isTouchInsideBoard(x, y) ?? false
   }
@@ -2635,7 +2637,8 @@ export class PlayController extends Component {
       return
     }
 
-    OngoingGameSession.beginNewGame()
+    // 重开沿用当前关卡尺寸；例如 3×7 关卡不会退回默认 5×7。
+    OngoingGameSession.beginNewGame(this.buildBoardConfig())
     this.clearBoardPieces()
     this.transientFx.clear()
     this.isGameOver = false

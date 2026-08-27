@@ -1,4 +1,4 @@
-import { _decorator, AudioClip, Component, director, instantiate, Node, Prefab, SpriteFrame, UITransform } from 'cc'
+import { _decorator, AudioClip, CCInteger, Component, director, instantiate, Node, Prefab, SpriteFrame, UITransform } from 'cc'
 import { StartPageController } from './StartPageController'
 import { GameAudioManager } from './GameAudioManager'
 import { GameFeedbackAdapter } from './GameFeedbackAdapter'
@@ -8,7 +8,8 @@ import { ECONOMY_CONFIG, PlayerEconomyStore } from './PlayerEconomyStore'
 import { SkillShopPopupController } from './SkillShopPopupController'
 import { DailyRewardPopupController } from './DailyRewardPopupController'
 import type { SkillKind } from './SkillStock'
-import { OngoingGameSession } from './PlayController'
+import { OngoingGameSession } from './OngoingGameSession'
+import { BOARD_CONFIG_LIMITS } from './BoardConfig'
 
 const { ccclass, property } = _decorator
 const HOME_RESOURCE_REFRESH_INTERVAL_SECONDS = 30
@@ -24,6 +25,26 @@ export class HomeSceneController extends Component {
   // loading 预加载完成后进入的玩法场景名，loadingSceneName 为空时也会作为安全兜底。
   @property({ tooltip: 'Game scene name' })
   gameSceneName = 'game'
+
+  // 当前首页新开一局时使用的棋盘列数；未来选关只需在进入场景前替换该配置。
+  @property({
+    type: CCInteger,
+    min: BOARD_CONFIG_LIMITS.minColumns,
+    max: BOARD_CONFIG_LIMITS.maxColumns,
+    step: 1,
+    tooltip: 'New game board columns'
+  })
+  newGameColumns = 5
+
+  // 当前首页新开一局时使用的棋盘行数，默认保持经典 5×7。
+  @property({
+    type: CCInteger,
+    min: BOARD_CONFIG_LIMITS.minRows,
+    max: BOARD_CONFIG_LIMITS.maxRows,
+    step: 1,
+    tooltip: 'New game board rows'
+  })
+  newGameRows = 7
 
   // Home 页专用背景音乐，进入首页场景后循环播放。
   @property({ type: AudioClip, tooltip: 'Home page background music' })
@@ -225,7 +246,10 @@ export class HomeSceneController extends Component {
     }
 
     this.isLoadingGameScene = true
-    OngoingGameSession.beginNewGame()
+    OngoingGameSession.beginNewGame({
+      columns: this.newGameColumns,
+      rows: this.newGameRows
+    })
     this.refreshPlayerResources()
     this.skillShopController?.hide()
     const sceneName = this.getStartTargetSceneName()
