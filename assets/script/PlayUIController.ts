@@ -163,6 +163,11 @@ const GAME_BOARD_Y = -60
 const GAME_SKILLS_Y = -568
 const GAME_SKILLS_WIDTH = 520
 const GAME_SKILLS_HEIGHT = 124
+// 保留设计稿中技能栏距离画布底部的 37 像素留白，长屏设备则自然利用额外空间下移。
+const GAME_SKILLS_BOTTOM_INSET =
+  GAME_DESIGN_HEIGHT * 0.5 + GAME_SKILLS_Y - GAME_SKILLS_HEIGHT * 0.5
+// 棋盘与技能卡之间始终保留空隙，避免底部安全区补偿把技能栏顶进棋盘。
+const GAME_SKILLS_BOARD_GAP = 18
 const GAME_SKILL_X_POSITIONS = [-145, 0, 145] as const
 const HUD_SETTINGS_HIT_SIZE = 76
 const HUD_SETTINGS_ICON_SIZE = 64
@@ -620,16 +625,52 @@ export class PlayUIController extends Component {
     this.statusContentBaseSize = { width: GAME_DESIGN_WIDTH, height: GAME_DESIGN_HEIGHT }
   }
 
-  // 无论技能栏来自 scene 还是运行时，都使用同一套定稿坐标。
+  // 技能卡横向仍使用设计稿坐标，纵向则贴近当前设备底部安全区。
   private layoutSkillsContainer(skillsNode: Node) {
-    skillsNode.setPosition(0, GAME_SKILLS_Y, 0)
-    ;(skillsNode.getComponent(UITransform) ?? skillsNode.addComponent(UITransform)).setContentSize(
+    const transform = skillsNode.getComponent(UITransform) ?? skillsNode.addComponent(UITransform)
+    transform.setContentSize(
       GAME_SKILLS_WIDTH,
       GAME_SKILLS_HEIGHT
     )
+    skillsNode.setPosition(0, this.getResponsiveSkillsY(GAME_SKILLS_HEIGHT), 0)
     for (let index = 0; index < GAME_SKILL_X_POSITIONS.length; index += 1) {
       skillsNode.getChildByName(`Skill${index + 1}`)?.setPosition(GAME_SKILL_X_POSITIONS[index], 0, 0)
     }
+  }
+
+  /**
+   * 计算技能栏在当前屏幕上的纵坐标。
+   *
+   * 优先贴住底部安全区；如果棋盘底边更低，则继续向下避让，保证技能卡不会盖住棋盘。
+   */
+  private getResponsiveSkillsY(skillsHeight: number) {
+    const rootTransform = this.node.getComponent(UITransform)
+    if (!rootTransform || rootTransform.height <= 0) {
+      return GAME_SKILLS_Y
+    }
+
+    const safeBottom = this.getSafeBottomInset(rootTransform)
+    const halfSkillsHeight = skillsHeight * 0.5
+    const bottomAlignedY =
+      -rootTransform.height * 0.5 + safeBottom + GAME_SKILLS_BOTTOM_INSET + halfSkillsHeight
+
+    const boardNode = this.node.getChildByName('board')
+    const boardTransform = boardNode?.getComponent(UITransform) ?? null
+    if (!boardNode || !boardTransform) {
+      return bottomAlignedY
+    }
+
+    const boardHalfHeight = boardTransform.height * Math.abs(boardNode.scale.y) * 0.5
+    const boardBottom = boardNode.position.y - boardHalfHeight
+    const highestNonOverlappingY = boardBottom - GAME_SKILLS_BOARD_GAP - halfSkillsHeight
+    return Math.min(bottomAlignedY, highestNonOverlappingY)
+  }
+
+  // 把平台安全区像素换算为当前固定宽度设计坐标。
+  private getSafeBottomInset(rootTransform: UITransform) {
+    const safeArea = sys.getSafeAreaRect()
+    const windowHeight = Math.max(1, screen.windowSize.height)
+    return safeArea ? (safeArea.y / windowHeight) * rootTransform.height : 0
   }
 
   // 纯代码绘制玻璃棋盘、列蒙版和列分隔线，并同步列节点占位尺寸。
@@ -1436,14 +1477,11 @@ export class PlayUIController extends Component {
       return
     }
 
-    const safeArea = sys.getSafeAreaRect()
-    const safeBottom = safeArea ? (safeArea.y / screen.windowSize.height) * rootTransform.height : 0
     if (this.controlBarBaseHeight <= 0) {
       // 把 scene 中当前控制栏高度记为基准高度，后续不再覆盖编辑器里的布局配置。
       this.controlBarBaseHeight = controlTransform.height
     }
     const baseHeight = this.controlBarBaseHeight
-    const totalHeight = baseHeight + safeBottom
     const widget = container.getComponent(Widget)
     if (widget) {
       widget.enabled = false
@@ -1456,9 +1494,9 @@ export class PlayUIController extends Component {
       background.enabled = false
     }
 
-    // 技能栏保持设计稿基准坐标，真机时再整体叠加底部安全区。
-    controlTransform.setContentSize(controlTransform.width, totalHeight)
-    container.setPosition(0, GAME_SKILLS_Y + safeBottom, 0)
+    // 安全区通过纵坐标吸收，不再增大容器高度；否则锚点变化会再次把卡片向棋盘方向推高。
+    controlTransform.setContentSize(GAME_SKILLS_WIDTH, baseHeight)
+    container.setPosition(0, this.getResponsiveSkillsY(baseHeight), 0)
   }
 
   /**

@@ -1,12 +1,16 @@
 {
   "__version__": "1.3.9",
   "splash-setting": {
+    "displayRatio": 1,
+    "totalTime": 900,
     "logo": {
-      "type": "default"
+      "type": "none"
     },
     "background": {
-      "type": "default",
-      "image": "project://settings/loading_bg_candy_shop.png"
-    }
+      "type": "custom",
+      "image": "project://settings/first-entry-splash-v2.jpg"
+    },
+    "watermarkLocation": "default",
+    "autoFit": true
   }
 }

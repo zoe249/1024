@@ -42,6 +42,7 @@ precision mediump float;
 uniform float u_Progress;
 uniform float u_Aspect;
 uniform vec4 u_TrackColor;
+uniform vec4 u_EmptyColor;
 uniform vec4 u_FillColor;
 varying vec2 v_LocalCoord;
 
@@ -65,20 +66,32 @@ void main() {
     );
     float trackAlpha = 1.0 - smoothstep(-edgeSoftness, edgeSoftness, trackDistance);
 
-    float fillWidth = max(u_Progress * u_Aspect, 0.0);
+    float innerInset = 0.14;
+    float innerHalfHeight = 0.5 - innerInset;
+    vec2 innerHalfSize = vec2(u_Aspect * 0.5 - innerInset, innerHalfHeight);
+    float innerDistance = roundedBoxDistance(
+        trackPoint,
+        innerHalfSize,
+        innerHalfHeight
+    );
+    float innerAlpha = 1.0 - smoothstep(-edgeSoftness, edgeSoftness, innerDistance);
+
+    float innerWidth = u_Aspect - innerInset * 2.0;
+    float fillWidth = max(u_Progress * innerWidth, 0.0);
     float fillHalfWidth = fillWidth * 0.5;
-    float fillCenterX = -u_Aspect * 0.5 + fillHalfWidth;
-    float fillRadius = min(0.5, fillHalfWidth);
+    float fillCenterX = -u_Aspect * 0.5 + innerInset + fillHalfWidth;
+    float fillRadius = min(innerHalfHeight, fillHalfWidth);
     vec2 fillPoint = vec2(trackPoint.x - fillCenterX, trackPoint.y);
     float fillDistance = roundedBoxDistance(
         fillPoint,
-        vec2(fillHalfWidth, 0.5),
+        vec2(fillHalfWidth, innerHalfHeight),
         fillRadius
     );
     float fillAlpha = (1.0 - smoothstep(-edgeSoftness, edgeSoftness, fillDistance))
         * step(0.001, u_Progress);
 
-    vec4 color = mix(u_TrackColor, u_FillColor, fillAlpha);
+    vec4 color = mix(u_TrackColor, u_EmptyColor, innerAlpha);
+    color = mix(color, u_FillColor, fillAlpha);
     color.a *= trackAlpha;
     gl_FragColor = color;
 }
@@ -95,17 +108,24 @@ const WEBGL_OPTIONS = {
     failIfMajorPerformanceCaveat: false
 };
 
-const BACKGROUND_FILE = 'startup-background.jpg';
+const DEFAULT_BACKGROUND_CONFIG = {
+    day: 'startup-background-day.jpg',
+    night: 'startup-background-night.jpg',
+    dayStartHour: 6,
+    nightStartHour: 18
+};
+const LEGACY_BACKGROUND_FILE = 'startup-background.jpg';
 const LOGO_FILE = 'startup-logo.png';
-// Logo 上移到顶部天空留白区，避免覆盖糖果店屋顶和主体角色。
-const LOGO_CENTER_Y = 0.78;
-const LOGO_WIDTH_RATIO = 0.54;
-const MAX_LOGO_HEIGHT_RATIO = 0.18;
-// 进度条使用较纤细的高度，接近参考启动页的轻量胶囊样式。
-const BAR_HEIGHT_RATIO = 0.024;
-const MIN_BAR_HEIGHT_PIXELS = 24;
-const TRACK_COLOR = [25 / 255, 28 / 255, 34 / 255, 0.78];
-const FILL_COLOR = [8 / 255, 196 / 255, 105 / 255, 1];
+// Logo 放在晨光天空的安全区，全面屏上也不会贴近刘海或圆角。
+const LOGO_CENTER_Y = 0.64;
+const LOGO_WIDTH_RATIO = 0.62;
+const MAX_LOGO_HEIGHT_RATIO = 0.215;
+const BAR_CENTER_Y = -0.58;
+const BAR_HEIGHT_RATIO = 0.022;
+const MIN_BAR_HEIGHT_PIXELS = 22;
+const TRACK_COLOR = [74 / 255, 48 / 255, 28 / 255, 0.92];
+const EMPTY_COLOR = [255 / 255, 240 / 255, 199 / 255, 0.96];
+const FILL_COLOR = [126 / 255, 183 / 255, 54 / 255, 1];
 
 let gl = null;
 let textureProgram = null;
@@ -123,6 +143,58 @@ let animationFrameHandle = null;
 let running = false;
 let progress = 0;
 let frameResolvers = [];
+
+/**
+ * 读取构建后脚本生成的背景配置。
+ *
+ * 配置缺失时继续使用默认文件名，并在加载失败时回退到旧版单背景文件，
+ * 避免手工复制不完整时阻断游戏启动。
+ */
+function loadBackgroundConfig() {
+    try {
+        const configured = require('./startup-background-config');
+        return Object.assign({}, DEFAULT_BACKGROUND_CONFIG, configured);
+    } catch (error) {
+        console.warn('未读取到启动页背景配置，将使用默认昼夜规则。', error);
+        return Object.assign({}, DEFAULT_BACKGROUND_CONFIG);
+    }
+}
+
+function normalizeHour(value, fallback) {
+    const hour = Number(value);
+    return Number.isFinite(hour) && hour >= 0 && hour < 24
+        ? Math.floor(hour)
+        : fallback;
+}
+
+/**
+ * 根据设备本地小时判断白天时段，同时兼容跨越零点的自定义时段。
+ */
+function isDaytime(hour, dayStartHour, nightStartHour) {
+    if (dayStartHour < nightStartHour) {
+        return hour >= dayStartHour && hour < nightStartHour;
+    }
+    return hour >= dayStartHour || hour < nightStartHour;
+}
+
+function resolveBackgroundSelection(hour) {
+    const config = loadBackgroundConfig();
+    const dayStartHour = normalizeHour(config.dayStartHour, 6);
+    const nightStartHour = normalizeHour(config.nightStartHour, 18);
+    const daytime = isDaytime(hour, dayStartHour, nightStartHour);
+    const files = [
+        daytime ? config.day : config.night,
+        daytime ? config.night : config.day,
+        LEGACY_BACKGROUND_FILE
+    ].filter((file, index, values) => (
+        typeof file === 'string' && file.length > 0 && values.indexOf(file) === index
+    ));
+
+    return {
+        files,
+        periodLabel: daytime ? '白天' : '夜间'
+    };
+}
 
 function compileShader(type, source) {
     const shader = gl.createShader(type);
@@ -189,6 +261,36 @@ function loadImage(path) {
 }
 
 /**
+ * 按“当前时段 → 另一时段 → 旧版单背景”的顺序加载，
+ * 单张资源异常时仍尽量展示可用背景并继续进入游戏。
+ */
+function loadBackgroundImage() {
+    const localHour = new Date().getHours();
+    const selection = resolveBackgroundSelection(localHour);
+
+    function loadCandidate(index) {
+        if (index >= selection.files.length) {
+            return Promise.reject(new Error('启动页昼夜背景均加载失败。'));
+        }
+
+        const file = selection.files[index];
+        return loadImage(file)
+            .then((image) => ({ image, file }))
+            .catch((error) => {
+                console.warn(`启动页背景加载失败，尝试备用图片：${file}`, error);
+                return loadCandidate(index + 1);
+            });
+    }
+
+    return loadCandidate(0).then((result) => {
+        console.info(
+            `启动页已按设备本地时间选择${selection.periodLabel}背景：${result.file}`
+        );
+        return result.image;
+    });
+}
+
+/**
  * 创建可绘制中文的离屏 2D Canvas。
  *
  * 不同微信基础库暴露离屏 Canvas 的方式并不完全一致，因此依次尝试
@@ -228,16 +330,18 @@ function createTextCanvas(width, height) {
 }
 
 function createLoadingLabelTexture() {
-    const { textCanvas, context } = createTextCanvas(512, 128);
+    const { textCanvas, context } = createTextCanvas(768, 128);
 
     context.clearRect(0, 0, textCanvas.width, textCanvas.height);
-    context.fillStyle = '#ffffff';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    context.shadowColor = 'rgba(0, 0, 0, 0.45)';
-    context.shadowBlur = 4;
-    context.font = '600 58px sans-serif';
-    context.fillText('初始化中', textCanvas.width * 0.5, textCanvas.height * 0.52);
+    context.font = '600 46px sans-serif';
+    context.lineJoin = 'round';
+    context.strokeStyle = '#4a301c';
+    context.lineWidth = 8;
+    context.strokeText('正在唤醒数字花园…', textCanvas.width * 0.5, textCanvas.height * 0.52);
+    context.fillStyle = '#fff6da';
+    context.fillText('正在唤醒数字花园…', textCanvas.width * 0.5, textCanvas.height * 0.52);
     return createTexture(textCanvas);
 }
 
@@ -247,30 +351,44 @@ function createLoadingLabelTexture() {
  * 文字由微信系统字体实时绘制，不再依赖任何文字图片文件。
  */
 function createHealthAdviceTexture() {
-    const { textCanvas, context } = createTextCanvas(1024, 256);
+    const { textCanvas, context } = createTextCanvas(1024, 220);
 
     context.clearRect(0, 0, textCanvas.width, textCanvas.height);
+    context.fillStyle = 'rgba(64, 43, 25, 0.72)';
+    context.beginPath();
+    context.moveTo(52, 12);
+    context.lineTo(972, 12);
+    context.quadraticCurveTo(1004, 12, 1004, 44);
+    context.lineTo(1004, 176);
+    context.quadraticCurveTo(1004, 208, 972, 208);
+    context.lineTo(52, 208);
+    context.quadraticCurveTo(20, 208, 20, 176);
+    context.lineTo(20, 44);
+    context.quadraticCurveTo(20, 12, 52, 12);
+    context.closePath();
+    context.fill();
+
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    context.shadowColor = 'rgba(0, 0, 0, 0.7)';
-    context.shadowBlur = 6;
-    context.shadowOffsetY = 2;
+    context.shadowColor = 'rgba(38, 24, 14, 0.8)';
+    context.shadowBlur = 4;
+    context.shadowOffsetY = 1;
 
-    context.fillStyle = '#ffe39a';
-    context.font = '600 48px sans-serif';
-    context.fillText('健康游戏忠告', textCanvas.width * 0.5, 44);
+    context.fillStyle = '#ffe27a';
+    context.font = '600 40px sans-serif';
+    context.fillText('健康游戏忠告', textCanvas.width * 0.5, 46);
 
-    context.fillStyle = '#ffffff';
-    context.font = '500 34px sans-serif';
+    context.fillStyle = '#fff6da';
+    context.font = '500 29px sans-serif';
     context.fillText(
         '抵制不良游戏　拒绝盗版游戏　注意自我保护　谨防受骗上当',
         textCanvas.width * 0.5,
-        118
+        112
     );
     context.fillText(
         '适度游戏益脑　沉迷游戏伤身　合理安排时间　享受健康生活',
         textCanvas.width * 0.5,
-        174
+        162
     );
     return createTexture(textCanvas);
 }
@@ -359,17 +477,21 @@ function updateLayout(logoImage) {
     );
     const barWidth = barWidthPixels * 2 / canvas.width;
     const barHeight = barHeightPixels * 2 / canvas.height;
-    const barCenterY = -0.69;
-    updateBuffer(barBuffer, buildRectVertices(0, barCenterY, barWidth, barHeight));
+    updateBuffer(barBuffer, buildRectVertices(0, BAR_CENTER_Y, barWidth, barHeight));
 
-    const labelWidth = barWidth * 0.42;
-    const labelHeight = barHeight * 0.72;
-    updateBuffer(labelBuffer, buildRectVertices(0, barCenterY, labelWidth, labelHeight));
+    const labelWidth = barWidth * 0.9;
+    const labelHeight = 96 * 2 / canvas.height;
+    updateBuffer(
+        labelBuffer,
+        buildRectVertices(0, BAR_CENTER_Y + 0.082, labelWidth, labelHeight)
+    );
 
-    // 健康游戏忠告放在进度条下方暗部，保留底部安全距离，避免被全面屏圆角裁切。
-    const adviceWidth = 1.84;
-    const adviceHeight = 0.18;
-    const adviceCenterY = -0.86;
+    // 忠告区自带半透明底板，放在底部安全区并保持原始纹理比例。
+    const adviceWidthPixels = canvas.width * 0.9;
+    const adviceHeightPixels = adviceWidthPixels * 220 / 1024;
+    const adviceWidth = adviceWidthPixels * 2 / canvas.width;
+    const adviceHeight = adviceHeightPixels * 2 / canvas.height;
+    const adviceCenterY = -0.845;
     updateBuffer(
         healthAdviceBuffer,
         buildRectVertices(0, adviceCenterY, adviceWidth, adviceHeight)
@@ -431,6 +553,7 @@ function drawProgressBar() {
     gl.uniform1f(gl.getUniformLocation(barProgram, 'u_Progress'), progress);
     gl.uniform1f(gl.getUniformLocation(barProgram, 'u_Aspect'), barWidthPixels / barHeightPixels);
     gl.uniform4fv(gl.getUniformLocation(barProgram, 'u_TrackColor'), TRACK_COLOR);
+    gl.uniform4fv(gl.getUniformLocation(barProgram, 'u_EmptyColor'), EMPTY_COLOR);
     gl.uniform4fv(gl.getUniformLocation(barProgram, 'u_FillColor'), FILL_COLOR);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
@@ -542,9 +665,9 @@ function start(alpha, antialias, useWebgl2) {
     barProgram = createProgram(BAR_VERTEX_SHADER, BAR_FRAGMENT_SHADER);
     backgroundBuffer = createBuffer(buildRectVertices(0, 0, 2, 2));
     logoBuffer = createBuffer(buildRectVertices(0, LOGO_CENTER_Y, 1, 0.3));
-    barBuffer = createBuffer(buildRectVertices(0, -0.69, 1.36, 0.04));
-    labelBuffer = createBuffer(buildRectVertices(0, -0.69, 0.5, 0.03));
-    healthAdviceBuffer = createBuffer(buildRectVertices(0, -0.86, 1.84, 0.18));
+    barBuffer = createBuffer(buildRectVertices(0, BAR_CENTER_Y, 1.36, 0.04));
+    labelBuffer = createBuffer(buildRectVertices(0, BAR_CENTER_Y + 0.082, 1.2, 0.08));
+    healthAdviceBuffer = createBuffer(buildRectVertices(0, -0.845, 1.8, 0.19));
 
     try {
         labelTexture = createLoadingLabelTexture();
@@ -558,7 +681,7 @@ function start(alpha, antialias, useWebgl2) {
     tick();
 
     return Promise.all([
-        loadImage(BACKGROUND_FILE).then((image) => {
+        loadBackgroundImage().then((image) => {
             backgroundTexture = createTexture(image);
             updateBuffer(backgroundBuffer, buildBackgroundVertices(image));
         }),
