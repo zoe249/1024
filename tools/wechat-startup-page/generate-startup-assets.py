@@ -212,7 +212,7 @@ def create_design_preview(background: Image.Image, logo: Image.Image) -> None:
     advice_font = ImageFont.truetype(str(preview_font), 18)
     centered_text(
         draw,
-        "正在唤醒数字花园…",
+        "加载中",
         center_y=1000,
         font=status_font,
         fill="#fff6da",

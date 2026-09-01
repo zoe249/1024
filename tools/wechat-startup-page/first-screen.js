@@ -123,6 +123,14 @@ const MAX_LOGO_HEIGHT_RATIO = 0.215;
 const BAR_CENTER_Y = -0.58;
 const BAR_HEIGHT_RATIO = 0.022;
 const MIN_BAR_HEIGHT_PIXELS = 22;
+const LOADING_LABEL_TEXTURE_WIDTH = 384;
+const LOADING_LABEL_TEXTURE_HEIGHT = 128;
+const LOADING_LABEL_WIDTH_RATIO = 0.32;
+const LOADING_LABEL_CENTER_Y = BAR_CENTER_Y + 0.082;
+const HEALTH_ADVICE_TEXTURE_WIDTH = 1024;
+const HEALTH_ADVICE_TEXTURE_HEIGHT = 220;
+const HEALTH_ADVICE_WIDTH_RATIO = 0.9;
+const HEALTH_ADVICE_CENTER_Y = -0.845;
 const TRACK_COLOR = [74 / 255, 48 / 255, 28 / 255, 0.92];
 const EMPTY_COLOR = [255 / 255, 240 / 255, 199 / 255, 0.96];
 const FILL_COLOR = [126 / 255, 183 / 255, 54 / 255, 1];
@@ -330,18 +338,21 @@ function createTextCanvas(width, height) {
 }
 
 function createLoadingLabelTexture() {
-    const { textCanvas, context } = createTextCanvas(768, 128);
+    const { textCanvas, context } = createTextCanvas(
+        LOADING_LABEL_TEXTURE_WIDTH,
+        LOADING_LABEL_TEXTURE_HEIGHT
+    );
 
     context.clearRect(0, 0, textCanvas.width, textCanvas.height);
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    context.font = '600 46px sans-serif';
+    context.font = '600 56px sans-serif';
     context.lineJoin = 'round';
     context.strokeStyle = '#4a301c';
     context.lineWidth = 8;
-    context.strokeText('正在唤醒数字花园…', textCanvas.width * 0.5, textCanvas.height * 0.52);
+    context.strokeText('加载中', textCanvas.width * 0.5, textCanvas.height * 0.52);
     context.fillStyle = '#fff6da';
-    context.fillText('正在唤醒数字花园…', textCanvas.width * 0.5, textCanvas.height * 0.52);
+    context.fillText('加载中', textCanvas.width * 0.5, textCanvas.height * 0.52);
     return createTexture(textCanvas);
 }
 
@@ -351,7 +362,10 @@ function createLoadingLabelTexture() {
  * 文字由微信系统字体实时绘制，不再依赖任何文字图片文件。
  */
 function createHealthAdviceTexture() {
-    const { textCanvas, context } = createTextCanvas(1024, 220);
+    const { textCanvas, context } = createTextCanvas(
+        HEALTH_ADVICE_TEXTURE_WIDTH,
+        HEALTH_ADVICE_TEXTURE_HEIGHT
+    );
 
     context.clearRect(0, 0, textCanvas.width, textCanvas.height);
     context.fillStyle = 'rgba(64, 43, 25, 0.72)';
@@ -448,9 +462,47 @@ function buildRectVertices(centerX, centerY, width, height) {
 }
 
 /**
- * 依据当前屏幕比例设置 Logo、进度条和文字位置。
+ * 按离屏纹理的原始宽高比设置进度条与文字区域。
  *
- * 所有尺寸都由 Canvas 动态计算，保证全面屏、普通竖屏和平板预览时仍保持相同视觉层次。
+ * 宽高都先用 Canvas 像素计算，再换算到裁剪空间，避免高 DPI 或特殊长宽比设备
+ * 分别缩放 X/Y 后把中文压扁。
+ */
+function updateTextLayout() {
+    const barWidthPixels = canvas.width * 0.68;
+    const barHeightPixels = Math.max(
+        canvas.height * BAR_HEIGHT_RATIO,
+        MIN_BAR_HEIGHT_PIXELS
+    );
+    const barWidth = barWidthPixels * 2 / canvas.width;
+    const barHeight = barHeightPixels * 2 / canvas.height;
+    updateBuffer(barBuffer, buildRectVertices(0, BAR_CENTER_Y, barWidth, barHeight));
+
+    const labelWidthPixels = canvas.width * LOADING_LABEL_WIDTH_RATIO;
+    const labelHeightPixels = labelWidthPixels
+        * LOADING_LABEL_TEXTURE_HEIGHT
+        / LOADING_LABEL_TEXTURE_WIDTH;
+    const labelWidth = labelWidthPixels * 2 / canvas.width;
+    const labelHeight = labelHeightPixels * 2 / canvas.height;
+    updateBuffer(
+        labelBuffer,
+        buildRectVertices(0, LOADING_LABEL_CENTER_Y, labelWidth, labelHeight)
+    );
+
+    // 忠告区自带半透明底板，放在底部安全区并保持原始纹理比例。
+    const adviceWidthPixels = canvas.width * HEALTH_ADVICE_WIDTH_RATIO;
+    const adviceHeightPixels = adviceWidthPixels
+        * HEALTH_ADVICE_TEXTURE_HEIGHT
+        / HEALTH_ADVICE_TEXTURE_WIDTH;
+    const adviceWidth = adviceWidthPixels * 2 / canvas.width;
+    const adviceHeight = adviceHeightPixels * 2 / canvas.height;
+    updateBuffer(
+        healthAdviceBuffer,
+        buildRectVertices(0, HEALTH_ADVICE_CENTER_Y, adviceWidth, adviceHeight)
+    );
+}
+
+/**
+ * 依据当前屏幕比例设置 Logo，并同步刷新文字布局。
  */
 function updateLayout(logoImage) {
     const logoAspect = logoImage.width / logoImage.height;
@@ -469,33 +521,7 @@ function updateLayout(logoImage) {
         logoBuffer,
         buildRectVertices(0, LOGO_CENTER_Y, logoWidth, logoHeight)
     );
-
-    const barWidthPixels = canvas.width * 0.68;
-    const barHeightPixels = Math.max(
-        canvas.height * BAR_HEIGHT_RATIO,
-        MIN_BAR_HEIGHT_PIXELS
-    );
-    const barWidth = barWidthPixels * 2 / canvas.width;
-    const barHeight = barHeightPixels * 2 / canvas.height;
-    updateBuffer(barBuffer, buildRectVertices(0, BAR_CENTER_Y, barWidth, barHeight));
-
-    const labelWidth = barWidth * 0.9;
-    const labelHeight = 96 * 2 / canvas.height;
-    updateBuffer(
-        labelBuffer,
-        buildRectVertices(0, BAR_CENTER_Y + 0.082, labelWidth, labelHeight)
-    );
-
-    // 忠告区自带半透明底板，放在底部安全区并保持原始纹理比例。
-    const adviceWidthPixels = canvas.width * 0.9;
-    const adviceHeightPixels = adviceWidthPixels * 220 / 1024;
-    const adviceWidth = adviceWidthPixels * 2 / canvas.width;
-    const adviceHeight = adviceHeightPixels * 2 / canvas.height;
-    const adviceCenterY = -0.845;
-    updateBuffer(
-        healthAdviceBuffer,
-        buildRectVertices(0, adviceCenterY, adviceWidth, adviceHeight)
-    );
+    updateTextLayout();
 }
 
 function drawTexture(texture, buffer) {
@@ -666,8 +692,12 @@ function start(alpha, antialias, useWebgl2) {
     backgroundBuffer = createBuffer(buildRectVertices(0, 0, 2, 2));
     logoBuffer = createBuffer(buildRectVertices(0, LOGO_CENTER_Y, 1, 0.3));
     barBuffer = createBuffer(buildRectVertices(0, BAR_CENTER_Y, 1.36, 0.04));
-    labelBuffer = createBuffer(buildRectVertices(0, BAR_CENTER_Y + 0.082, 1.2, 0.08));
-    healthAdviceBuffer = createBuffer(buildRectVertices(0, -0.845, 1.8, 0.19));
+    labelBuffer = createBuffer(buildRectVertices(0, LOADING_LABEL_CENTER_Y, 0.64, 0.08));
+    healthAdviceBuffer = createBuffer(
+        buildRectVertices(0, HEALTH_ADVICE_CENTER_Y, 1.8, 0.19)
+    );
+    // 首帧就使用正确宽高比，不等待 Logo 图片异步加载完成。
+    updateTextLayout();
 
     try {
         labelTexture = createLoadingLabelTexture();
