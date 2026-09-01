@@ -11,6 +11,7 @@ import { BoardGeometry } from './BoardGeometry'
 import { ScoreManager, type ScoreRewardEvent } from './ScoreManager'
 import { BoardModel, type BoardCell } from './BoardModel'
 import { TransientFxRegistry } from './TransientFxRegistry'
+import { ComboFeedbackView } from './ComboFeedbackView'
 import {
   areBoardConfigsEqual,
   isBoardMatrixCompatible,
@@ -43,6 +44,11 @@ type MergeGroup = {
 type DirectedMergeResult = {
   anchor: PieceController | null
   changed: boolean
+}
+
+// 局部连锁结束后把下一层深度交给重力结算，保证同一次落子中的连击数字连续增长。
+type LandingChainResult = DirectedMergeResult & {
+  nextChainDepth: number
 }
 
 // 交换技能拖拽时需要记录起点和原始表现，方便无效释放时回到原位。
@@ -235,6 +241,7 @@ export class PlayController extends Component {
   private trailTimer = 0
   // 当前屏幕上仍未销毁的特效节点交给注册表统一管理，便于重开和回首页收口。
   private readonly transientFx = new TransientFxRegistry(MAX_ACTIVE_FX)
+  private readonly comboFeedback = new ComboFeedbackView(this.transientFx)
   // 音频和分享适配从玩法主流程中拆出，降低 PlayController 的横向职责。
   private audioManager: GameAudioManager | null = null
   private readonly shareAdapter = new GameShareAdapter()
@@ -327,6 +334,7 @@ export class PlayController extends Component {
     this.node.off(Node.EventType.TOUCH_MOVE, this.handleTouchMove, this)
     this.node.off(Node.EventType.TOUCH_END, this.handleTouchEnd, this)
     this.node.off(Node.EventType.TOUCH_CANCEL, this.handleTouchCancel, this)
+    this.comboFeedback.clear()
     this.uiController = null
     this.pieceLayer = null
     this.fxLayer = null
@@ -363,6 +371,33 @@ export class PlayController extends Component {
 
   private getFxLayer() {
     return this.fxLayer?.isValid ? this.fxLayer : this.node
+  }
+
+  private clearTransientEffects() {
+    this.comboFeedback.clear()
+    this.transientFx.clear()
+  }
+
+  /** 把棋盘边界交给连击字效，避免窄棋盘和边缘合成时文字超出可视区域。 */
+  private showComboFeedback(anchorPosition: Vec3, chainDepth: number) {
+    if (chainDepth < 2) {
+      return
+    }
+
+    const bottomLeft = this.getCellPosition(0, 0)
+    const topRight = this.getCellPosition(this.boardheight - 1, this.boardwidth - 1)
+    this.comboFeedback.play({
+      parent: this.getFxLayer(),
+      anchorPosition,
+      chainDepth,
+      pieceSize: this.pieceSize,
+      bounds: {
+        left: bottomLeft.x - this.pieceSize * 0.5,
+        right: topRight.x + this.pieceSize * 0.5,
+        top: topRight.y + this.pieceSize * 0.5,
+        bottom: bottomLeft.y - this.pieceSize * 0.5
+      }
+    })
   }
 
   // 所有玩法短音效统一从这里转给音频管理器，空资源会被安全忽略。
@@ -792,7 +827,7 @@ export class PlayController extends Component {
     this.isResolving = true
     const landedPiece = this.currentPiece
     this.currentPiece = null
-    this.transientFx.clear()
+    this.clearTransientEffects()
     this.board[row][column] = landedPiece
     landedPiece.node.setPosition(this.getCellPosition(row, column))
     this.refreshUiState()
@@ -803,7 +838,7 @@ export class PlayController extends Component {
     }
 
     const directedResult = await this.resolveLandingChain(landedPiece)
-    await this.settleBoard(directedResult.anchor)
+    await this.settleBoard(directedResult.anchor, directedResult.nextChainDepth)
 
     this.isResolving = false
     this.refreshUiState()
@@ -822,9 +857,10 @@ export class PlayController extends Component {
    * 如果没有合并但发生过重力移动，会继续下一轮扫描，确保重力导致的新相邻组也能被处理。
    *
    * @param preferredAnchor 优先保留的合并锚点，通常来自刚刚落地或连锁产生的棋子。
+   * @param initialChainDepth 从落地点局部连锁承接的下一层深度；技能结算默认从第一层开始。
    */
-  private async settleBoard(preferredAnchor: PieceController | null) {
-    let chainDepth = 1
+  private async settleBoard(preferredAnchor: PieceController | null, initialChainDepth = 1) {
+    let chainDepth = Math.max(1, initialChainDepth)
     while (true) {
       const moved = await this.applyGravityAllColumns()
       const groups = this.findMergeGroups(preferredAnchor)
@@ -1571,9 +1607,9 @@ export class PlayController extends Component {
    * 如果合并后产生了新的锚点，会继续向上检查，保证“刚落下的棋子继续升级”的手感。
    *
    * @param anchor 刚落地或上一轮连锁产生的锚点棋子。
-   * @returns 本轮连锁最终保留下来的锚点，以及是否发生过棋盘变化。
+   * @returns 本轮最终锚点、棋盘变化状态，以及重力结算需要承接的下一层连锁深度。
    */
-  private async resolveLandingChain(anchor: PieceController): Promise<DirectedMergeResult> {
+  private async resolveLandingChain(anchor: PieceController): Promise<LandingChainResult> {
     let currentAnchor: PieceController | null = anchor
     let changed = false
     let chainDepth = 1
@@ -1590,7 +1626,7 @@ export class PlayController extends Component {
       break
     }
 
-    return { anchor: currentAnchor, changed }
+    return { anchor: currentAnchor, changed, nextChainDepth: chainDepth }
   }
   /**
    * 扫描全盘并收集所有可合并的同值连通块。
@@ -1744,10 +1780,13 @@ export class PlayController extends Component {
       const anchorPosition = this.getCellPosition(group.anchorPos.row, group.anchorPos.column)
       const consumed = group.members.filter(piece => piece !== group.anchor)
       const nextValue = group.value * Math.pow(2, consumed.length)
+      const isLeadGroup = animations.length === 0
       // 奖励分在合并动画开始前就结算，让总分数字可以连续滚动，不会等动画播完再跳第二次。
       rewards.push(this.scoreManager.buildMergeReward(nextValue, consumed.length, chainDepth))
       consumedGroups.push(consumed)
-      animations.push(this.animateMergeGroup(group.anchor, anchorPosition, consumed, nextValue, animations.length === 0))
+      animations.push(
+        this.animateMergeGroup(group.anchor, anchorPosition, consumed, nextValue, chainDepth, isLeadGroup)
+      )
     }
 
     this.applyScoreRewards(rewards)
@@ -1819,6 +1858,8 @@ export class PlayController extends Component {
       this.getCellPosition(mergeAnchorPos.row, mergeAnchorPos.column),
       consumed,
       nextValue,
+      chainDepth,
+      true,
       true
     )
     // 动画结束后再清理被消除的棋子引用，后续重力和二次结算才能拿到稳定棋盘。
@@ -1838,9 +1879,18 @@ export class PlayController extends Component {
     anchorPosition: Vec3,
     consumed: PieceController[],
     nextValue: number,
-    shouldPlayMergeSound = false
+    chainDepth: number,
+    isLeadGroup = false
   ) {
-    await this.animateDirectedMerge(anchor, anchorPosition, consumed, nextValue, shouldPlayMergeSound)
+    await this.animateDirectedMerge(
+      anchor,
+      anchorPosition,
+      consumed,
+      nextValue,
+      chainDepth,
+      isLeadGroup,
+      isLeadGroup
+    )
   }
 
   /**
@@ -1960,6 +2010,8 @@ export class PlayController extends Component {
    * @param anchorPosition 锚点所在的目标坐标。
    * @param consumed 会被原地消除并销毁的棋子列表。
    * @param nextValue 合并后锚点的新数值。
+   * @param chainDepth 当前连续合成层数。
+   * @param shouldShowCombo 是否由本组合并显示本轮唯一的连击字效。
    * @param shouldPlayMergeSound 是否在升级爆点帧播放本组合并音效。
    */
   private async animateDirectedMerge(
@@ -1967,6 +2019,8 @@ export class PlayController extends Component {
     anchorPosition: Vec3,
     consumed: PieceController[],
     nextValue: number,
+    chainDepth: number,
+    shouldShowCombo = false,
     shouldPlayMergeSound = false
   ) {
     anchor.node.setPosition(anchorPosition)
@@ -1977,7 +2031,14 @@ export class PlayController extends Component {
     if (shouldPlayMergeSound) {
       await this.playMergeSoundWithGap()
     }
-    const upgradeAnimation = this.animateAnchorUpgrade(anchor, anchorPosition, nextValue, consumed.length)
+    const upgradeAnimation = this.animateAnchorUpgrade(
+      anchor,
+      anchorPosition,
+      nextValue,
+      consumed.length,
+      chainDepth,
+      shouldShowCombo
+    )
     await Promise.all([upgradeAnimation, ...consumedAnimations])
   }
 
@@ -2034,16 +2095,23 @@ export class PlayController extends Component {
    * @param anchorPosition 锚点所在的目标坐标。
    * @param nextValue 合并后的新数值。
    * @param strength 本次被消除的棋子数量。
+   * @param chainDepth 当前连续合成层数。
+   * @param shouldShowCombo 是否播放消消乐式连击字效。
    */
   private async animateAnchorUpgrade(
     anchor: PieceController,
     anchorPosition: Vec3,
     nextValue: number,
-    strength: number
+    strength: number,
+    chainDepth: number,
+    shouldShowCombo: boolean
   ) {
     anchor.node.setPosition(anchorPosition)
     anchor.setValue(nextValue)
     this.scoreManager.updateHighestPieceValue(nextValue)
+    if (shouldShowCombo) {
+      this.showComboFeedback(anchorPosition, chainDepth)
+    }
     this.spawnUpgradeImpact(anchor, anchorPosition, strength)
     this.spawnMergeFlash(anchor, anchorPosition, strength)
     this.spawnMergeBurst(anchor, anchorPosition, strength)
@@ -2329,7 +2397,9 @@ export class PlayController extends Component {
     }
 
     this.isPaused = !this.isPaused
-    if (!this.isPaused) {
+    if (this.isPaused) {
+      this.clearTransientEffects()
+    } else {
       this.trailTimer = 0
     }
     this.refreshUiState()
@@ -2345,7 +2415,7 @@ export class PlayController extends Component {
     // 回首页只保留本次切场景任务，取消之前用于动画等待的 scheduleOnce。
     this.unscheduleAllCallbacks()
     this.clearBoardPieces()
-    this.transientFx.clear()
+    this.clearTransientEffects()
     this.hasStartedSession = false
     this.isGameOver = false
     this.isFastDropping = false
@@ -2370,7 +2440,7 @@ export class PlayController extends Component {
     // 回首页只保留本次切场景任务，取消之前用于动画等待的 scheduleOnce。
     this.unscheduleAllCallbacks()
     this.clearBoardPieces()
-    this.transientFx.clear()
+    this.clearTransientEffects()
     this.hasStartedSession = false
     this.isGameOver = false
     this.isFastDropping = false
@@ -2597,7 +2667,7 @@ export class PlayController extends Component {
     this.isBombSkillActive = false
     this.swapDragState = null
     this.currentPiece = null
-    this.transientFx.clear()
+    this.clearTransientEffects()
     this.audioManager?.pauseBackgroundMusic()
     this.playSoundEffect(this.soundEffectClips.gameOverAudioClip)
     this.refreshUiState()
@@ -2640,7 +2710,7 @@ export class PlayController extends Component {
     // 重开沿用当前关卡尺寸；例如 3×7 关卡不会退回默认 5×7。
     OngoingGameSession.beginNewGame(this.buildBoardConfig())
     this.clearBoardPieces()
-    this.transientFx.clear()
+    this.clearTransientEffects()
     this.isGameOver = false
     this.gameOverCoinReward = 0
     this.isFastDropping = false
