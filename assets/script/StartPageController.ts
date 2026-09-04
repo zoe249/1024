@@ -19,6 +19,7 @@ import {
   Vec3
 } from 'cc'
 import { HomeSwingAnimator } from './HomeSwingAnimator'
+import { LeaderboardPopupController } from './LeaderboardPopupController'
 
 const { ccclass, property } = _decorator
 
@@ -55,13 +56,6 @@ type WechatWindowInfo = {
   screenTop?: number
 }
 
-type RankEntry = {
-  rank: number
-  name: string
-  score: number
-  color: Color
-}
-
 // 首页整体改用低亮护眼色，降低手机屏幕上的白场刺激。
 const PAGE_BG_COLOR = new Color(235, 247, 244, 255)
 const PAGE_DOT_COLOR = new Color(164, 216, 219, 54)
@@ -88,8 +82,8 @@ const AMOUNT_BAR_DEFAULT_TOP_INSET = 92
 const AMOUNT_BAR_TITLE_GAP = 20
 // 固定资源条左边缘，数值取自最初确认的 0.55 缩放布局，后续缩放不会再向中间漂移。
 const AMOUNT_BAR_LEFT_INSET = 57
-// 首页排行榜需要轻雾化遮罩，暂停中复用排行榜时则保持透明，避免覆盖原有深色暂停蒙版。
-const RANK_MASK_HOME_COLOR = new Color(234, 246, 250, 212)
+// 排行榜使用深色遮罩突出弹窗，暂停页复用时保持透明，避免叠加已有暂停蒙版。
+const RANK_MASK_HOME_COLOR = new Color(23, 43, 46, 196)
 const RANK_MASK_PAUSE_COLOR = new Color(0, 0, 0, 0)
 const HOMEPAGE_ART_ROOT = 'Homepage/'
 const HOMEPAGE_DESIGN_WIDTH = 750
@@ -112,15 +106,6 @@ const HomepageArtwork = {
   stamina: 'resource-stamina',
   settings: 'ui-settings'
 } as const
-
-const RANKING_DATA: RankEntry[] = [
-  { rank: 1, name: 'Mao', score: 42880, color: new Color(255, 209, 105, 255) },
-  { rank: 2, name: 'Lily', score: 29640, color: new Color(208, 240, 255, 255) },
-  { rank: 3, name: 'Kai', score: 24120, color: new Color(255, 225, 208, 255) },
-  { rank: 4, name: 'Mint', score: 18640, color: new Color(198, 242, 218, 255) },
-  { rank: 5, name: 'Berry', score: 15200, color: new Color(255, 215, 223, 255) },
-  { rank: 6, name: 'Ocean', score: 13440, color: new Color(212, 226, 255, 255) }
-]
 
 const TIP_TEXTS = [
   '相同数字相遇会合成更大的数字',
@@ -193,6 +178,8 @@ export class StartPageController extends Component {
   private rankMaskNode: Node | null = null
   private rankPanelNode: Node | null = null
   private rankCloseButtonNode: Node | null = null
+  private leaderboardController: LeaderboardPopupController | null = null
+  private rankPanelLayoutScale = 1
   private backgroundNode: Node | null = null
   private backgroundImageNode: Node | null = null
   private toastNode: Node | null = null
@@ -372,11 +359,16 @@ export class StartPageController extends Component {
     this.refreshRankMaskStyle()
 
     const opacity = this.rankMaskNode.getComponent(UIOpacity) ?? this.rankMaskNode.addComponent(UIOpacity)
+    Tween.stopAllByTarget(opacity)
+    Tween.stopAllByTarget(this.rankPanelNode)
+    this.leaderboardController?.prepareForShow()
     opacity.opacity = 0
     this.rankMaskNode.active = true
-    this.rankPanelNode.setScale(new Vec3(0.94, 0.94, 1))
+    this.rankPanelNode.setScale(this.getRankPanelScale(0.94))
     tween(opacity).to(0.14, { opacity: 255 }).start()
-    tween(this.rankPanelNode).to(0.18, { scale: Vec3.ONE }, { easing: 'backOut' }).start()
+    tween(this.rankPanelNode)
+      .to(0.18, { scale: this.getRankPanelScale() }, { easing: 'backOut' })
+      .start()
   }
 
   onDestroy() {
@@ -1669,87 +1661,16 @@ export class StartPageController extends Component {
 
     const panel = new Node('RankPanel')
     panel.setParent(mask)
-    panel.addComponent(UITransform).setContentSize(470, 760)
-    panel.addComponent(Graphics)
+    panel.addComponent(UITransform).setContentSize(720, 1240)
     this.bindSwallowTouch(panel)
     this.rankPanelNode = panel
 
-    this.rankCloseButtonNode = this.createCircleButton(panel, 'CloseButton', '×', 184, 322, 40)
-
-    const title = this.createLabel(panel, 'Title', '好友排行榜', 40, TEAL_COLOR, new Vec3(0, 282, 0))
-    title.isBold = true
-    const badge = this.createCapsule(panel, 'Badge', '本周合成之星', 0, 230, 188, 38, new Color(242, 252, 255, 255), SUBTEXT_COLOR)
-    badge.fontSize = 18
-
-    this.buildPodium(panel)
-    this.buildRankList(panel)
-    const invite = this.createPrimaryButton(panel, 'InviteBtn', '邀请好友', BLUE_COLOR, -318)
-    invite.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
-      event.propagationStopped = true
-      this.playButtonClickFeedback()
-      this.showToast('邀请功能待小游戏能力接入')
-    })
-  }
-
-  private buildPodium(parent: Node) {
-    const top3 = RANKING_DATA.slice(0, 3)
-    // 前三名整体上移并缩小头像块，给下方列表和按钮留出明确间距。
-    const positions = [
-      { x: 0, y: 142, size: 86 },
-      { x: -126, y: 108, size: 66 },
-      { x: 126, y: 108, size: 66 }
-    ]
-
-    top3.forEach((entry, index) => {
-      const holder = new Node(`Top${entry.rank}`)
-      holder.setParent(parent)
-      holder.setPosition(positions[index].x, positions[index].y, 0)
-      holder.addComponent(UITransform).setContentSize(118, 136)
-      const bubble = holder.addComponent(Graphics)
-      const size = positions[index].size
-      bubble.fillColor = entry.color
-      bubble.roundRect(-size / 2, -size / 2 + 20, size, size, 24)
-      bubble.fill()
-      if (entry.rank === 1) {
-        bubble.fillColor = new Color(255, 209, 105, 255)
-        bubble.circle(0, size / 2 + 20, 21)
-        bubble.fill()
-      }
-
-      const rankLabel = this.createLabel(holder, 'Rank', `${entry.rank}`, 24, TEAL_COLOR, new Vec3(0, 20, 0))
-      rankLabel.isBold = true
-      const nameLabel = this.createLabel(holder, 'Name', entry.name, 21, TEAL_COLOR, new Vec3(0, -38, 0))
-      nameLabel.isBold = true
-      const scoreLabel = this.createLabel(holder, 'Score', `${entry.score}`, index === 0 ? 34 : 24, TEAL_COLOR, new Vec3(0, -68, 0))
-      scoreLabel.isBold = true
-    })
-  }
-
-  private buildRankList(parent: Node) {
-    const entries = RANKING_DATA.slice(3)
-    entries.forEach((entry, index) => {
-      const row = new Node(`Row${entry.rank}`)
-      row.setParent(parent)
-      // 列表行改成更紧凑的卡片，并和底部按钮拉开距离，避免小屏下互相遮挡。
-      row.setPosition(0, -38 - index * 74, 0)
-      row.addComponent(UITransform).setContentSize(374, 58)
-      const graphics = row.addComponent(Graphics)
-      graphics.fillColor = new Color(255, 255, 255, 218)
-      graphics.roundRect(-187, -29, 374, 58, 22)
-      graphics.fill()
-      graphics.fillColor = entry.color
-      graphics.circle(-118, 0, 16)
-      graphics.fill()
-
-      const rankLabel = this.createLabel(row, 'Rank', `${entry.rank}`, 22, SUBTEXT_COLOR, new Vec3(-162, 0, 0))
-      rankLabel.isBold = true
-      rankLabel.node.getComponent(UITransform)?.setContentSize(44, 44)
-      const nameLabel = this.createLabel(row, 'Name', entry.name, 21, TEAL_COLOR, new Vec3(-40, 0, 0))
-      nameLabel.isBold = true
-      nameLabel.node.getComponent(UITransform)?.setContentSize(150, 44)
-      const scoreLabel = this.createLabel(row, 'Score', `${entry.score}`, 21, new Color(89, 188, 163, 255), new Vec3(126, 0, 0))
-      scoreLabel.isBold = true
-      scoreLabel.node.getComponent(UITransform)?.setContentSize(116, 44)
+    const leaderboard = panel.addComponent(LeaderboardPopupController)
+    this.leaderboardController = leaderboard
+    leaderboard.setup({
+      onClose: () => this.hideRankModal(),
+      onInvite: () => this.showToast('邀请好友功能暂未接入'),
+      onButtonClick: () => this.playButtonClickFeedback()
     })
   }
 
@@ -1775,7 +1696,6 @@ export class StartPageController extends Component {
 
     const maskTransform = this.rankMaskNode.getComponent(UITransform)
     const panelTransform = this.rankPanelNode.getComponent(UITransform)
-    const panelGraphics = this.rankPanelNode.getComponent(Graphics)
     if (!maskTransform) {
       return
     }
@@ -1783,22 +1703,21 @@ export class StartPageController extends Component {
     maskTransform.setContentSize(width, height)
     this.refreshRankMaskStyle()
 
-    if (this.usesHierarchyNodes) {
+    if (!panelTransform) {
       return
     }
+    this.rankPanelLayoutScale = Math.min(
+      1,
+      Math.max(0.54, (width - 18) / Math.max(1, panelTransform.width)),
+      Math.max(0.54, (height - 18) / Math.max(1, panelTransform.height))
+    )
+    this.rankPanelNode.setPosition(0, 0, 0)
+    this.rankPanelNode.setScale(this.getRankPanelScale())
+  }
 
-    if (!panelTransform || !panelGraphics) {
-      return
-    }
-
-    panelTransform.setContentSize(Math.min(470, width - 90), Math.min(760, height - 180))
-    panelGraphics.clear()
-    panelGraphics.fillColor = new Color(186, 225, 232, 64)
-    panelGraphics.roundRect(-panelTransform.width / 2 - 4, -panelTransform.height / 2 - 6, panelTransform.width + 8, panelTransform.height + 12, 28)
-    panelGraphics.fill()
-    panelGraphics.fillColor = new Color(242, 253, 255, 248)
-    panelGraphics.roundRect(-panelTransform.width / 2, -panelTransform.height / 2, panelTransform.width, panelTransform.height, 28)
-    panelGraphics.fill()
+  private getRankPanelScale(multiplier = 1) {
+    const scale = this.rankPanelLayoutScale * multiplier
+    return new Vec3(scale, scale, 1)
   }
 
   // 排行榜遮罩根据打开来源切换颜色：首页为浅雾化，暂停页为透明，保留原暂停暗色遮罩。
@@ -2045,8 +1964,7 @@ export class StartPageController extends Component {
 
   private handleRankTap(event: EventTouch) {
     event.propagationStopped = true
-    // 排行榜能力暂未接入，首页入口先给轻提示，避免误打开假数据榜单。
-    this.showToast('暂未开放')
+    this.showRankModal(false)
   }
 
   private handleRankCloseTap(event: EventTouch) {
@@ -2097,8 +2015,12 @@ export class StartPageController extends Component {
       return
     }
 
+    this.leaderboardController?.hideContent()
     const opacity = this.rankMaskNode.getComponent(UIOpacity) ?? this.rankMaskNode.addComponent(UIOpacity)
     Tween.stopAllByTarget(opacity)
+    if (this.rankPanelNode) {
+      Tween.stopAllByTarget(this.rankPanelNode)
+    }
     tween(opacity)
       .to(0.12, { opacity: 0 })
       .call(() => {

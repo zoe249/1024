@@ -1,4 +1,8 @@
+import { ImageAsset, resources } from 'cc'
+
 export type ShareResult = 'shared' | 'cancelled' | 'unsupported'
+
+const WECHAT_SHARE_CARD_RESOURCE = 'Share/share-card-rabbit'
 
 // 分享适配和玩法状态无关，单独放在这里方便后续替换微信或 Web 分享实现。
 export class GameShareAdapter {
@@ -25,6 +29,7 @@ export class GameShareAdapter {
         shareAppMessage?: (options: {
           title: string
           query?: string
+          imageUrl?: string
           success?: () => void
           fail?: () => void
         }) => void
@@ -34,14 +39,17 @@ export class GameShareAdapter {
     }).wx
 
     if (typeof wxApi?.shareAppMessage === 'function') {
-      return this.shareWechatMessage(
-        {
-          shareAppMessage: wxApi.shareAppMessage,
-          onShow: wxApi.onShow,
-          offShow: wxApi.offShow
-        },
-        message,
-        source
+      return this.loadWechatShareImageUrl().then(imageUrl =>
+        this.shareWechatMessage(
+          {
+            shareAppMessage: wxApi.shareAppMessage,
+            onShow: wxApi.onShow,
+            offShow: wxApi.offShow
+          },
+          message,
+          source,
+          imageUrl
+        )
       )
     }
 
@@ -62,6 +70,23 @@ export class GameShareAdapter {
   }
 
   /**
+   * 从 resources 取得构建后的原生图片路径，避免依赖开发目录路径或构建产物哈希。
+   * 加载失败时返回 undefined，微信会继续使用默认分享图，不阻断分享流程。
+   */
+  private loadWechatShareImageUrl(): Promise<string | undefined> {
+    return new Promise(resolve => {
+      resources.load(WECHAT_SHARE_CARD_RESOURCE, ImageAsset, (error, imageAsset) => {
+        if (error || !imageAsset.nativeUrl) {
+          console.warn('分享卡片加载失败，将使用平台默认分享图', error)
+          resolve(undefined)
+          return
+        }
+        resolve(imageAsset.nativeUrl)
+      })
+    })
+  }
+
+  /**
    * 微信端通过分享面板关闭后触发的 onShow 作为“完成分享流程”的回流信号。
    *
    * 微信不再可靠返回真实发送结果，因此这里不声称验证了具体收件人；
@@ -72,6 +97,7 @@ export class GameShareAdapter {
       shareAppMessage: (options: {
         title: string
         query?: string
+        imageUrl?: string
         success?: () => void
         fail?: () => void
       }) => void
@@ -79,7 +105,8 @@ export class GameShareAdapter {
       offShow?: (callback: () => void) => void
     },
     message: string,
-    source: string
+    source: string,
+    imageUrl?: string
   ): Promise<ShareResult> {
     return new Promise(resolve => {
       let settled = false
@@ -110,6 +137,7 @@ export class GameShareAdapter {
         wxApi.shareAppMessage({
           title: message,
           query: `from=${source}`,
+          ...(imageUrl ? { imageUrl } : {}),
           // 旧基础库仍可能回调 success/fail；有回调时优先收口，没有时使用 onShow 回流。
           success: () => finish('shared'),
           fail: () => finish('cancelled')
