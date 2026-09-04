@@ -2,6 +2,8 @@ import {
   _decorator,
   Color,
   Component,
+  director,
+  Director,
   EventTouch,
   Graphics,
   Label,
@@ -56,6 +58,7 @@ const ROW_WIDTH = 610
 const ROW_HEIGHT = 76
 const ROW_START_Y = 140
 const ROW_STEP_Y = 74
+const TEXTURE_WARMUP_DRAW_COUNT = 2
 
 const BROWN = new Color(79, 46, 27, 255)
 const CORAL = new Color(240, 102, 69, 255)
@@ -149,6 +152,7 @@ export class LeaderboardPopupController extends Component {
   private isContentReady = false
   private wantsVisible = false
   private isDisposed = false
+  private warmupDrawsRemaining = 0
   private readonly spriteFrameCache = new Map<string, SpriteFrame>()
   private readonly pendingSprites = new Map<string, Set<Sprite>>()
   private readonly spriteResourcePaths = new Map<Sprite, string>()
@@ -163,10 +167,7 @@ export class LeaderboardPopupController extends Component {
     void this.prepareContent()
   }
 
-  /**
-   * 打开前先以几乎不可见的透明度渲染两帧，让头像纹理完成 GPU 上传，
-   * 随后再整体显示，避免移动设备首帧出现白色 Sprite 占位。
-   */
+  /** 打开前先以几乎不可见的透明度真实渲染数帧，避免头像纹理首帧显示成白块。 */
   prepareForShow() {
     this.wantsVisible = true
     this.cancelRevealSchedule()
@@ -177,10 +178,15 @@ export class LeaderboardPopupController extends Component {
     }
   }
 
-  // 关闭时先同步隐藏内容，避免退场末帧仍提交正在释放的头像纹理。
-  hideContent() {
+  // 退场动画期间停止尚未完成的显现调度，但保留当前画面供外层平滑缩小和淡出。
+  prepareForHide() {
     this.wantsVisible = false
     this.cancelRevealSchedule()
+  }
+
+  // 外层退场动画完成后再真正隐藏内容，避免下一次激活时闪出上一帧。
+  hideContent() {
+    this.prepareForHide()
     if (this.contentOpacity) {
       this.contentOpacity.opacity = 0
     }
@@ -232,16 +238,25 @@ export class LeaderboardPopupController extends Component {
       return
     }
 
-    // opacity=1 会进入渲染提交但肉眼不可见，可在不露出白块的情况下上传纹理。
+    // opacity=1 会进入渲染提交但肉眼不可见；按实际绘制次数计数，不依赖设备帧率。
     this.contentOpacity.opacity = 1
-    this.scheduleOnce(this.handleFirstWarmupFrame, 0)
+    this.warmupDrawsRemaining = TEXTURE_WARMUP_DRAW_COUNT
+    director.on(Director.EVENT_AFTER_DRAW, this.handleWarmupDraw, this)
   }
 
-  private readonly handleFirstWarmupFrame = () => {
+  private readonly handleWarmupDraw = () => {
     if (this.isDisposed || !this.wantsVisible) {
+      this.cancelRevealSchedule()
       return
     }
-    this.scheduleOnce(this.revealContent, 0)
+
+    this.warmupDrawsRemaining -= 1
+    if (this.warmupDrawsRemaining > 0) {
+      return
+    }
+
+    director.off(Director.EVENT_AFTER_DRAW, this.handleWarmupDraw, this)
+    this.revealContent()
   }
 
   private readonly revealContent = () => {
@@ -251,8 +266,8 @@ export class LeaderboardPopupController extends Component {
   }
 
   private cancelRevealSchedule() {
-    this.unschedule(this.handleFirstWarmupFrame)
-    this.unschedule(this.revealContent)
+    this.warmupDrawsRemaining = 0
+    director.off(Director.EVENT_AFTER_DRAW, this.handleWarmupDraw, this)
   }
 
   private preloadSpriteFrame(resourcePath: string) {

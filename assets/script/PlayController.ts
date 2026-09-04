@@ -95,6 +95,7 @@ export class PlaySoundEffectClips {
   // 游戏进入结算结束状态时播放的短音效。
   @property({ type: AudioClip, tooltip: 'Game over sound effect' })
   gameOverAudioClip: AudioClip | null = null
+
 }
 
 @ccclass('PlayController')

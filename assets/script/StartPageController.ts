@@ -1964,7 +1964,8 @@ export class StartPageController extends Component {
 
   private handleRankTap(event: EventTouch) {
     event.propagationStopped = true
-    this.showRankModal(false)
+    // 排行榜数据尚未接入，入口先保留并给出统一提示，后续只需恢复弹窗调用即可。
+    this.showToast('敬请期待')
   }
 
   private handleRankCloseTap(event: EventTouch) {
@@ -2015,15 +2016,16 @@ export class StartPageController extends Component {
       return
     }
 
-    this.leaderboardController?.hideContent()
+    this.leaderboardController?.prepareForHide()
     const opacity = this.rankMaskNode.getComponent(UIOpacity) ?? this.rankMaskNode.addComponent(UIOpacity)
     Tween.stopAllByTarget(opacity)
     if (this.rankPanelNode) {
       Tween.stopAllByTarget(this.rankPanelNode)
     }
     tween(opacity)
-      .to(0.12, { opacity: 0 })
+      .to(0.18, { opacity: 0 }, { easing: 'quadIn' })
       .call(() => {
+        this.leaderboardController?.hideContent()
         if (this.rankMaskNode) {
           this.rankMaskNode.active = false
         }
@@ -2043,6 +2045,11 @@ export class StartPageController extends Component {
         }
       })
       .start()
+    if (this.rankPanelNode) {
+      tween(this.rankPanelNode)
+        .to(0.18, { scale: this.getRankPanelScale(0.94) }, { easing: 'quadIn' })
+        .start()
+    }
   }
 
   private showToast(message: string) {
