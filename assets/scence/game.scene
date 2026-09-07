@@ -8524,9 +8524,31 @@
       "__expectedType__": "cc.AudioClip"
     },
     "landingMergeAudioClip": {
-      "__uuid__": "155c7023-62de-4038-b9f9-4d729a429623",
+      "__uuid__": "2c16e173-2764-49d4-b2bf-f71260a79542",
       "__expectedType__": "cc.AudioClip"
     },
+    "comboAudioClips": [
+      {
+        "__uuid__": "b6d7998a-4599-4440-809f-71823861aa6c",
+        "__expectedType__": "cc.AudioClip"
+      },
+      {
+        "__uuid__": "7aebedce-739f-46ee-8592-ae938ffd6ee1",
+        "__expectedType__": "cc.AudioClip"
+      },
+      {
+        "__uuid__": "54f91c44-049d-4ef9-b891-d4646b3468e8",
+        "__expectedType__": "cc.AudioClip"
+      },
+      {
+        "__uuid__": "fb2a0efc-bc61-4fb0-9ac2-f03c8c7254f4",
+        "__expectedType__": "cc.AudioClip"
+      },
+      {
+        "__uuid__": "e455d942-7fe8-4ece-a1c9-e53acd0d8b95",
+        "__expectedType__": "cc.AudioClip"
+      }
+    ],
     "swapRollbackAudioClip": {
       "__uuid__": "b49a4ea7-0646-441e-b94f-cc80a14bdcac",
       "__expectedType__": "cc.AudioClip"

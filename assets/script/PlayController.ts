@@ -67,8 +67,6 @@ type SwapDragState = {
 
 // 控制同屏特效节点上限，避免频繁创建粒子导致卡顿。
 const MAX_ACTIVE_FX = 18
-// 连续消除音效之间保留最小听感间隔，避免连锁时音效糊成一片。
-const MERGE_SOUND_MIN_INTERVAL = 0.46
 // 点击后立即切场景会销毁当前音源节点，这里给按钮反馈留出短暂播放窗口。
 const BUTTON_CLICK_SCENE_DELAY_SECONDS = 0.18
 // 单局金币结算参数集中在玩法层，方便后续按关卡、活动或难度做倍率扩展。
@@ -143,6 +141,10 @@ export class PlayController extends Component {
   // 棋子落地后直接触发消除时播放的音效。
   @property({ type: AudioClip, tooltip: 'Landing merge sound effect' })
   landingMergeAudioClip: AudioClip | null = null
+
+  // 连击 ×2 起依次播放，超过配置档位时沿用最后一个音效。
+  @property({ type: [AudioClip], tooltip: '连击音效，按 ×2、×3、×4… 顺序排列' })
+  comboAudioClips: AudioClip[] = []
 
   // 交换后无法形成消除时，回退动画播放的提示音。
   @property({ type: AudioClip, tooltip: 'Swap rollback sound effect' })
@@ -247,8 +249,6 @@ export class PlayController extends Component {
   private audioManager: GameAudioManager | null = null
   private readonly shareAdapter = new GameShareAdapter()
   private readonly feedbackAdapter = new GameFeedbackAdapter()
-  // 记录最近一次合并音效时间，用来给连续消除留出可感知的停顿。
-  private lastMergeSoundTimeMs = -Infinity
   // 本局结束时发放的金币数，只用于结算弹窗展示，重开或回首页后清零。
   private gameOverCoinReward = 0
   // 每局每种技能最多成功使用一次；库存可以大于 1，但本局按钮会在使用后置灰。
@@ -410,26 +410,17 @@ export class PlayController extends Component {
     this.audioManager?.playButtonClickEffect(this.buttonClickAudioClip)
   }
 
-  /**
-   * 播放带最小间隔的合并音效。
-   *
-   * 连续消除时视觉可以保持连贯，但音效如果贴得太近会失去“停顿”的节奏。
-   * 这里仅对合并音效做间隔控制，其他点击、技能、碰撞音效不受影响。
-   */
-  private async playMergeSoundWithGap() {
-    if (!this.landingMergeAudioClip) {
+  /** 在消除开始帧播放唯一的合并音效，不用音频间隔阻塞动画与结算。 */
+  private playMergeSound(chainDepth: number) {
+    // 先选出唯一音效：连击替代默认合并音，资源未配置时才回退。
+    const comboIndex = Math.min(Math.floor(chainDepth) - 2, this.comboAudioClips.length - 1)
+    const comboClip = comboIndex >= 0 ? this.comboAudioClips[comboIndex] : null
+    const clip = comboClip ?? this.landingMergeAudioClip
+    if (!clip) {
       return
     }
 
-    const now = Date.now()
-    const elapsed = (now - this.lastMergeSoundTimeMs) / 1000
-    const delay = Math.max(0, MERGE_SOUND_MIN_INTERVAL - elapsed)
-    if (delay > 0) {
-      await this.waitSeconds(delay)
-    }
-
-    this.lastMergeSoundTimeMs = Date.now()
-    this.playSoundEffect(this.landingMergeAudioClip)
+    this.playSoundEffect(clip)
   }
 
   // 每帧更新当前下落棋子的目标位置，并在接近落点时触发落地结算。
@@ -639,7 +630,6 @@ export class PlayController extends Component {
     this.usedSkillsThisGame = this.createEmptySkillUsageState()
     this.currentColumn = Math.floor(this.boardwidth / 2)
     this.nextPieceValue = this.randomBasePieceValue()
-    this.lastMergeSoundTimeMs = -Infinity
   }
 
   // 返回首页前生成纯数据快照，节点和组件不会跨场景泄漏。
@@ -2013,7 +2003,7 @@ export class PlayController extends Component {
    * @param nextValue 合并后锚点的新数值。
    * @param chainDepth 当前连续合成层数。
    * @param shouldShowCombo 是否由本组合并显示本轮唯一的连击字效。
-   * @param shouldPlayMergeSound 是否在升级爆点帧播放本组合并音效。
+   * @param shouldPlayMergeSound 是否在消除开始帧播放本轮唯一的合并音效。
    */
   private async animateDirectedMerge(
     anchor: PieceController,
@@ -2025,13 +2015,14 @@ export class PlayController extends Component {
     shouldPlayMergeSound = false
   ) {
     anchor.node.setPosition(anchorPosition)
+    // 音效与周围棋子的消除同时开始，避免等到锚点升级才听到反馈。
+    if (shouldPlayMergeSound) {
+      this.playMergeSound(chainDepth)
+    }
     const consumedAnimations = consumed.map((piece, index) => this.animateConsumedPieceClear(piece, index))
 
     // 升级不再等待周围棋子完全消失，避免“消除结束后停一下再弹”的顿挫。
     await this.waitSeconds(0.1)
-    if (shouldPlayMergeSound) {
-      await this.playMergeSoundWithGap()
-    }
     const upgradeAnimation = this.animateAnchorUpgrade(
       anchor,
       anchorPosition,

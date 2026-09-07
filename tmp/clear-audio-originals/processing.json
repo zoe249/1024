@@ -1,0 +1,64 @@
+[
+  {
+    "name": "clear",
+    "start": 0.2495,
+    "end": 1.32,
+    "gain": 7,
+    "stats": [
+      "[Parsed_volumedetect_0 @ 000001d094212940] mean_volume: -19.9 dB\r",
+      "[Parsed_volumedetect_0 @ 000001d094212940] max_volume: -1.5 dB\r"
+    ]
+  },
+  {
+    "name": "clear-combo-1",
+    "start": 0.1225,
+    "end": 0.9,
+    "gain": 8,
+    "stats": [
+      "[Parsed_volumedetect_0 @ 0000029dcdfc89c0] mean_volume: -18.8 dB\r",
+      "[Parsed_volumedetect_0 @ 0000029dcdfc89c0] max_volume: -2.0 dB\r"
+    ]
+  },
+  {
+    "name": "clear-combo-2",
+    "start": 0.1215,
+    "end": 0.8,
+    "gain": 8,
+    "stats": [
+      "[Parsed_volumedetect_0 @ 000001b828819000] mean_volume: -18.2 dB\r",
+      "[Parsed_volumedetect_0 @ 000001b828819000] max_volume: -1.5 dB\r"
+    ]
+  },
+  {
+    "name": "clear-combo-3",
+    "start": 0.1347,
+    "end": 0.79,
+    "gain": 8,
+    "stats": [
+      "[Parsed_volumedetect_0 @ 000001e96c48aa00] mean_volume: -19.0 dB\r",
+      "[Parsed_volumedetect_0 @ 000001e96c48aa00] max_volume: -2.8 dB\r"
+    ]
+  },
+  {
+    "name": "clear-combo-4",
+    "start": 0.1878,
+    "end": 0.83,
+    "gain": 8,
+    "stats": [
+      "[Parsed_silencedetect_1 @ 00000267b2a28940] silence_start: 0.603781\r",
+      "[Parsed_silencedetect_1 @ 00000267b2a28940] silence_end: 0.633062 | silence_duration: 0.0292813\r",
+      "[Parsed_volumedetect_0 @ 00000267b2a27140] mean_volume: -18.7 dB\r",
+      "[Parsed_volumedetect_0 @ 00000267b2a27140] max_volume: -1.5 dB\r"
+    ]
+  },
+  {
+    "name": "clear-combo-5",
+    "start": 0.1794,
+    "end": 0.81,
+    "gain": 8,
+    "stats": [
+      "[Parsed_volumedetect_0 @ 00000145a14e1ec0] mean_volume: -18.3 dB\r",
+      "[Parsed_volumedetect_0 @ 00000145a14e1ec0] max_volume: -1.5 dB\r"
+    ]
+  }
+]
