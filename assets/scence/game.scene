@@ -8631,7 +8631,7 @@
       "__expectedType__": "cc.AudioClip"
     },
     "gameOverAudioClip": {
-      "__uuid__": "c2203df6-ea79-4868-a327-2385adda51b0",
+      "__uuid__": "d2a1fa39-c121-4653-96be-a2eae4101dd1",
       "__expectedType__": "cc.AudioClip"
     }
   },

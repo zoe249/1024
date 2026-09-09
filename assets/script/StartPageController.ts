@@ -12,11 +12,13 @@ import {
   screen,
   Sprite,
   SpriteFrame,
+  sys,
   tween,
   Tween,
   UITransform,
   UIOpacity,
-  Vec3
+  Vec3,
+  view
 } from 'cc'
 import { HomeSwingAnimator } from './HomeSwingAnimator'
 import { LeaderboardPopupController } from './LeaderboardPopupController'
@@ -80,6 +82,8 @@ const ENERGY_HEART_Y = 2
 const AMOUNT_BAR_SOURCE_HEIGHT = 155
 const AMOUNT_BAR_DEFAULT_TOP_INSET = 92
 const AMOUNT_BAR_TITLE_GAP = 20
+// 顶部交互控件与刘海/灵动岛安全区之间保留少量呼吸空间。
+const TOP_SAFE_AREA_GAP = 12
 // 固定资源条左边缘，数值取自最初确认的 0.55 缩放布局，后续缩放不会再向中间漂移。
 const AMOUNT_BAR_LEFT_INSET = 57
 // 排行榜使用深色遮罩突出弹窗，暂停页复用时保持透明，避免叠加已有暂停蒙版。
@@ -757,15 +761,54 @@ export class StartPageController extends Component {
     background?.setScale(coverScale, coverScale, 1)
 
     this.homepageLayerNode.getChildByName('HomepageLogo')?.setPosition(0, 455 * verticalScale, 0)
-    this.settingsButtonNode?.setPosition(-318, 705 * verticalScale, 0)
-    this.coinResourceButtonNode?.setPosition(-164, 705 * verticalScale, 0)
-    this.staminaResourceButtonNode?.setPosition(90, 705 * verticalScale, 0)
+    const topControlsY = this.getHomepageTopControlsY(cardHeight, foregroundScale, verticalScale)
+    this.settingsButtonNode?.setPosition(-318, topControlsY, 0)
+    this.coinResourceButtonNode?.setPosition(-164, topControlsY, 0)
+    this.staminaResourceButtonNode?.setPosition(90, topControlsY, 0)
     this.dailyRewardButtonNode?.setPosition(-294, -292 * verticalScale, 0)
     this.rankButtonNode?.setPosition(-294, -455 * verticalScale, 0)
     this.shopButtonNode?.setPosition(294, -292 * verticalScale, 0)
     this.shareButtonNode?.setPosition(294, -455 * verticalScale, 0)
     this.startButtonNode?.setPosition(0, -655 * verticalScale, 0)
     this.renderPlayerResources(this.currentEnergy, this.currentMaxEnergy, this.currentCoins)
+  }
+
+  /**
+   * 顶部资源栏优先与微信胶囊共用水平中线；其他平台则避开系统安全区。
+   * 返回 HomepageArtwork 的局部坐标，避免前景缩放后安全距离被重复放大。
+   */
+  private getHomepageTopControlsY(cardHeight: number, foregroundScale: number, verticalScale: number) {
+    const safeScale = Math.max(0.001, foregroundScale)
+    const visibleLocalHeight = cardHeight / safeScale
+    const baseY = 705 * verticalScale
+    const menuMetrics = this.getWechatMenuMetrics()
+    if (menuMetrics) {
+      const sourceWindowHeight = menuMetrics.windowHeight > 0
+        ? menuMetrics.windowHeight
+        : screen.windowSize.height
+      const capsuleCenterFromTop = Math.max(
+        0,
+        (menuMetrics.menuRect.top + menuMetrics.menuRect.bottom) * 0.5 - menuMetrics.screenTop
+      )
+      const capsuleCenterLocal = capsuleCenterFromTop * cardHeight / Math.max(1, sourceWindowHeight) / safeScale
+      return Math.min(baseY, visibleLocalHeight * 0.5 - capsuleCenterLocal)
+    }
+
+    const safeTopLocal = this.getSystemSafeTopInset(cardHeight) / safeScale
+    const topControlHalfHeight = 79 * 0.5
+    const safeAreaY = visibleLocalHeight * 0.5 - safeTopLocal - TOP_SAFE_AREA_GAP - topControlHalfHeight
+    return Math.min(baseY, safeAreaY)
+  }
+
+  // 把 Cocos 返回的屏幕安全区换算为首页根节点坐标，Web/原生均可作为灵动岛兜底。
+  private getSystemSafeTopInset(rootHeight: number) {
+    const safeArea = sys.getSafeAreaRect(false)
+    const visibleHeight = Math.max(1, view.getVisibleSize().height)
+    if (!safeArea) {
+      return 0
+    }
+    const unsafeTop = Math.max(0, visibleHeight - safeArea.y - safeArea.height)
+    return unsafeTop / visibleHeight * rootHeight
   }
 
   /**

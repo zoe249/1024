@@ -128,6 +128,7 @@ export class HomeSceneController extends Component {
   start() {
     // 首帧后再同步一次布局，兼容微信安全区和 Creator 预览尺寸变化。
     this.startPageController?.syncLayout()
+    this.scheduleOnce(() => this.startPageController?.syncLayout(), 0)
     this.skillShopController?.syncLayout()
     this.dailyRewardController?.syncLayout()
     this.homeSettingsController?.syncLayout()

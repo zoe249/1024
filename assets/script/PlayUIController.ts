@@ -148,6 +148,8 @@ const PLAYER_AMOUNT_BAR_DEFAULT_TOP_INSET = 92
 const PLAYER_AMOUNT_BAR_FALLBACK_X = -190
 const PLAYER_AMOUNT_BAR_SETTINGS_GAP = 18
 const PLAYER_AMOUNT_BAR_CAPSULE_GAP = 18
+// 顶部 HUD 在刘海/灵动岛安全区下方再保留少量视觉间距。
+const HUD_TOP_SAFE_AREA_GAP = 12
 // 游戏页以 750×1334 为设计基准，运行时只对安全区做整体补偿。
 const GAME_DESIGN_WIDTH = 750
 const GAME_DESIGN_HEIGHT = 1334
@@ -668,9 +670,9 @@ export class PlayUIController extends Component {
 
   // 把平台安全区像素换算为当前固定宽度设计坐标。
   private getSafeBottomInset(rootTransform: UITransform) {
-    const safeArea = sys.getSafeAreaRect()
-    const windowHeight = Math.max(1, screen.windowSize.height)
-    return safeArea ? (safeArea.y / windowHeight) * rootTransform.height : 0
+    const safeArea = sys.getSafeAreaRect(false)
+    const visibleHeight = Math.max(1, view.getVisibleSize().height)
+    return safeArea ? (safeArea.y / visibleHeight) * rootTransform.height : 0
   }
 
   // 纯代码绘制玻璃棋盘、列蒙版和列分隔线，并同步列节点占位尺寸。
@@ -992,6 +994,7 @@ export class PlayUIController extends Component {
       hostNode: this.node,
       replayHandler: this.gameOverReplayHandler,
       homeHandler: this.gameOverHomeHandler,
+      shareHandler: this.gameOverShareHandler,
       onButtonClick: this.buttonClickHandler ?? undefined,
       popupSpriteFrame,
       replayButtonSpriteFrame,
@@ -1560,7 +1563,7 @@ export class PlayUIController extends Component {
     )
   }
 
-  // 顶部 Status 只在微信小程序里对齐胶囊按钮，其他平台继续使用 scene 中的原始布局。
+  // 微信端贴齐原生胶囊；其他平台至少下移到刘海/灵动岛安全区以下。
   private configureStatusBar() {
     const statusNode = this.node.getChildByName('Status')
     const contentNode = statusNode?.getChildByName('Content')
@@ -1603,6 +1606,14 @@ export class PlayUIController extends Component {
     const menuMetrics = this.getWechatMenuMetrics()
     if (!menuMetrics) {
       this.restoreStatusBarLayout(contentNode, contentTransform)
+      const safeTop = this.getSafeTopInset(rootTransform)
+      if (safeTop > 0 && this.statusContentBasePosition) {
+        contentNode.setPosition(
+          this.statusContentBasePosition.x,
+          this.statusContentBasePosition.y - safeTop - HUD_TOP_SAFE_AREA_GAP,
+          this.statusContentBasePosition.z
+        )
+      }
       return
     }
 
@@ -1619,7 +1630,7 @@ export class PlayUIController extends Component {
     contentNode.setPosition(basePosition.x, contentLocalY, basePosition.z)
   }
 
-  // 没有胶囊数据时恢复 scene 默认布局，避免浏览器和编辑器里的排版被微信适配逻辑污染。
+  // 先恢复 scene 基础布局，再按当前平台的顶部安全区叠加偏移，避免多次同步不断累加。
   private restoreStatusBarLayout(contentNode: Node, contentTransform: UITransform) {
     if (this.statusContentBaseSize) {
       contentTransform.setContentSize(this.statusContentBaseSize.width, this.statusContentBaseSize.height)
@@ -1733,6 +1744,17 @@ export class PlayUIController extends Component {
     this.configureSkillButton(this.hammerSkillNode, 'hammer', this.onHammerSkillButtonTap)
     this.configureSkillButton(this.swapSkillNode, 'swap', this.onSwapSkillButtonTap)
     this.layoutSkillsContainer(skillsContainer)
+  }
+
+  // 把系统安全区顶部像素换算为当前固定宽度设计坐标，供非微信环境避让刘海和灵动岛。
+  private getSafeTopInset(rootTransform: UITransform) {
+    const safeArea = sys.getSafeAreaRect(false)
+    const visibleHeight = Math.max(1, view.getVisibleSize().height)
+    if (!safeArea) {
+      return 0
+    }
+    const unsafeTop = Math.max(0, visibleHeight - safeArea.y - safeArea.height)
+    return unsafeTop / visibleHeight * rootTransform.height
   }
 
   /** 新场景使用 SkillsController，历史场景的 SkliisController 仍可直接复用。 */

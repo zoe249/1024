@@ -3,6 +3,11 @@ import { ImageAsset, resources } from 'cc'
 export type ShareResult = 'shared' | 'cancelled' | 'unsupported'
 
 const WECHAT_SHARE_CARD_RESOURCE = 'Share/share-card-rabbit'
+const HOME_SHARE_MESSAGES = [
+  '看着挺简单，你来试试能合到几？',
+  '找到一个摸鱼小游戏，发你试试',
+  '再玩一局就收手，真的',
+] as const
 
 // 分享适配和玩法状态无关，单独放在这里方便后续替换微信或 Web 分享实现。
 export class GameShareAdapter {
@@ -10,9 +15,10 @@ export class GameShareAdapter {
     return this.shareMessage(`我在 1024 数字花园合成了 ${score} 分，来挑战一下吧`, source)
   }
 
-  // 首页分享没有分数上下文，使用邀请挑战文案避免出现“0 分”。
+  // 每次首页分享时等概率随机选一句，允许连续抽到同一句。
   shareStartPage(source: string) {
-    return this.shareMessage('来 1024 数字花园挑战连续合成吧', source)
+    const message = HOME_SHARE_MESSAGES[Math.floor(Math.random() * HOME_SHARE_MESSAGES.length)]
+    return this.shareMessage(message, source)
   }
 
   // 资源奖励分享使用独立文案和来源标识，便于后续统计两种奖励入口。

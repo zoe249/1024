@@ -25,32 +25,27 @@ const SETTLEMENT_CONTENT_HEIGHT = 1180
 const SETTLEMENT_EDGE_INSET = 20
 const SETTLEMENT_VERTICAL_INSET = 32
 const SETTLEMENT_ART_ROOT = 'Settlement/'
+const CELEBRATION_ART_ROOT = `${SETTLEMENT_ART_ROOT}Celebration/`
 
 const SettlementArtwork = {
   header: 'victory-header',
   statistics: 'statistics-strip',
-  starHollow: 'star-hollow',
-  starFilled: 'star-filled',
   rewardCoin: 'reward-coin',
-  continue: 'button-continue'
+  replayButton: 'button-replay-v2',
+  boastButton: 'button-boast-v2'
 } as const
 
 type GameOverOverlayOptions = {
   hostNode: Node
   replayHandler: (() => void) | null
   homeHandler: (() => void) | null
+  shareHandler: (() => void) | null
   onButtonClick?: () => void
   // 旧资源参数只保留接口兼容；新结算页统一从 resources/Settlement 加载拆分素材。
   popupSpriteFrame?: SpriteFrame | null
   replayButtonSpriteFrame?: SpriteFrame | null
   homeButtonSpriteFrame?: SpriteFrame | null
   shareButtonSpriteFrame?: SpriteFrame | null
-}
-
-type SettlementStar = {
-  root: Node
-  filled: Node
-  filledOpacity: UIOpacity
 }
 
 @ccclass('GameOverOverlayController')
@@ -60,18 +55,26 @@ export class GameOverOverlayController extends Component {
   private contentNode: Node | null = null
   private statisticsLabel: Label | null = null
   private rewardValueLabel: Label | null = null
+  private rewardNode: Node | null = null
+  private actionsNode: Node | null = null
   private continueButtonNode: Node | null = null
+  private shareButtonNode: Node | null = null
+  private mascotRoot: Node | null = null
+  private mascotSprite: Sprite | null = null
+  private glowNode: Node | null = null
+  private noteNodes: Node[] = []
+  private mascotFrames: Array<SpriteFrame | null> = [null, null, null]
   private overlayOpacity: UIOpacity | null = null
-  private settlementStars: SettlementStar[] = []
   private replayHandler: (() => void) | null = null
+  private shareHandler: (() => void) | null = null
   private buttonClickHandler: (() => void) | null = null
   private isVisible = false
-  private earnedStarCount = 1
   private contentLayoutScale = 1
 
   setup(options: GameOverOverlayOptions) {
     this.hostNode = options.hostNode
     this.replayHandler = options.replayHandler
+    this.shareHandler = options.shareHandler
     this.buttonClickHandler = options.onButtonClick ?? null
     this.ensureOverlayStructure()
     this.bindTouchEvents()
@@ -108,7 +111,6 @@ export class GameOverOverlayController extends Component {
   ) {
     this.refreshStatistics(score, highestValue)
     this.refreshReward(coinReward)
-    this.earnedStarCount = this.calculateStarCount(score, highestValue)
     this.bringNodeToTop(this.node)
 
     if (isGameOver) {
@@ -122,6 +124,7 @@ export class GameOverOverlayController extends Component {
     this.unbindSwallowNode(this.maskNode)
     this.unbindSwallowNode(this.contentNode)
     this.unbindButtonTouchEvents(this.continueButtonNode, this.onContinueButtonTap)
+    this.unbindButtonTouchEvents(this.shareButtonNode, this.onShareButtonTap)
     this.stopNodeTreeTweens(this.node)
   }
 
@@ -154,7 +157,7 @@ export class GameOverOverlayController extends Component {
 
     this.ensureHeader(this.contentNode)
     this.ensureStatistics(this.contentNode)
-    this.ensureStars(this.contentNode)
+    this.ensureCelebration(this.contentNode)
     this.ensureReward(this.contentNode)
     this.ensureActions(this.contentNode)
   }
@@ -169,7 +172,7 @@ export class GameOverOverlayController extends Component {
   private ensureStatistics(parent: Node) {
     const statistics = this.getOrCreateNode(parent, 'SettlementStatistics')
     statistics.active = true
-    statistics.setPosition(0, 190, 0)
+    statistics.setPosition(0, 145, 0)
     this.applyArtwork(statistics, SettlementArtwork.statistics, 660, 128)
 
     // 素材保留手绘边框，内部示例数字由同色底覆盖，再叠加真实对局数据。
@@ -196,43 +199,66 @@ export class GameOverOverlayController extends Component {
     )
   }
 
-  private ensureStars(parent: Node) {
-    const stars = this.getOrCreateNode(parent, 'SettlementStars')
-    stars.active = true
-    stars.setPosition(0, -50, 0)
-    ;(stars.getComponent(UITransform) ?? stars.addComponent(UITransform)).setContentSize(590, 250)
+  /**
+   * 庆祝角色使用三张关键姿势贴图，姿势切换负责重拍，节点位移与旋转负责补间。
+   * 这样既能贴合五至六秒音频，也不会用大量序列帧增加包体和内存。
+   */
+  private ensureCelebration(parent: Node) {
+    const celebration = this.getOrCreateNode(parent, 'SettlementCelebration')
+    celebration.active = true
+    celebration.setPosition(0, -65, 0)
+    ;(celebration.getComponent(UITransform) ?? celebration.addComponent(UITransform)).setContentSize(500, 430)
 
-    this.settlementStars = [
-      this.ensureStar(stars, 'StarLeft', -178, -10, 170, 174),
-      this.ensureStar(stars, 'StarCenter', 0, 22, 226, 230),
-      this.ensureStar(stars, 'StarRight', 178, -10, 170, 174)
+    this.glowNode = this.getOrCreateNode(celebration, 'GoldenBurst')
+    this.glowNode.active = true
+    this.glowNode.setPosition(0, 0, 0)
+    this.applyResourceArtwork(this.glowNode, `${CELEBRATION_ART_ROOT}golden-burst`, 480, 480)
+
+    this.mascotRoot = this.getOrCreateNode(celebration, 'SuonaRabbit')
+    this.mascotRoot.active = true
+    this.mascotRoot.setPosition(0, -4, 0)
+    ;(this.mascotRoot.getComponent(UITransform) ?? this.mascotRoot.addComponent(UITransform)).setContentSize(390, 390)
+    this.mascotSprite = this.mascotRoot.getComponent(Sprite) ?? this.mascotRoot.addComponent(Sprite)
+    this.mascotSprite.sizeMode = Sprite.SizeMode.CUSTOM
+    this.mascotSprite.type = Sprite.Type.SIMPLE
+    this.mascotSprite.trim = false
+
+    const frameNames = ['rabbit-inhale', 'rabbit-blow-left', 'rabbit-blow-right']
+    frameNames.forEach((name, index) => {
+      resources.load(`${CELEBRATION_ART_ROOT}${name}/spriteFrame`, SpriteFrame, (error, frame) => {
+        if (error || !frame) {
+          console.warn(`[结算弹窗] 兔子动画素材加载失败: ${name}`, error)
+          return
+        }
+        this.mascotFrames[index] = frame
+        if (index === 0 && this.mascotSprite && !this.mascotSprite.spriteFrame) {
+          this.mascotSprite.spriteFrame = frame
+        }
+      })
+    })
+
+    this.noteNodes = [
+      this.ensureEffectNode(celebration, 'MusicNoteA', 'note-single-a', 135, 72),
+      this.ensureEffectNode(celebration, 'MusicNoteB', 'note-double', 168, 122),
+      this.ensureEffectNode(celebration, 'Sparkle', 'sparkle', 104, 105)
     ]
   }
 
-  private ensureStar(parent: Node, name: string, x: number, y: number, width: number, height: number) {
-    const root = this.getOrCreateNode(parent, name)
-    root.active = true
-    root.setPosition(x, y, 0)
-    ;(root.getComponent(UITransform) ?? root.addComponent(UITransform)).setContentSize(width, height)
-
-    const hollow = this.getOrCreateNode(root, 'Hollow')
-    hollow.active = true
-    hollow.setPosition(Vec3.ZERO)
-    this.applyArtwork(hollow, SettlementArtwork.starHollow, width, height)
-
-    const filled = this.getOrCreateNode(root, 'Filled')
-    filled.active = false
-    filled.setPosition(Vec3.ZERO)
-    this.applyArtwork(filled, SettlementArtwork.starFilled, width, height)
-    const filledOpacity = filled.getComponent(UIOpacity) ?? filled.addComponent(UIOpacity)
-    filledOpacity.opacity = 0
-    return { root, filled, filledOpacity }
+  private ensureEffectNode(parent: Node, name: string, resource: string, x: number, y: number) {
+    const node = this.getOrCreateNode(parent, name)
+    node.active = true
+    node.setPosition(x, y, 0)
+    this.applyResourceArtwork(node, `${CELEBRATION_ART_ROOT}${resource}`, 66, 66)
+    const opacity = node.getComponent(UIOpacity) ?? node.addComponent(UIOpacity)
+    opacity.opacity = 0
+    return node
   }
 
   private ensureReward(parent: Node) {
     const reward = this.getOrCreateNode(parent, 'SettlementReward')
+    this.rewardNode = reward
     reward.active = true
-    reward.setPosition(0, -330, 0)
+    reward.setPosition(0, -300, 0)
     ;(reward.getComponent(UITransform) ?? reward.addComponent(UITransform)).setContentSize(520, 110)
 
     this.ensureLabel(
@@ -271,43 +297,65 @@ export class GameOverOverlayController extends Component {
 
   private ensureActions(parent: Node) {
     const actions = this.getOrCreateNode(parent, 'SettlementActions')
+    this.actionsNode = actions
     actions.active = true
-    actions.setPosition(0, -490, 0)
-    ;(actions.getComponent(UITransform) ?? actions.addComponent(UITransform)).setContentSize(700, 132)
+    actions.setPosition(0, -455, 0)
+    ;(actions.getComponent(UITransform) ?? actions.addComponent(UITransform)).setContentSize(700, 150)
 
-    // 结算页现在只保留继续入口，旧版操作按钮统一关闭，避免老场景节点重新露出。
+    // 旧版操作按钮统一关闭，再创建职责清晰的“继续”和“炫耀”双主入口。
     for (const child of actions.children) {
       child.active = false
     }
-    this.continueButtonNode = this.ensureArtworkButton(
+    this.continueButtonNode = this.ensureActionButton(
       actions,
       'ContinueButton',
-      SettlementArtwork.continue,
-      0,
-      0,
-      316,
-      114
+      -170,
+      SettlementArtwork.replayButton
+    )
+    this.shareButtonNode = this.ensureActionButton(
+      actions,
+      'BoastButton',
+      170,
+      SettlementArtwork.boastButton
     )
   }
 
-  private ensureArtworkButton(
+  /** 直接使用项目既有的手绘按钮语言，避免运行时矢量按钮与首页美术割裂。 */
+  private ensureActionButton(
     parent: Node,
     name: string,
-    artwork: string,
     x: number,
-    y: number,
-    width: number,
-    height: number
+    artwork: string
   ) {
     const button = this.getOrCreateNode(parent, name)
     button.active = true
-    button.setPosition(x, y, 0)
-    ;(button.getComponent(UITransform) ?? button.addComponent(UITransform)).setContentSize(width + 12, 126)
-    this.applyArtwork(button, artwork, width, height)
+    button.setPosition(x, 0, 0)
+    ;(button.getComponent(UITransform) ?? button.addComponent(UITransform)).setContentSize(316, 126)
+
+    const background = button.getComponent(Graphics)
+    if (background) {
+      background.clear()
+      background.enabled = false
+    }
+    const legacySprite = button.getComponent(Sprite)
+    if (legacySprite) {
+      legacySprite.enabled = false
+    }
+    for (const child of button.children) {
+      child.active = false
+    }
+    // Sprite 放在独立子节点上，避免同一节点同时挂 Graphics 与 Sprite 的渲染组件冲突。
+    const artworkNode = this.getOrCreateNode(button, 'Artwork')
+    artworkNode.active = true
+    this.applyArtwork(artworkNode, artwork, 316, 126)
     return button
   }
 
   private applyArtwork(node: Node, artwork: string, width: number, height: number) {
+    this.applyResourceArtwork(node, `${SETTLEMENT_ART_ROOT}${artwork}`, width, height)
+  }
+
+  private applyResourceArtwork(node: Node, resourcePath: string, width: number, height: number) {
     const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform)
     transform.setContentSize(width, height)
     const sprite = node.getComponent(Sprite) ?? node.addComponent(Sprite)
@@ -317,9 +365,9 @@ export class GameOverOverlayController extends Component {
     sprite.trim = false
     sprite.color = Color.WHITE
 
-    resources.load(`${SETTLEMENT_ART_ROOT}${artwork}/spriteFrame`, SpriteFrame, (error, spriteFrame) => {
+    resources.load(`${resourcePath}/spriteFrame`, SpriteFrame, (error, spriteFrame) => {
       if (error || !spriteFrame || !this.canUseNode(node)) {
-        console.warn(`[结算弹窗] 素材加载失败: ${artwork}`, error)
+        console.warn(`[结算弹窗] 素材加载失败: ${resourcePath}`, error)
         return
       }
       sprite.spriteFrame = spriteFrame
@@ -373,51 +421,6 @@ export class GameOverOverlayController extends Component {
     }
   }
 
-  // 当前项目尚未接入关卡星级表，先按分数与最高合成值生成稳定的展示星级。
-  private calculateStarCount(score: number, highestValue: number) {
-    if (highestValue >= 1024 || score >= 12000) {
-      return 3
-    }
-    if (highestValue >= 256 || score >= 5000) {
-      return 2
-    }
-    return 1
-  }
-
-  private resetStars() {
-    for (const star of this.settlementStars) {
-      Tween.stopAllByTarget(star.filled)
-      Tween.stopAllByTarget(star.filledOpacity)
-      star.filled.active = false
-      star.filledOpacity.opacity = 0
-      star.filled.setScale(Vec3.ONE)
-    }
-  }
-
-  /**
-   * 三颗星先统一显示为空心，再按左、中、右依次点亮。
-   * 中心星素材尺寸更大，动画只做轻微弹性缩放，避免高光和过度爆炸效果抢占主体。
-   */
-  private animateStars() {
-    this.resetStars()
-    for (let index = 0; index < this.earnedStarCount; index += 1) {
-      const star = this.settlementStars[index]
-      const delay = 0.18 + index * 0.2
-      star.filled.setScale(new Vec3(0.68, 0.68, 1))
-      tween(star.filledOpacity)
-        .delay(delay)
-        .call(() => {
-          star.filled.active = true
-        })
-        .to(0.2, { opacity: 255 }, { easing: 'quadOut' })
-        .start()
-      tween(star.filled)
-        .delay(delay)
-        .to(0.24, { scale: Vec3.ONE }, { easing: 'backOut' })
-        .start()
-    }
-  }
-
   private drawMask(width: number, height: number) {
     if (!this.maskNode) {
       return
@@ -436,6 +439,7 @@ export class GameOverOverlayController extends Component {
     this.bindSwallowNode(this.maskNode)
     this.bindSwallowNode(this.contentNode)
     this.bindButtonTouchEvents(this.continueButtonNode, this.onContinueButtonTap)
+    this.bindButtonTouchEvents(this.shareButtonNode, this.onShareButtonTap)
   }
 
   private bindSwallowNode(node: Node | null) {
@@ -476,8 +480,27 @@ export class GameOverOverlayController extends Component {
 
   private onContinueButtonTap(event: EventTouch) {
     event.propagationStopped = true
+    this.playActionFeedback(this.continueButtonNode, this.replayHandler)
+  }
+
+  private onShareButtonTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.playActionFeedback(this.shareButtonNode, this.shareHandler)
+  }
+
+  // 点击只做一次短促回弹；回调延后到回弹低点，触感清楚但不会拖慢操作。
+  private playActionFeedback(node: Node | null, handler: (() => void) | null) {
     this.playButtonClickFeedback()
-    this.replayHandler?.()
+    if (!this.canUseNode(node)) {
+      handler?.()
+      return
+    }
+    Tween.stopAllByTarget(node)
+    tween(node)
+      .to(0.06, { scale: new Vec3(0.94, 0.94, 1) }, { easing: 'quadOut' })
+      .call(() => handler?.())
+      .to(0.1, { scale: Vec3.ONE }, { easing: 'backOut' })
+      .start()
   }
 
   private playButtonClickFeedback() {
@@ -540,6 +563,122 @@ export class GameOverOverlayController extends Component {
     return new Vec3(scale, scale, 1)
   }
 
+  private setMascotFrame(index: number) {
+    const frame = this.mascotFrames[index]
+    if (this.mascotSprite && frame) {
+      this.mascotSprite.spriteFrame = frame
+    }
+  }
+
+  private resetCelebrationAnimation() {
+    if (this.canUseNode(this.mascotRoot)) {
+      Tween.stopAllByTarget(this.mascotRoot)
+      this.mascotRoot.setPosition(0, -4, 0)
+      this.mascotRoot.setScale(Vec3.ONE)
+      this.mascotRoot.angle = 0
+      this.setMascotFrame(0)
+    }
+    if (this.canUseNode(this.glowNode)) {
+      Tween.stopAllByTarget(this.glowNode)
+      this.glowNode.setScale(Vec3.ONE)
+      this.glowNode.angle = 0
+    }
+    for (const note of this.noteNodes) {
+      Tween.stopAllByTarget(note)
+      const opacity = note.getComponent(UIOpacity)
+      if (opacity) {
+        Tween.stopAllByTarget(opacity)
+        opacity.opacity = 0
+      }
+      note.setScale(new Vec3(0.55, 0.55, 1))
+    }
+  }
+
+  /**
+   * 五点五秒庆祝段落按“吸气—两段吹奏—换气—高潮—落地”组织。
+   * 姿势切换藏在挤压与伸展的极值点，身体位移始终连续，避免三张关键帧机械左右横跳。
+   */
+  private playCelebrationAnimation() {
+    this.resetCelebrationAnimation()
+    if (this.mascotRoot) {
+      this.mascotRoot.setScale(new Vec3(0.82, 0.82, 1))
+      tween(this.mascotRoot)
+        .delay(0.18)
+        .to(0.38, { position: new Vec3(0, -1, 0), scale: new Vec3(1.03, 1.03, 1) }, { easing: 'backOut' })
+        // 吸气时先压低身体，再在伸展极值切换到吹奏姿势。
+        .to(0.4, { position: new Vec3(0, -12, 0), scale: new Vec3(1.06, 0.93, 1) }, { easing: 'sineInOut' })
+        .call(() => this.setMascotFrame(1))
+        .to(0.22, { position: new Vec3(-8, 6, 0), scale: new Vec3(0.97, 1.06, 1), angle: -2.2 }, { easing: 'backOut' })
+        .to(0.48, { position: new Vec3(-13, 2, 0), scale: new Vec3(1.02, 1.01, 1), angle: -1 }, { easing: 'sineInOut' })
+        .to(0.28, { position: new Vec3(-3, -3, 0), scale: Vec3.ONE, angle: 0 }, { easing: 'sineInOut' })
+        .call(() => this.setMascotFrame(2))
+        .to(0.22, { position: new Vec3(8, 6, 0), scale: new Vec3(0.97, 1.06, 1), angle: 2.2 }, { easing: 'backOut' })
+        .to(0.48, { position: new Vec3(13, 2, 0), scale: new Vec3(1.02, 1.01, 1), angle: 1 }, { easing: 'sineInOut' })
+        .to(0.28, { position: new Vec3(3, -3, 0), scale: Vec3.ONE, angle: 0 }, { easing: 'sineInOut' })
+        // 中段换气给动作留停顿，避免整段音频从头到尾匀速摆动。
+        .call(() => this.setMascotFrame(0))
+        .to(0.38, { position: new Vec3(0, -12, 0), scale: new Vec3(1.07, 0.92, 1), angle: 0 }, { easing: 'sineInOut' })
+        .call(() => this.setMascotFrame(1))
+        .to(0.24, { position: new Vec3(-5, 11, 0), scale: new Vec3(0.96, 1.07, 1), angle: -1.8 }, { easing: 'backOut' })
+        .to(0.52, { position: new Vec3(-14, 4, 0), scale: new Vec3(1.03, 1, 1), angle: -2.4 }, { easing: 'sineInOut' })
+        .call(() => this.setMascotFrame(2))
+        .to(0.42, { position: new Vec3(12, 7, 0), scale: new Vec3(0.98, 1.04, 1), angle: 2.4 }, { easing: 'sineInOut' })
+        .to(0.32, { position: new Vec3(0, -2, 0), scale: Vec3.ONE, angle: 0 }, { easing: 'sineInOut' })
+        // 结尾小跳和落地挤压回应音频收尾，随后回到安静呼吸。
+        .to(0.24, { position: new Vec3(0, 17, 0), scale: new Vec3(0.96, 1.06, 1) }, { easing: 'quadOut' })
+        .call(() => this.setMascotFrame(0))
+        .to(0.2, { position: new Vec3(0, -9, 0), scale: new Vec3(1.07, 0.92, 1), angle: 0 }, { easing: 'quadIn' })
+        .to(0.26, { position: new Vec3(0, -4, 0), scale: Vec3.ONE }, { easing: 'backOut' })
+        .repeatForever(
+          tween<Node>()
+            .to(0.9, { position: new Vec3(0, -2, 0), scale: new Vec3(1.012, 1.018, 1) }, { easing: 'sineInOut' })
+            .to(0.9, { position: new Vec3(0, -4, 0), scale: Vec3.ONE }, { easing: 'sineInOut' })
+        )
+        .start()
+    }
+
+    if (this.glowNode) {
+      tween(this.glowNode)
+        .delay(0.7)
+        .repeat(
+          5,
+          tween<Node>()
+            .to(0.32, { scale: new Vec3(1.06, 1.06, 1), angle: 3 }, { easing: 'sineOut' })
+            .to(0.68, { scale: Vec3.ONE, angle: 0 }, { easing: 'sineInOut' })
+        )
+        .start()
+    }
+
+    const noteOrigins = [new Vec3(135, 72, 0), new Vec3(168, 122, 0), new Vec3(104, 105, 0)]
+    this.noteNodes.forEach((note, index) => {
+      const opacity = note.getComponent(UIOpacity)
+      if (!opacity) {
+        return
+      }
+      note.setPosition(noteOrigins[index])
+      tween(opacity)
+        .delay(0.85 + index * 0.48)
+        .to(0.1, { opacity: 255 })
+        .delay(0.34)
+        .to(0.3, { opacity: 0 }, { easing: 'quadIn' })
+        .delay(1.15)
+        .to(0.1, { opacity: 255 })
+        .delay(0.34)
+        .to(0.3, { opacity: 0 }, { easing: 'quadIn' })
+        .start()
+      tween(note)
+        .delay(0.85 + index * 0.48)
+        .to(0.74, { position: noteOrigins[index].clone().add3f(24, 58, 0), scale: Vec3.ONE }, { easing: 'quadOut' })
+        .delay(1.15)
+        .call(() => {
+          note.setPosition(noteOrigins[index])
+          note.setScale(new Vec3(0.55, 0.55, 1))
+        })
+        .to(0.74, { position: noteOrigins[index].clone().add3f(-18, 62, 0), scale: Vec3.ONE }, { easing: 'quadOut' })
+        .start()
+    })
+  }
+
   private show() {
     if (!this.overlayOpacity) {
       return
@@ -555,6 +694,7 @@ export class GameOverOverlayController extends Component {
     this.node.active = true
     this.overlayOpacity.opacity = 0
     this.contentNode?.setScale(this.getContentScale(0.94))
+    this.contentNode?.setPosition(0, -42, 0)
     Tween.stopAllByTarget(this.overlayOpacity)
     if (this.contentNode) {
       Tween.stopAllByTarget(this.contentNode)
@@ -562,10 +702,25 @@ export class GameOverOverlayController extends Component {
     tween(this.overlayOpacity).to(SETTLEMENT_ANIM_DURATION, { opacity: 255 }, { easing: 'quadOut' }).start()
     if (this.contentNode) {
       tween(this.contentNode)
-        .to(SETTLEMENT_ANIM_DURATION, { scale: this.getContentScale() }, { easing: 'backOut' })
+        .to(
+          SETTLEMENT_ANIM_DURATION,
+          { position: new Vec3(0, -18, 0), scale: this.getContentScale() },
+          { easing: 'quadOut' }
+        )
         .start()
     }
-    this.animateStars()
+    this.playCelebrationAnimation()
+
+    for (const [node, delay] of [[this.rewardNode, 0.9], [this.actionsNode, 1.15]] as const) {
+      if (!node) {
+        continue
+      }
+      const opacity = node.getComponent(UIOpacity) ?? node.addComponent(UIOpacity)
+      opacity.opacity = 0
+      node.setScale(new Vec3(0.92, 0.92, 1))
+      tween(opacity).delay(delay).to(0.18, { opacity: 255 }, { easing: 'quadOut' }).start()
+      tween(node).delay(delay).to(0.22, { scale: Vec3.ONE }, { easing: 'backOut' }).start()
+    }
   }
 
   private hide() {
@@ -578,7 +733,7 @@ export class GameOverOverlayController extends Component {
     }
 
     this.isVisible = false
-    this.resetStars()
+    this.resetCelebrationAnimation()
     Tween.stopAllByTarget(this.overlayOpacity)
     if (this.contentNode) {
       Tween.stopAllByTarget(this.contentNode)

@@ -1,6 +1,6 @@
 ﻿import { _decorator, Color, Component, EventTouch, instantiate, Node, Prefab, Sprite, SpriteFrame, tween, Tween, UITransform, UIOpacity, Vec2, Vec3 } from 'cc'
 import { PieceController } from './PieceController'
-import { AudioClip, director } from 'cc'
+import { AudioClip, director, resources } from 'cc'
 import { PlayUIController, type PlayUIState } from './PlayUIController'
 import { GameAudioManager } from './GameAudioManager'
 import { GameShareAdapter } from './GameShareAdapter'
@@ -75,6 +75,7 @@ const GAME_OVER_HIGHEST_BASE_POWER = 7
 const GAME_OVER_HIGHEST_POWER_COIN = 8
 const GAME_OVER_MIN_COIN_REWARD = 5
 const GAME_OVER_MAX_COIN_REWARD = 300
+const DEFAULT_GAME_OVER_AUDIO_RESOURCE = 'Settlement/Celebration/victory-suona'
 
 @ccclass('PlaySoundEffectClips')
 export class PlaySoundEffectClips {
@@ -247,6 +248,7 @@ export class PlayController extends Component {
   private readonly comboFeedback = new ComboFeedbackView(this.transientFx)
   // 音频和分享适配从玩法主流程中拆出，降低 PlayController 的横向职责。
   private audioManager: GameAudioManager | null = null
+  private defaultGameOverAudioClip: AudioClip | null = null
   private readonly shareAdapter = new GameShareAdapter()
   private readonly feedbackAdapter = new GameFeedbackAdapter()
   // 本局结束时发放的金币数，只用于结算弹窗展示，重开或回首页后清零。
@@ -270,6 +272,7 @@ export class PlayController extends Component {
     this.boardGeometry = new BoardGeometry(this.node, this.buildBoardGeometryOptions())
     this.audioManager = new GameAudioManager(this.node)
     this.audioManager.setup()
+    this.preloadDefaultGameOverAudio()
     this.uiController = this.getComponent(PlayUIController) ?? this.addComponent(PlayUIController)
     // UI 组件只接收绘制所需参数和按钮回调，不参与玩法计算。
     this.uiController.setup({
@@ -321,6 +324,7 @@ export class PlayController extends Component {
   start() {
     // 某些平台会在启动后一帧才拿到稳定的安全区，这里让 UI 组件再补一次布局。
     this.uiController?.syncLayout()
+    this.scheduleOnce(() => this.uiController?.syncLayout(), 0)
     this.audioManager?.playGameplayBackgroundMusic(this.gameplayBgmClip)
     this.refreshUiState()
     if (!this.currentPiece && !this.isGameOver) {
@@ -404,6 +408,20 @@ export class PlayController extends Component {
   // 所有玩法短音效统一从这里转给音频管理器，空资源会被安全忽略。
   private playSoundEffect(clip: AudioClip | null) {
     this.audioManager?.playSoundEffect(clip)
+  }
+
+  // Inspector 未绑定结算音效时加载项目内的五点五秒唢呐版本，保留场景自定义覆盖能力。
+  private preloadDefaultGameOverAudio() {
+    if (this.soundEffectClips.gameOverAudioClip || this.defaultGameOverAudioClip) {
+      return
+    }
+    resources.load(DEFAULT_GAME_OVER_AUDIO_RESOURCE, AudioClip, (error, clip) => {
+      if (error || !clip || !this.node.isValid) {
+        console.warn('[游戏结算] 默认唢呐音效加载失败', error)
+        return
+      }
+      this.defaultGameOverAudioClip = clip
+    })
   }
 
   private playButtonClickFeedback() {
@@ -2661,8 +2679,8 @@ export class PlayController extends Component {
     this.currentPiece = null
     this.clearTransientEffects()
     this.audioManager?.pauseBackgroundMusic()
-    this.playSoundEffect(this.soundEffectClips.gameOverAudioClip)
     this.refreshUiState()
+    this.playSoundEffect(this.soundEffectClips.gameOverAudioClip ?? this.defaultGameOverAudioClip)
   }
 
   private randomBasePieceValue() {
