@@ -12,6 +12,14 @@ native
 # NPM
 #//////////////////////////
 node_modules/
+tmp/
+output/
+
+# macOS Finder metadata
+.DS_Store
+
+# Regenerated visual QA preview
+design/startup/first-entry-v2-preview.jpg
 
 #//////////////////////////
 # VSCode

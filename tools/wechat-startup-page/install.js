@@ -10,7 +10,6 @@
  *   node tools/wechat-startup-page/install.js
  *   node tools/wechat-startup-page/install.js --style b
  *   node tools/wechat-startup-page/install.js --style c --build-dir build/wechatgame
- *   node tools/wechat-startup-page/install.js D:/path/to/wechatgame --style a
  */
 
 const crypto = require('crypto');
@@ -36,13 +35,6 @@ const BACKGROUND_STYLES = {
         label: '当前默认 · 数字花园晨光',
         file: path.join(__dirname, 'startup-background.jpg')
     },
-    a: {
-        label: 'A · 彩铅晨光',
-        file: path.join(
-            projectRoot,
-            'design/startup/background-variants-v1/a-colored-pencil-morning-background.jpg'
-        )
-    },
     b: {
         label: 'B · 手工剪纸',
         file: path.join(__dirname, 'startup-background-day.jpg')
@@ -56,8 +48,6 @@ const BACKGROUND_STYLES = {
 const STYLE_ALIASES = {
     default: 'current',
     current: 'current',
-    a: 'a',
-    pencil: 'a',
     b: 'b',
     paper: 'b',
     papercut: 'b',
@@ -110,7 +100,6 @@ function printHelp() {
   npm run postbuild:wechat
   npm run postbuild:wechat -- --style b
   node tools/wechat-startup-page/install.js --style c
-  node tools/wechat-startup-page/install.js D:/release/wechatgame --style a
 `);
 }
 

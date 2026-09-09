@@ -27,8 +27,8 @@
 
 ## 重新生成视觉资源
 
-正式晨光设计源位于 `design/startup/first-entry-background-v2-source.png`，昼夜候选源位于
-`design/startup/background-variants-v1/`。更新设计源或首页 Logo 后执行：
+正式晨光母版位于 `design/startup/first-entry-background-v2-source.png`，当前白天、夜间母版分别为
+`b-layered-paper-garden-background.jpg` 与 `c-luminous-watercolor-night-background.jpg`。更新母版或首页 Logo 后执行：
 
 ```bash
 python tools/wechat-startup-page/generate-startup-assets.py
@@ -47,10 +47,9 @@ npm run postbuild:wechat
 这条命令默认安装昼夜动态方案：白天使用 B，夜间使用 C。两张图片会一起进入微信包，
 `first-screen.js` 在每次冷启动时按设备本地时间选择，不需要重新构建。
 
-如果要临时关闭动态切换并强制固定某一套背景：
+如果要临时关闭动态切换并强制固定当前白天或夜间背景：
 
 ```bash
-npm run postbuild:wechat -- --style a  # 彩铅晨光
 npm run postbuild:wechat -- --style b  # 手工剪纸
 npm run postbuild:wechat -- --style c  # 夜光水彩
 ```
