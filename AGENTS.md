@@ -4,31 +4,37 @@ description: Cocos Creator 3.8.8 下落式数字合成项目
 
 ## 项目概况
 
-- 玩法：5 列 × 7 行棋盘；落子后，相邻同值棋子合并并触发重力与连锁结算。
-- 平台：微信小游戏为主，Web 用于预览。
-- 场景目录固定为 `assets/scence/`（历史拼写，不要改名）；主玩法场景为 `game.scene`。
-- 项目无自动化测试和 CLI 构建流程，使用 Cocos Creator 3.8.8 预览、构建与验证。
+- Cocos Creator 3.8.8 + TypeScript；微信小游戏为主，Web 用于预览。
+- 默认棋盘为 5 列 × 7 行，也支持 `BoardConfig` 配置的其他合法尺寸。
+- 场景流程：`home.scene` → `loading.scene` → `game.scene`。
+- 场景目录固定为 `assets/scence/`（历史拼写，不要改名）。
+- 无自动化测试和 CLI 构建；`postbuild:wechat` 仅处理已有微信构建产物。
 
 ## 核心架构
 
-- `PlayController` 负责玩法流程和运行状态；通用棋盘查询由 `BoardModel` 提供。
-- `PlayController.buildUiState()` 生成纯数据 `PlayUIState`，`PlayUIController.renderState()` 负责渲染。UI 只能通过回调发出操作，不能直接修改游戏状态。
+- `PlayController` 负责玩法流程与单局状态；`BoardModel` 提供基础棋盘操作，`BoardGeometry` 统一坐标计算，`BoardConfig` 统一尺寸校验。
+- `PlayController.buildUiState()` 生成纯数据 `PlayUIState`，`PlayUIController.renderState()` 负责渲染；UI 只能通过回调发出操作，不能直接修改游戏状态。
 - `board[row][column]` 保存 `PieceController | null`：`row` 自下向上，`column` 自左向右。
-- 棋子由 `piece.prefab` 实例化；格子位置根据 `BoardFill` 尺寸动态计算，不写死像素坐标。
-- 结算流程：落子 → BFS 查找同值连通块 → 以低位棋子为锚点合并 → 重力下落 → 全盘继续扫描，直到没有可合并组。
-- 技能包括炸弹、锤子和交换。技能期间冻结普通下落，动画结束后统一进入全盘结算。
+- 棋子由 `assets/prefab/piece.prefab` 实例化；格子位置、触摸命中和出生点统一通过 `BoardGeometry` 计算，禁止新增写死偏移。
+- 结算流程：落子局部合并 → 重力 → 全盘四向同值连通块扫描 → 重复至稳定 → 生成下一颗棋子。
+- 炸弹、锤子和交换技能期间冻结普通下落，动画结束后统一进入全盘结算。
+- `OngoingGameSession` 只保存纯数据快照，不能跨场景持有节点或组件。
 
 ## 修改规则
 
-- 优先做最小改动，保持逻辑、渲染和数据职责边界，不破坏现有场景层级、Prefab 与资源引用。
-- UI 布局优先在层级管理器中调整；只有运行时布局才放进脚本。
-- 棋盘装饰由 `PlayUIController.ensureBoardDecorations()` 使用 `Graphics` 绘制，不在场景中重复摆放。
-- 技能栏节点需兼容历史名称 `SkliisController` 与 `SkillsController`。
-- 除非任务明确涉及资源重映射，否则不要修改 `.meta` 文件。
-- 代码改动应补充必要的中文注释；复杂方法使用中文 JSDoc，避免无意义注释和乱码。
+- 优先做最小且完整的改动，保持玩法、数据与渲染职责边界，不覆盖用户已有修改。
+- 静态 UI 优先在 Creator 层级中维护；运行时布局、安全区和动态表现放在脚本中。
+- 棋盘装饰只由 `PlayUIController.ensureBoardDecorations()` 绘制，不在场景中重复摆放。
+- 技能栏需兼容 `SkliisController` 与 `SkillsController` 两个节点名。
+- 不破坏场景层级、Prefab、序列化属性、资源 UUID 和动态加载路径；非资源重映射任务不要修改 `.meta` 文件。
+- 新增监听、Tween、定时器和动态节点时，必须处理解绑、停止或销毁。
+- 注释使用简体中文，只解释设计原因和复杂时序；复杂方法使用中文 JSDoc。
+- 不做无关重构、全文件格式化或破坏性 Git 操作。
 
 ## 验证与交付
 
-- 修改玩法、输入或技能后，检查：新棋子生成、快速下落、合并连锁、重力、暂停/恢复、技能结算及游戏结束。
-- 修改场景或 Prefab 后，在 Cocos Creator 3.8.8 中确认资源引用正常，并分别预览关键界面。
-- 完成任务时做简短教学式总结：先说明设计意图与取舍，再给出关键代码片段，帮助读者理解实现思路。
+- 玩法改动检查：生成、选列/快速下落、合并连锁、重力、暂停/恢复、三种技能、续局和游戏结束。
+- UI 或资源改动在 Cocos Creator 3.8.8 中检查引用，并预览相关场景、常规屏幕与长屏安全区。
+- 微信相关改动需重新构建，并在构建产物存在后再运行 `npm run postbuild:wechat`。
+- 无法运行 Creator 或微信开发者工具时，明确说明未执行的人工验证，不得声称已通过。
+- 交付说明保持简洁：概括设计意图、修改文件、验证结果和待人工检查项。
