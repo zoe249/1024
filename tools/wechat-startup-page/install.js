@@ -3,8 +3,8 @@
 /**
  * Cocos Creator 3.8.8 微信小游戏构建后处理脚本。
  *
- * 每次 Creator 构建后执行一次，用项目首屏覆盖构建目录里的默认 Cocos first-screen。
- * 脚本只改微信构建产物，不改 game.js、分包配置或玩法资源。
+ * 每次 Creator 构建后执行一次，用项目首屏覆盖构建目录里的默认 Cocos first-screen，
+ * 并把 resources Bundle 移入微信分包，避免动态资源占用主包额度。
  *
  * 常用命令：
  *   node tools/wechat-startup-page/install.js
@@ -26,6 +26,9 @@ const DAY_BACKGROUND_FILE = 'startup-background-day.jpg';
 const NIGHT_BACKGROUND_FILE = 'startup-background-night.jpg';
 const FIXED_BACKGROUND_FILE = 'startup-background.jpg';
 const BACKGROUND_CONFIG_FILE = 'startup-background-config.js';
+const RESOURCES_BUNDLE_NAME = 'resources';
+const RESOURCES_BUNDLE_SOURCE = 'assets/resources';
+const RESOURCES_SUBPACKAGE_ROOT = 'subpackages/resources/';
 // 微信构建已经由 first-screen.js 全程接管首屏，Cocos 的后续插屏只保留 2×2 占位图。
 const TINY_COCOS_SPLASH_JPEG_BASE64 =
     '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAsICAoIBwsKCQoNDAsNERwSEQ8PESIZGhQcKSQrKigkJyctMkA3LTA9MCcnOEw5PUNFSElIKzZPVU5GVEBHSEX/2wBDAQwNDREPESESEiFFLicuRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUX/wAARCAACAAIDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAABAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwChAJpL/9k=';
@@ -303,6 +306,113 @@ module.exports = {
 `;
 }
 
+function normalizeSubpackageRoot(root) {
+    const normalized = String(root || '')
+        .replace(/\\/g, '/')
+        .replace(/^\.\//, '')
+        .replace(/^\/+|\/+$/g, '');
+    return normalized ? `${normalized}/` : '';
+}
+
+/**
+ * 将 Creator 默认输出在主包中的 resources Bundle 转为微信分包。
+ *
+ * 只移动完整 Bundle 目录并同步两份运行时配置，不改 Bundle 名称和资源路径；
+ * 重复执行时会识别已经迁移的目录，不覆盖任何已有文件。
+ */
+function ensureResourcesSubpackage(buildDirectory) {
+    const sourceDirectory = path.join(buildDirectory, ...RESOURCES_BUNDLE_SOURCE.split('/'));
+    const targetDirectory = path.join(
+        buildDirectory,
+        ...RESOURCES_SUBPACKAGE_ROOT.replace(/\/$/, '').split('/')
+    );
+    const sourceExists = fs.existsSync(sourceDirectory);
+    const targetExists = fs.existsSync(targetDirectory);
+
+    if (sourceExists && targetExists) {
+        fail(
+            `resources Bundle 同时存在于主包和分包，拒绝覆盖：${sourceDirectory}、${targetDirectory}`
+        );
+    }
+    if (!sourceExists && !targetExists) {
+        fail(`未找到 resources Bundle：${sourceDirectory}`);
+    }
+
+    let moved = false;
+    if (sourceExists) {
+        fs.mkdirSync(path.dirname(targetDirectory), { recursive: true });
+        fs.renameSync(sourceDirectory, targetDirectory);
+        moved = true;
+    }
+
+    const bundleIndexFile = path.join(targetDirectory, 'index.js');
+    const subpackageGameFile = path.join(targetDirectory, 'game.js');
+    const bundleIndexExists = fs.existsSync(bundleIndexFile);
+    const subpackageGameExists = fs.existsSync(subpackageGameFile);
+    if (bundleIndexExists && subpackageGameExists) {
+        fail(`resources 分包同时存在 index.js 和 game.js，拒绝覆盖：${targetDirectory}`);
+    }
+    if (bundleIndexExists) {
+        // 微信会校验每个分包根目录下的 game.js；其内容就是 Creator 生成的 Bundle 入口。
+        fs.renameSync(bundleIndexFile, subpackageGameFile);
+    }
+
+    assertFile(path.join(targetDirectory, 'config.json'), 'resources Bundle 配置');
+    assertFile(subpackageGameFile, 'resources 微信分包入口 game.js');
+
+    const gameConfigFile = path.join(buildDirectory, 'game.json');
+    assertFile(gameConfigFile, '微信小游戏配置 game.json');
+    const gameConfig = JSON.parse(fs.readFileSync(gameConfigFile, 'utf8'));
+    const subpackages = Array.isArray(gameConfig.subpackages)
+        ? gameConfig.subpackages.slice()
+        : [];
+    const resourcesEntry = subpackages.find(
+        (subpackage) => subpackage && subpackage.name === RESOURCES_BUNDLE_NAME
+    );
+    if (
+        resourcesEntry
+        && normalizeSubpackageRoot(resourcesEntry.root) !== RESOURCES_SUBPACKAGE_ROOT
+    ) {
+        fail(`game.json 中 resources 分包路径异常：${resourcesEntry.root}`);
+    }
+    if (!resourcesEntry) {
+        subpackages.push({
+            name: RESOURCES_BUNDLE_NAME,
+            root: RESOURCES_SUBPACKAGE_ROOT
+        });
+    }
+    gameConfig.subpackages = subpackages;
+    writeAndVerify(
+        gameConfigFile,
+        `${JSON.stringify(gameConfig, null, 4)}\n`,
+        '微信 resources 分包配置'
+    );
+
+    const settingsFile = path.join(buildDirectory, 'src/settings.json');
+    assertFile(settingsFile, 'Cocos 构建设置 src/settings.json');
+    const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+    if (!settings.assets || typeof settings.assets !== 'object') {
+        fail('src/settings.json 缺少 assets 配置。');
+    }
+    const runtimeSubpackages = Array.isArray(settings.assets.subpackages)
+        ? settings.assets.subpackages.slice()
+        : [];
+    if (!runtimeSubpackages.includes(RESOURCES_BUNDLE_NAME)) {
+        runtimeSubpackages.push(RESOURCES_BUNDLE_NAME);
+    }
+    settings.assets.subpackages = runtimeSubpackages;
+    writeAndVerify(
+        settingsFile,
+        JSON.stringify(settings),
+        'Cocos resources 分包运行时配置'
+    );
+
+    return {
+        moved,
+        size: calculateDirectorySize(targetDirectory)
+    };
+}
+
 /**
  * 移除微信构建中重复烘焙的 Cocos 插屏大图。
  *
@@ -475,6 +585,7 @@ function main() {
         '启动页背景配置'
     );
 
+    const resourcesSubpackage = ensureResourcesSubpackage(options.buildDirectory);
     const savedCocosSplashBytes = minimizeGeneratedCocosSplash(options.buildDirectory);
     const mainPackageSize = calculateMainPackageSize(options.buildDirectory);
     console.log('[微信启动页] 构建后处理完成。');
@@ -489,6 +600,9 @@ function main() {
         `已覆盖：first-screen.js、${BACKGROUND_CONFIG_FILE}、${installedBackgroundFiles.join('、')}、startup-logo.png`
     );
     console.log(`已移除重复 Cocos 插屏数据：${formatMegabytes(savedCocosSplashBytes)}`);
+    console.log(
+        `resources 分包：${resourcesSubpackage.moved ? '已从主包迁移' : '已存在并完成校验'}，${formatMegabytes(resourcesSubpackage.size)}`
+    );
     console.log(`已清理默认/旧版文件：${removedFiles.length > 0 ? removedFiles.join('、') : '无'}`);
     console.log('文件校验：SHA-256 一致');
     console.log(`当前主包文件体积：${formatMegabytes(mainPackageSize)}`);

@@ -26,6 +26,10 @@
 import { PauseOverlayController } from './PauseOverlayController'
 import { GameOverOverlayController } from './GameOverOverlayController'
 import {
+  FirstEntryTutorialController,
+  type FirstEntryTutorialUIState
+} from './FirstEntryTutorialController'
+import {
   getBoardCellCenterOffset,
   getBoardGridSize,
   getBoardGridStep,
@@ -59,6 +63,7 @@ export type PlayUIState = {
     hammer: boolean
     swap: boolean
   }
+  tutorial: FirstEntryTutorialUIState
 }
 
 export type PlayUILayout = {
@@ -82,6 +87,7 @@ export type PlayUIActions = {
   shareFromGameOver: () => void
   onButtonClick?: () => void
   coinRewardShare: () => void
+  tutorialTap: (event: EventTouch) => void
 }
 
 // 资源仍由场景序列化后注入，但在 UI 入口处集中成一个对象，避免继续扩张玩法参数列表。
@@ -283,6 +289,13 @@ export class PlayUIController extends Component {
       bomb: false,
       hammer: false,
       swap: false
+    },
+    tutorial: {
+      active: false,
+      awaitingTap: false,
+      step: 0,
+      column: 2,
+      hoverY: null
     }
   }
   // 顶部状态栏文字。
@@ -336,8 +349,11 @@ export class PlayUIController extends Component {
   private coinAmountLabel: Label | null = null
   private coinMoreHandler: (() => void) | null = null
   private buttonClickHandler: (() => void) | null = null
+  // 首次引导的全屏触摸只转交给玩法层判断，不在 UI 中决定落子。
+  private tutorialTapHandler: ((event: EventTouch) => void) | null = null
   // 背景独立于游戏内容节点铺放，避免长屏适配时连棋盘和 HUD 一起缩放。
   private gameBackgroundNode: Node | null = null
+  private firstEntryTutorialController: FirstEntryTutorialController | null = null
 
   // 由逻辑层在启动时调用，把布局、动作和表现资源分别交给 UI 层管理。
   setup(options: {
@@ -363,6 +379,7 @@ export class PlayUIController extends Component {
     this.gameOverShareHandler = actions.shareFromGameOver
     this.coinMoreHandler = actions.coinRewardShare
     this.buttonClickHandler = actions.onButtonClick ?? null
+    this.tutorialTapHandler = actions.tutorialTap
     this.counterNumberSpriteFrames = resources.counterNumberSpriteFrames ?? []
 
     // 竖屏小游戏固定按宽度适配，让 Canvas 覆盖完整窗口；额外高度交给背景和安全区布局吸收。
@@ -386,6 +403,7 @@ export class PlayUIController extends Component {
       resources.gameOverHomeButtonSpriteFrame ?? null,
       resources.gameOverShareButtonSpriteFrame ?? null
     )
+    this.ensureFirstEntryTutorial()
     this.configureControlBar()
     this.configureStatusBar()
     this.updateSkillHintLayout()
@@ -401,6 +419,7 @@ export class PlayUIController extends Component {
     this.updateSkillHintLayout()
     this.pauseOverlayController?.syncLayout()
     this.gameOverOverlayController?.syncLayout()
+    this.firstEntryTutorialController?.syncLayout()
   }
 
   // 逻辑层每次状态变化后只需要把结果喂给 UI 层即可。
@@ -419,6 +438,7 @@ export class PlayUIController extends Component {
       this.currentState.highestValue,
       this.currentState.gameOverCoinReward
     )
+    this.firstEntryTutorialController?.renderState(this.currentState.tutorial)
   }
   private skillVisualKeys: Record<PlaySkillKind, string> = {
     bomb: '',
@@ -518,6 +538,8 @@ export class PlayUIController extends Component {
     this.gameBackgroundNode = null
     this.pauseOverlayController = null
     this.gameOverOverlayController = null
+    this.firstEntryTutorialController = null
+    this.tutorialTapHandler = null
   }
 
   // 主内容节点跟随 Canvas；背景独立按 cover 规则等比放大，避免长屏上下露底。
@@ -1017,6 +1039,33 @@ export class PlayUIController extends Component {
     layer.setPosition(0, 0, 0)
     layer.setSiblingIndex(this.node.children.length - 1)
     return layer
+  }
+
+  // 首次引导位于所有游戏控件之上，通过独立组件绘制并吞掉非目标触摸。
+  private ensureFirstEntryTutorial() {
+    const overlayLayer = this.ensureOverlayLayer()
+    let tutorialNode = overlayLayer.getChildByName('FirstEntryTutorial')
+    if (!tutorialNode) {
+      tutorialNode = new Node('FirstEntryTutorial')
+      tutorialNode.setParent(overlayLayer)
+      tutorialNode.addComponent(UITransform)
+    }
+    tutorialNode.setSiblingIndex(overlayLayer.children.length - 1)
+
+    this.firstEntryTutorialController =
+      tutorialNode.getComponent(FirstEntryTutorialController) ??
+      tutorialNode.addComponent(FirstEntryTutorialController)
+    this.firstEntryTutorialController.setup({
+      hostNode: this.node,
+      boardNode: this.node.getChildByName('board'),
+      layout: {
+        boardwidth: this.boardwidth,
+        boardheight: this.boardheight,
+        pieceSize: this.pieceSize,
+        spacing: this.spacing
+      },
+      onTap: (event) => this.tutorialTapHandler?.(event)
+    })
   }
 
   // 顶部 HUD 复用 scene 中的固定节点，脚本只统一视觉、触摸热区和动态分数。

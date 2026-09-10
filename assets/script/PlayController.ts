@@ -1,6 +1,6 @@
 ﻿import { _decorator, Color, Component, EventTouch, instantiate, Node, Prefab, Sprite, SpriteFrame, tween, Tween, UITransform, UIOpacity, Vec2, Vec3 } from 'cc'
 import { PieceController } from './PieceController'
-import { AudioClip, director, resources } from 'cc'
+import { AudioClip, director, resources, sys } from 'cc'
 import { PlayUIController, type PlayUIState } from './PlayUIController'
 import { GameAudioManager } from './GameAudioManager'
 import { GameShareAdapter } from './GameShareAdapter'
@@ -76,6 +76,10 @@ const GAME_OVER_HIGHEST_POWER_COIN = 8
 const GAME_OVER_MIN_COIN_REWARD = 5
 const GAME_OVER_MAX_COIN_REWARD = 300
 const DEFAULT_GAME_OVER_AUDIO_RESOURCE = 'Settlement/Celebration/victory-suona'
+// 引导完成标记只在第二颗棋子稳定合成为 4 后写入，未完成退出时下次仍会重新引导。
+const FIRST_ENTRY_TUTORIAL_STORAGE_KEY = 'number-garden-first-entry-drop-guide-v1'
+const FIRST_ENTRY_TUTORIAL_PIECE_VALUE = 2
+type FirstEntryTutorialStep = 0 | 1 | 2
 
 @ccclass('PlaySoundEffectClips')
 export class PlaySoundEffectClips {
@@ -212,6 +216,10 @@ export class PlayController extends Component {
   private currentColumn = 0
   // 下一枚棋子预先抽取，仅用于设计稿的左侧预览卡。
   private nextPieceValue = 2
+  // 0 表示已完成或无需引导；1、2 分别表示正在引导第一颗和第二颗棋子。
+  private firstEntryTutorialStep: FirstEntryTutorialStep = 0
+  // 引导棋子悬停时为 true；只有触摸当前高亮列后才允许继续下落。
+  private isTutorialAwaitingTap = false
   // 是否处于按住后的快速下落状态。
   private isFastDropping = false
   // 游戏结束标记；当前由结算弹窗接管重玩入口，根节点触摸重开只作为兜底。
@@ -265,6 +273,9 @@ export class PlayController extends Component {
         rows: this.boardheight
       })
     }
+    // 续局不插入新手步骤；只有没有快照且本机从未完成过引导的新对局才启动。
+    this.firstEntryTutorialStep = !ongoingSnapshot && !this.hasCompletedFirstEntryTutorial() ? 1 : 0
+    this.isTutorialAwaitingTap = false
     // 必须在 resetBoard、BoardGeometry 和 UI setup 之前应用本局尺寸，三者才能共享同一份配置。
     this.applyBoardConfig(OngoingGameSession.getBoardConfig())
     this.resetBoard()
@@ -304,7 +315,8 @@ export class PlayController extends Component {
         onButtonClick: () => this.playButtonClickFeedback(),
         coinRewardShare: () => {
           void this.shareForCoinReward()
-        }
+        },
+        tutorialTap: (event) => this.handleFirstEntryTutorialTap(event)
       },
       resources: {
         coinBarPrefab: this.coinBarPrefab,
@@ -463,6 +475,11 @@ export class PlayController extends Component {
       return
     }
 
+    // 新手棋子保持悬停，只有 UI 覆盖层确认玩家触摸了当前列后才开始下落。
+    if (this.firstEntryTutorialStep > 0 && this.isTutorialAwaitingTap) {
+      return
+    }
+
     const row = this.getDropRow(this.currentColumn)
     if (row < 0) {
       const fallbackColumn = this.getNearestAvailableColumn(this.currentColumn)
@@ -508,6 +525,11 @@ export class PlayController extends Component {
     }
 
     if (!this.hasStartedSession) {
+      return
+    }
+
+    // 引导触摸统一由最上层遮罩转发，避免底层设置按钮、技能和普通落子同时响应。
+    if (this.firstEntryTutorialStep > 0) {
       return
     }
 
@@ -585,6 +607,63 @@ export class PlayController extends Component {
     }
   }
 
+  /**
+   * 首次引导只接受当前高亮列。
+   *
+   * UI 覆盖层会吞掉所有原始触摸；这里再次按棋盘几何解析列，非目标列、棋盘外或
+   * 结算中的触摸都直接忽略，确保不会误触设置、技能或普通换列逻辑。
+   */
+  private handleFirstEntryTutorialTap(event: EventTouch) {
+    if (
+      this.firstEntryTutorialStep <= 0 ||
+      !this.isTutorialAwaitingTap ||
+      !this.currentPiece ||
+      this.isResolving ||
+      this.isPaused ||
+      this.isGameOver
+    ) {
+      return
+    }
+
+    const column = this.getColumnFromTouch(event)
+    if (column !== this.currentColumn || this.getDropRow(column) < 0) {
+      return
+    }
+
+    this.isTutorialAwaitingTap = false
+    this.isFastDropping = true
+    this.trailTimer = 0
+    this.refreshUiState()
+  }
+
+  private advanceFirstEntryTutorialAfterLanding(completedStep: FirstEntryTutorialStep) {
+    if (completedStep === 1) {
+      this.firstEntryTutorialStep = 2
+      this.isTutorialAwaitingTap = false
+      return
+    }
+
+    if (completedStep === 2) {
+      this.firstEntryTutorialStep = 0
+      this.isTutorialAwaitingTap = false
+      try {
+        sys.localStorage.setItem(FIRST_ENTRY_TUTORIAL_STORAGE_KEY, '1')
+      } catch (error) {
+        // 存储失败只影响下次是否再次显示引导，不能阻断当前已经完成的合成流程。
+        console.warn('[首次引导] 完成状态保存失败', error)
+      }
+    }
+  }
+
+  private hasCompletedFirstEntryTutorial() {
+    try {
+      return sys.localStorage.getItem(FIRST_ENTRY_TUTORIAL_STORAGE_KEY) === '1'
+    } catch (error) {
+      console.warn('[首次引导] 完成状态读取失败', error)
+      return false
+    }
+  }
+
   // 锤子技能点选任意落地棋子后立即敲碎，并在动画后触发重力和消除检测。
   private async handleHammerSkillTouchStart(event: EventTouch) {
     if (this.isResolving) {
@@ -647,7 +726,10 @@ export class PlayController extends Component {
     this.gameOverCoinReward = 0
     this.usedSkillsThisGame = this.createEmptySkillUsageState()
     this.currentColumn = Math.floor(this.boardwidth / 2)
-    this.nextPieceValue = this.randomBasePieceValue()
+    this.nextPieceValue = this.firstEntryTutorialStep > 0
+      ? FIRST_ENTRY_TUTORIAL_PIECE_VALUE
+      : this.randomBasePieceValue()
+    this.isTutorialAwaitingTap = false
   }
 
   // 返回首页前生成纯数据快照，节点和组件不会跨场景泄漏。
@@ -801,8 +883,12 @@ export class PlayController extends Component {
       // 让预制体的真实显示尺寸和当前棋盘格子尺寸保持一致。
       pieceTransform.setContentSize(this.pieceSize, this.pieceSize)
     }
-    const value = this.nextPieceValue
-    this.nextPieceValue = this.randomBasePieceValue()
+    const isTutorialPiece = this.firstEntryTutorialStep > 0
+    const value = isTutorialPiece ? FIRST_ENTRY_TUTORIAL_PIECE_VALUE : this.nextPieceValue
+    // 第一步的预览固定为第二颗 2；第二颗生成后才提前抽取正常游戏的第三颗。
+    this.nextPieceValue = this.firstEntryTutorialStep === 1
+      ? FIRST_ENTRY_TUTORIAL_PIECE_VALUE
+      : this.randomBasePieceValue()
     this.currentColumn = column
     this.isFastDropping = false
     this.trailTimer = 0
@@ -811,9 +897,12 @@ export class PlayController extends Component {
     pieceController.syncLayout(true)
     this.scoreManager.updateHighestPieceValue(value)
     pieceNode.setScale(Vec3.ONE)
-    pieceNode.setPosition(this.getSpawnPosition(column))
+    pieceNode.setPosition(isTutorialPiece
+      ? this.getFirstEntryTutorialHoverPosition(column)
+      : this.getSpawnPosition(column))
     this.getPieceLayer().addChild(pieceNode)
     this.currentPiece = pieceController
+    this.isTutorialAwaitingTap = isTutorialPiece
     this.refreshUiState()
   }
 
@@ -832,6 +921,7 @@ export class PlayController extends Component {
     if (!this.currentPiece || this.isResolving) {
       return
     }
+    const tutorialStepAtLanding = this.firstEntryTutorialStep
     this.currentPiece.stopParticle()
     this.isResolving = true
     const landedPiece = this.currentPiece
@@ -849,6 +939,7 @@ export class PlayController extends Component {
     const directedResult = await this.resolveLandingChain(landedPiece)
     await this.settleBoard(directedResult.anchor, directedResult.nextChainDepth)
 
+    this.advanceFirstEntryTutorialAfterLanding(tutorialStepAtLanding)
     this.isResolving = false
     this.refreshUiState()
     if (this.isBoardFull()) {
@@ -2336,6 +2427,13 @@ export class PlayController extends Component {
     return this.boardGeometry?.getSpawnPosition(column) ?? new Vec3()
   }
 
+  // 引导悬停点紧贴棋盘顶部且保持在可视区内，不沿用屏幕外的普通出生偏移。
+  private getFirstEntryTutorialHoverPosition(column: number) {
+    const topCell = this.getCellPosition(this.boardheight - 1, column)
+    const hoverOffset = this.getStepSize() * 0.5 + this.pieceSize * 0.5 + 24
+    return new Vec3(topCell.x, topCell.y + hoverOffset, 0)
+  }
+
   // 单格步长 = 棋子尺寸 + 列间距，这是所有坐标换算的基础。
   private getStepSize() {
     this.syncBoardGeometryOptions()
@@ -2380,7 +2478,14 @@ export class PlayController extends Component {
       activeSkill: this.isBombSkillActive ? 'bomb' : this.isHammerSkillActive ? 'hammer' : this.isSwapSkillActive ? 'swap' : null,
       coins: economy.coins,
       skillCounts: economy.skills,
-      skillUsed: { ...this.usedSkillsThisGame }
+      skillUsed: { ...this.usedSkillsThisGame },
+      tutorial: {
+        active: this.firstEntryTutorialStep > 0,
+        awaitingTap: this.isTutorialAwaitingTap,
+        step: this.firstEntryTutorialStep,
+        column: this.currentColumn,
+        hoverY: this.currentPiece?.node.position.y ?? null
+      }
     }
   }
 
@@ -2393,7 +2498,7 @@ export class PlayController extends Component {
 
   // UI 层按钮点击后只通过这个入口切换暂停，真正的状态变化仍由逻辑层维护。
   private togglePauseFromUi() {
-    if (!this.hasStartedSession) {
+    if (!this.hasStartedSession || this.firstEntryTutorialStep > 0) {
       return
     }
 
@@ -2542,7 +2647,7 @@ export class PlayController extends Component {
 
   // UI 层第三技能按钮通过这个入口切换交换技能，技能态只冻结下落，不打开暂停弹窗。
   private toggleSwapSkillFromUi() {
-    if (!this.hasStartedSession) {
+    if (!this.hasStartedSession || this.firstEntryTutorialStep > 0) {
       return
     }
 
@@ -2567,7 +2672,7 @@ export class PlayController extends Component {
 
   // UI 层第二技能按钮通过这个入口切换锤子技能，技能态只等待点选棋子。
   private toggleHammerSkillFromUi() {
-    if (!this.hasStartedSession) {
+    if (!this.hasStartedSession || this.firstEntryTutorialStep > 0) {
       return
     }
 
@@ -2592,7 +2697,7 @@ export class PlayController extends Component {
 
   // UI 层第一个技能按钮通过这个入口切换炸弹技能，等待玩家点选爆炸中心。
   private toggleBombSkillFromUi() {
-    if (!this.hasStartedSession) {
+    if (!this.hasStartedSession || this.firstEntryTutorialStep > 0) {
       return
     }
 

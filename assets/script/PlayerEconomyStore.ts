@@ -36,7 +36,7 @@ export type SkillPurchaseResult = {
 export const ECONOMY_CONFIG = {
   initialEnergy: 10,
   maxEnergy: 10,
-  initialCoins: 99999,
+  initialCoins: 1000,
   initialSkillCount: 1,
   maxSkillCount: 9,
   dailyLoginRewards: [1000, 1500, 2000, 3000, 5000, 8000, 12000] as const,

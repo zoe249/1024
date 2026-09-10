@@ -17,8 +17,9 @@
 
 背景和 Logo 使用发布专用轻量资源，避免高清设计源直接进入微信主包。安装脚本会
 自动删除旧版启动大图、旧文字图片与 `startup-preview*.png` 调试预览，并输出主包体积。
-它还会把微信构建中重复生成的 Cocos 插屏大图替换为 2×2 占位图：真正的启动视觉已经
-由 `first-screen.js` 接管，不需要再把同一张插屏同时放进 `background.jpg` 和
+它还会把微信构建中重复生成的 Cocos 插屏大图替换为 2×2 占位图，并将 Creator 默认
+输出到主包的 `resources` Bundle 迁移为微信分包。真正的启动视觉已经由
+`first-screen.js` 接管，不需要再把同一张插屏同时放进 `background.jpg` 和
 `src/settings.json`。处理后若主包仍超过 4MB，命令会直接失败，不再只输出警告。
 
 `settings/v2/packages/builder.json` 同时启用了烘焙项目 Logo 的自定义 Cocos 插屏，
@@ -93,7 +94,8 @@ node tools/wechat-startup-page/install.js --background /你的图片.jpg
 5. 清理 Cocos 默认品牌图、重复插屏数据、旧文字图片和与当前模式冲突的背景文件
 6. 使用 SHA-256 校验全部复制与写入结果
 7. 按 `game.json` 声明的分包目录统计真实主包体积，超过 4MB 时让命令失败
-8. 保留 Cocos 生成的 `game.js`、分包配置和游戏代码不变
+8. 将 `assets/resources` 迁移到 `subpackages/resources`，生成微信要求的分包 `game.js`，并同步 `game.json` 与运行时配置
+9. 保留 Cocos 生成的 `game.js` 和游戏代码不变
 
 ## 为什么要在每次构建后重新执行
 
