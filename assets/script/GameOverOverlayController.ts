@@ -60,10 +60,8 @@ export class GameOverOverlayController extends Component {
   private continueButtonNode: Node | null = null
   private shareButtonNode: Node | null = null
   private mascotRoot: Node | null = null
-  private mascotSprite: Sprite | null = null
   private glowNode: Node | null = null
   private noteNodes: Node[] = []
-  private mascotFrames: Array<SpriteFrame | null> = [null, null, null]
   private overlayOpacity: UIOpacity | null = null
   private replayHandler: (() => void) | null = null
   private shareHandler: (() => void) | null = null
@@ -199,10 +197,7 @@ export class GameOverOverlayController extends Component {
     )
   }
 
-  /**
-   * 庆祝角色使用三张关键姿势贴图，姿势切换负责重拍，节点位移与旋转负责补间。
-   * 这样既能贴合五至六秒音频，也不会用大量序列帧增加包体和内存。
-   */
+  /** 兔子保持静止，庆祝感只由背后的光芒和闪光粒子提供，避免低帧切图破坏实机观感。 */
   private ensureCelebration(parent: Node) {
     const celebration = this.getOrCreateNode(parent, 'SettlementCelebration')
     celebration.active = true
@@ -218,24 +213,7 @@ export class GameOverOverlayController extends Component {
     this.mascotRoot.active = true
     this.mascotRoot.setPosition(0, -4, 0)
     ;(this.mascotRoot.getComponent(UITransform) ?? this.mascotRoot.addComponent(UITransform)).setContentSize(390, 390)
-    this.mascotSprite = this.mascotRoot.getComponent(Sprite) ?? this.mascotRoot.addComponent(Sprite)
-    this.mascotSprite.sizeMode = Sprite.SizeMode.CUSTOM
-    this.mascotSprite.type = Sprite.Type.SIMPLE
-    this.mascotSprite.trim = false
-
-    const frameNames = ['rabbit-inhale', 'rabbit-blow-left', 'rabbit-blow-right']
-    frameNames.forEach((name, index) => {
-      resources.load(`${CELEBRATION_ART_ROOT}${name}/spriteFrame`, SpriteFrame, (error, frame) => {
-        if (error || !frame) {
-          console.warn(`[结算弹窗] 兔子动画素材加载失败: ${name}`, error)
-          return
-        }
-        this.mascotFrames[index] = frame
-        if (index === 0 && this.mascotSprite && !this.mascotSprite.spriteFrame) {
-          this.mascotSprite.spriteFrame = frame
-        }
-      })
-    })
+    this.applyResourceArtwork(this.mascotRoot, `${CELEBRATION_ART_ROOT}rabbit-inhale`, 390, 390)
 
     this.noteNodes = [
       this.ensureEffectNode(celebration, 'MusicNoteA', 'note-single-a', 135, 72),
@@ -563,20 +541,12 @@ export class GameOverOverlayController extends Component {
     return new Vec3(scale, scale, 1)
   }
 
-  private setMascotFrame(index: number) {
-    const frame = this.mascotFrames[index]
-    if (this.mascotSprite && frame) {
-      this.mascotSprite.spriteFrame = frame
-    }
-  }
-
   private resetCelebrationAnimation() {
     if (this.canUseNode(this.mascotRoot)) {
       Tween.stopAllByTarget(this.mascotRoot)
       this.mascotRoot.setPosition(0, -4, 0)
       this.mascotRoot.setScale(Vec3.ONE)
       this.mascotRoot.angle = 0
-      this.setMascotFrame(0)
     }
     if (this.canUseNode(this.glowNode)) {
       Tween.stopAllByTarget(this.glowNode)
@@ -594,57 +564,17 @@ export class GameOverOverlayController extends Component {
     }
   }
 
-  /**
-   * 五点五秒庆祝段落按“吸气—两段吹奏—换气—高潮—落地”组织。
-   * 姿势切换藏在挤压与伸展的极值点，身体位移始终连续，避免三张关键帧机械左右横跳。
-   */
+  /** 角色完全静止；光芒与闪光粒子独立循环，不受五点五秒音频长度限制。 */
   private playCelebrationAnimation() {
     this.resetCelebrationAnimation()
-    if (this.mascotRoot) {
-      this.mascotRoot.setScale(new Vec3(0.82, 0.82, 1))
-      tween(this.mascotRoot)
-        .delay(0.18)
-        .to(0.38, { position: new Vec3(0, -1, 0), scale: new Vec3(1.03, 1.03, 1) }, { easing: 'backOut' })
-        // 吸气时先压低身体，再在伸展极值切换到吹奏姿势。
-        .to(0.4, { position: new Vec3(0, -12, 0), scale: new Vec3(1.06, 0.93, 1) }, { easing: 'sineInOut' })
-        .call(() => this.setMascotFrame(1))
-        .to(0.22, { position: new Vec3(-8, 6, 0), scale: new Vec3(0.97, 1.06, 1), angle: -2.2 }, { easing: 'backOut' })
-        .to(0.48, { position: new Vec3(-13, 2, 0), scale: new Vec3(1.02, 1.01, 1), angle: -1 }, { easing: 'sineInOut' })
-        .to(0.28, { position: new Vec3(-3, -3, 0), scale: Vec3.ONE, angle: 0 }, { easing: 'sineInOut' })
-        .call(() => this.setMascotFrame(2))
-        .to(0.22, { position: new Vec3(8, 6, 0), scale: new Vec3(0.97, 1.06, 1), angle: 2.2 }, { easing: 'backOut' })
-        .to(0.48, { position: new Vec3(13, 2, 0), scale: new Vec3(1.02, 1.01, 1), angle: 1 }, { easing: 'sineInOut' })
-        .to(0.28, { position: new Vec3(3, -3, 0), scale: Vec3.ONE, angle: 0 }, { easing: 'sineInOut' })
-        // 中段换气给动作留停顿，避免整段音频从头到尾匀速摆动。
-        .call(() => this.setMascotFrame(0))
-        .to(0.38, { position: new Vec3(0, -12, 0), scale: new Vec3(1.07, 0.92, 1), angle: 0 }, { easing: 'sineInOut' })
-        .call(() => this.setMascotFrame(1))
-        .to(0.24, { position: new Vec3(-5, 11, 0), scale: new Vec3(0.96, 1.07, 1), angle: -1.8 }, { easing: 'backOut' })
-        .to(0.52, { position: new Vec3(-14, 4, 0), scale: new Vec3(1.03, 1, 1), angle: -2.4 }, { easing: 'sineInOut' })
-        .call(() => this.setMascotFrame(2))
-        .to(0.42, { position: new Vec3(12, 7, 0), scale: new Vec3(0.98, 1.04, 1), angle: 2.4 }, { easing: 'sineInOut' })
-        .to(0.32, { position: new Vec3(0, -2, 0), scale: Vec3.ONE, angle: 0 }, { easing: 'sineInOut' })
-        // 结尾小跳和落地挤压回应音频收尾，随后回到安静呼吸。
-        .to(0.24, { position: new Vec3(0, 17, 0), scale: new Vec3(0.96, 1.06, 1) }, { easing: 'quadOut' })
-        .call(() => this.setMascotFrame(0))
-        .to(0.2, { position: new Vec3(0, -9, 0), scale: new Vec3(1.07, 0.92, 1), angle: 0 }, { easing: 'quadIn' })
-        .to(0.26, { position: new Vec3(0, -4, 0), scale: Vec3.ONE }, { easing: 'backOut' })
-        .repeatForever(
-          tween<Node>()
-            .to(0.9, { position: new Vec3(0, -2, 0), scale: new Vec3(1.012, 1.018, 1) }, { easing: 'sineInOut' })
-            .to(0.9, { position: new Vec3(0, -4, 0), scale: Vec3.ONE }, { easing: 'sineInOut' })
-        )
-        .start()
-    }
 
     if (this.glowNode) {
+      this.glowNode.setScale(new Vec3(0.96, 0.96, 1))
       tween(this.glowNode)
-        .delay(0.7)
-        .repeat(
-          5,
+        .repeatForever(
           tween<Node>()
-            .to(0.32, { scale: new Vec3(1.06, 1.06, 1), angle: 3 }, { easing: 'sineOut' })
-            .to(0.68, { scale: Vec3.ONE, angle: 0 }, { easing: 'sineInOut' })
+            .to(1.15, { scale: new Vec3(1.06, 1.06, 1), angle: 4 }, { easing: 'sineInOut' })
+            .to(1.15, { scale: new Vec3(0.96, 0.96, 1), angle: 0 }, { easing: 'sineInOut' })
         )
         .start()
     }
@@ -657,24 +587,26 @@ export class GameOverOverlayController extends Component {
       }
       note.setPosition(noteOrigins[index])
       tween(opacity)
-        .delay(0.85 + index * 0.48)
-        .to(0.1, { opacity: 255 })
-        .delay(0.34)
-        .to(0.3, { opacity: 0 }, { easing: 'quadIn' })
-        .delay(1.15)
-        .to(0.1, { opacity: 255 })
-        .delay(0.34)
-        .to(0.3, { opacity: 0 }, { easing: 'quadIn' })
+        .delay(0.55 + index * 0.42)
+        .repeatForever(
+          tween<UIOpacity>()
+            .to(0.18, { opacity: 210 }, { easing: 'sineOut' })
+            .delay(0.28)
+            .to(0.42, { opacity: 0 }, { easing: 'sineIn' })
+            .delay(1.45)
+        )
         .start()
       tween(note)
-        .delay(0.85 + index * 0.48)
-        .to(0.74, { position: noteOrigins[index].clone().add3f(24, 58, 0), scale: Vec3.ONE }, { easing: 'quadOut' })
-        .delay(1.15)
-        .call(() => {
-          note.setPosition(noteOrigins[index])
-          note.setScale(new Vec3(0.55, 0.55, 1))
-        })
-        .to(0.74, { position: noteOrigins[index].clone().add3f(-18, 62, 0), scale: Vec3.ONE }, { easing: 'quadOut' })
+        .delay(0.55 + index * 0.42)
+        .repeatForever(
+          tween<Node>()
+            .call(() => {
+              note.setPosition(noteOrigins[index])
+              note.setScale(new Vec3(0.62, 0.62, 1))
+            })
+            .to(0.88, { position: noteOrigins[index].clone().add3f(12 - index * 8, 48, 0), scale: Vec3.ONE }, { easing: 'sineOut' })
+            .delay(1.45)
+        )
         .start()
     })
   }
