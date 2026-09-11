@@ -315,9 +315,58 @@ function normalizeSubpackageRoot(root) {
 }
 
 /**
+ * 逐文件迁移 Bundle，确保已打开的微信开发者工具能收到每个新增文件事件。
+ *
+ * 直接 rename 整个目录时，微信开发者工具只会记录新的目录和入口脚本，
+ * 不会重新枚举目录里的 config.json 与资源文件，真机预览因此可能得到残缺分包。
+ */
+function moveDirectoryFiles(sourceDirectory, targetDirectory) {
+    const sourceFiles = [];
+    const sourceDirectories = [];
+
+    function collect(directory) {
+        sourceDirectories.push(directory);
+        const entries = fs.readdirSync(directory, { withFileTypes: true })
+            .sort((left, right) => left.name.localeCompare(right.name));
+
+        for (const entry of entries) {
+            const entryPath = path.join(directory, entry.name);
+            if (entry.isDirectory()) {
+                collect(entryPath);
+            } else if (entry.isFile()) {
+                sourceFiles.push(entryPath);
+            } else {
+                fail(`resources Bundle 中包含不支持的文件类型：${entryPath}`);
+            }
+        }
+    }
+
+    collect(sourceDirectory);
+    fs.mkdirSync(targetDirectory, { recursive: true });
+
+    let totalBytes = 0;
+    for (const sourceFile of sourceFiles) {
+        const relativePath = path.relative(sourceDirectory, sourceFile);
+        const targetFile = path.join(targetDirectory, relativePath);
+        fs.mkdirSync(path.dirname(targetFile), { recursive: true });
+        totalBytes += fs.statSync(sourceFile).size;
+        fs.renameSync(sourceFile, targetFile);
+    }
+
+    sourceDirectories
+        .sort((left, right) => right.length - left.length)
+        .forEach((directory) => fs.rmdirSync(directory));
+
+    return {
+        fileCount: sourceFiles.length,
+        totalBytes
+    };
+}
+
+/**
  * 将 Creator 默认输出在主包中的 resources Bundle 转为微信分包。
  *
- * 只移动完整 Bundle 目录并同步两份运行时配置，不改 Bundle 名称和资源路径；
+ * 逐文件移动完整 Bundle 并同步两份运行时配置，不改 Bundle 名称和资源路径；
  * 重复执行时会识别已经迁移的目录，不覆盖任何已有文件。
  */
 function ensureResourcesSubpackage(buildDirectory) {
@@ -339,9 +388,10 @@ function ensureResourcesSubpackage(buildDirectory) {
     }
 
     let moved = false;
+    let movedFileCount = 0;
     if (sourceExists) {
-        fs.mkdirSync(path.dirname(targetDirectory), { recursive: true });
-        fs.renameSync(sourceDirectory, targetDirectory);
+        const moveResult = moveDirectoryFiles(sourceDirectory, targetDirectory);
+        movedFileCount = moveResult.fileCount;
         moved = true;
     }
 
@@ -409,6 +459,7 @@ function ensureResourcesSubpackage(buildDirectory) {
 
     return {
         moved,
+        movedFileCount,
         size: calculateDirectorySize(targetDirectory)
     };
 }
@@ -601,7 +652,9 @@ function main() {
     );
     console.log(`已移除重复 Cocos 插屏数据：${formatMegabytes(savedCocosSplashBytes)}`);
     console.log(
-        `resources 分包：${resourcesSubpackage.moved ? '已从主包迁移' : '已存在并完成校验'}，${formatMegabytes(resourcesSubpackage.size)}`
+        `resources 分包：${resourcesSubpackage.moved
+            ? `已从主包逐文件迁移（${resourcesSubpackage.movedFileCount} 个文件）`
+            : '已存在并完成校验'}，${formatMegabytes(resourcesSubpackage.size)}`
     );
     console.log(`已清理默认/旧版文件：${removedFiles.length > 0 ? removedFiles.join('、') : '无'}`);
     console.log('文件校验：SHA-256 一致');

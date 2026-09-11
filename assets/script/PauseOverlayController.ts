@@ -30,29 +30,39 @@ const PAUSE_PANEL_HIDDEN_GAP = 32
 const AUDIO_MUSIC_VOLUME_KEY = 'play.audio.musicVolume'
 // 音效音量本地存储键。
 const AUDIO_SOUND_EFFECT_KEY = 'play.audio.soundEffectVolume'
-// 游戏中设置弹窗按 750 × 1334 定稿适配；左右保留 65 像素安全边距。
-const PAUSE_PANEL_WIDTH = 620
-const PAUSE_PANEL_HEIGHT = 770
-const HOME_SETTINGS_PANEL_HEIGHT = 690
-const PAUSE_UTILITY_BUTTON_WIDTH = 210
-const PAUSE_UTILITY_BUTTON_HEIGHT = 145
+// 游戏中设置弹窗按 750 × 1334 定稿适配；新版手记面板仍保留足够的横向安全边距。
+const PAUSE_PANEL_WIDTH = 680
+const PAUSE_PANEL_HEIGHT = 900
+const HOME_SETTINGS_PANEL_HEIGHT = 740
+// 设置面板内部已经按定稿比例排好，只统一缩放根节点，避免单独调整控件再次产生错位。
+const SETTINGS_PANEL_SCALE = 0.86
+const PAUSE_AUDIO_ROW_WIDTH = 600
+const PAUSE_AUDIO_ROW_TOUCH_HEIGHT = 150
+// 音量卡片素材上下带透明留白，显示高度需要按有效内容比例补偿。
+const PAUSE_AUDIO_ROW_ART_HEIGHT = 264
+const PAUSE_UTILITY_BUTTON_WIDTH = 230
+const PAUSE_UTILITY_BUTTON_HEIGHT = 90
 const PAUSE_GAME_BUTTON_WIDTH = 250
 const PAUSE_GAME_BUTTON_HEIGHT = 88
 // 滑块轨道略向右收窄，并把旋钮活动区内缩半个旋钮宽度，避免静音时压住左侧图标。
-const PAUSE_SLIDER_TRACK_WIDTH = 356
-const PAUSE_SLIDER_TRACK_CENTER_X = 12
-const PAUSE_SLIDER_KNOB_WIDTH = 64
-const PAUSE_SLIDER_KNOB_HEIGHT = 68
+const PAUSE_SLIDER_TRACK_WIDTH = 324
+// 填充图左右各约 7% 为透明留白，放大画布后可让实际金色部分与空轨道边缘重合。
+const PAUSE_SLIDER_FILL_ART_WIDTH = 376
+const PAUSE_SLIDER_TRACK_CENTER_X = 0
+const PAUSE_SLIDER_KNOB_WIDTH = 90
+const PAUSE_SLIDER_KNOB_HEIGHT = 96
+const PAUSE_SLIDER_KNOB_VISIBLE_WIDTH = 60
 const PAUSE_SLIDER_DEFAULT_KNOB_X =
-  PAUSE_SLIDER_TRACK_CENTER_X + PAUSE_SLIDER_TRACK_WIDTH * 0.5 - PAUSE_SLIDER_KNOB_WIDTH * 0.5
+  PAUSE_SLIDER_TRACK_CENTER_X + PAUSE_SLIDER_TRACK_WIDTH * 0.5 - PAUSE_SLIDER_KNOB_VISIBLE_WIDTH * 0.5
 const PAUSE_TEXT_COLOR = new Color(81, 55, 37, 255)
 const GENERATED_BACKGROUND_NAME = 'GeneratedBackground'
 const SETTINGS_ART_ROOT = 'Settings/'
 
 const SettingsArtwork = {
   panel: 'panel-background',
-  title: 'title-settings',
+  titleIcon: 'icon-settings-flower',
   close: 'button-close',
+  audioRow: 'audio-row-background',
   sound: 'icon-sound',
   music: 'icon-music',
   sliderTrack: 'slider-track-empty',
@@ -147,6 +157,7 @@ export class PauseOverlayController extends Component {
     mode?: 'game' | 'home'
   }) {
     this.hostNode = options.hostNode
+    this.node.layer = options.hostNode.layer
     this.pauseHandler = options.pauseHandler
     this.replayHandler = options.replayHandler
     this.homeHandler = options.homeHandler
@@ -239,6 +250,7 @@ export class PauseOverlayController extends Component {
     if (!mask) {
       mask = new Node('Mask')
       mask.setParent(this.node)
+      mask.layer = this.node.layer
       const maskTransform = mask.addComponent(UITransform)
       maskTransform.setContentSize(overlayTransform.width, overlayTransform.height)
       if (this.isHomeMode) {
@@ -253,6 +265,7 @@ export class PauseOverlayController extends Component {
     if (!panel) {
       panel = new Node('Panel')
       panel.setParent(this.node)
+      panel.layer = this.node.layer
       const panelTransform = panel.addComponent(UITransform)
       panelTransform.setContentSize(360, 560)
       panel.addComponent(Sprite)
@@ -268,17 +281,18 @@ export class PauseOverlayController extends Component {
    * 视觉仍完全使用 Settings 素材，运行时节点只承担布局和触摸区域。
    */
   private ensureRuntimePanelStructure(panel: Node) {
-    this.ensureRuntimeNode(panel, 'SettingLabel', 250, 110)
-    this.ensureRuntimeNode(panel, 'CloseBtn', 72, 74)
+    const titleNode = this.ensureRuntimeNode(panel, 'SettingLabel', 280, 104)
+    titleNode.getComponent(Label) ?? titleNode.addComponent(Label)
+    this.ensureRuntimeNode(panel, 'CloseBtn', 96, 98)
     this.ensureRuntimeAudioControl(panel, 'Notifications')
     this.ensureRuntimeAudioControl(panel, 'BgSound')
   }
 
   private ensureRuntimeAudioControl(panel: Node, name: string) {
-    const control = this.ensureRuntimeNode(panel, name, 92, 97)
-    const slider = this.ensureRuntimeNode(control, 'Slider', 400, 72)
+    const control = this.ensureRuntimeNode(panel, name, PAUSE_AUDIO_ROW_WIDTH, PAUSE_AUDIO_ROW_TOUCH_HEIGHT)
+    const slider = this.ensureRuntimeNode(control, 'Slider', 350, 100)
     this.ensureRuntimeNode(slider, 'SliderBase', PAUSE_SLIDER_TRACK_WIDTH, 40)
-    this.ensureRuntimeNode(slider, 'Fill', PAUSE_SLIDER_TRACK_WIDTH, 42)
+    this.ensureRuntimeNode(slider, 'Fill', PAUSE_SLIDER_FILL_ART_WIDTH, 100)
     this.ensureRuntimeNode(slider, 'Controller', PAUSE_SLIDER_KNOB_WIDTH, PAUSE_SLIDER_KNOB_HEIGHT)
   }
 
@@ -287,13 +301,14 @@ export class PauseOverlayController extends Component {
     if (!node) {
       node = new Node(name)
       node.setParent(parent)
+      node.layer = parent.layer
       node.addComponent(UITransform)
     }
     ;(node.getComponent(UITransform) ?? node.addComponent(UITransform)).setContentSize(width, height)
     return node
   }
 
-  // 设置面板严格按游戏中定稿分区：标题、双滑块、平台操作和游戏操作依次向下排列。
+  // 新版手记面板使用内嵌标题、双设置卡片和轻量平台入口，游戏中模式再保留对局操作区。
   private configurePausePanelLayout() {
     const panel = this.pauseOverlayPanel
     if (!panel) {
@@ -303,7 +318,8 @@ export class PauseOverlayController extends Component {
     const panelTransform = panel.getComponent(UITransform) ?? panel.addComponent(UITransform)
     const panelHeight = this.isHomeMode ? HOME_SETTINGS_PANEL_HEIGHT : PAUSE_PANEL_HEIGHT
     panelTransform.setContentSize(PAUSE_PANEL_WIDTH, panelHeight)
-    panel.setPosition(0, this.isHomeMode ? -38 : -78, 0)
+    panel.setScale(SETTINGS_PANEL_SCALE, SETTINGS_PANEL_SCALE, 1)
+    panel.setPosition(0, this.isHomeMode ? -26 : -70, 0)
     this.pausePanelShownPosition = panel.position.clone()
     this.applyArtwork(panel, SettingsArtwork.panel, PAUSE_PANEL_WIDTH, panelHeight)
     const generatedBackground = panel.getChildByName(GENERATED_BACKGROUND_NAME)
@@ -314,32 +330,40 @@ export class PauseOverlayController extends Component {
     const titleNode = panel.getChildByName('SettingLabel')
     const titleLabel = titleNode?.getComponent(Label) ?? null
     if (titleNode) {
-      titleNode.setPosition(0, this.isHomeMode ? 320 : 356, 0)
-      titleNode.getComponent(UITransform)?.setContentSize(250, 110)
+      titleNode.setPosition(-15, this.isHomeMode ? 240 : 320, 0)
+      titleNode.getComponent(UITransform)?.setContentSize(280, 104)
       if (titleLabel) {
-        titleLabel.enabled = false
+        titleLabel.enabled = true
+        titleLabel.string = '设置'
+        titleLabel.fontSize = 64
+        titleLabel.lineHeight = 76
+        titleLabel.color = PAUSE_TEXT_COLOR
+        titleLabel.isBold = true
+        titleLabel.horizontalAlign = Label.HorizontalAlign.CENTER
+        titleLabel.verticalAlign = Label.VerticalAlign.CENTER
       }
       const titleArtwork = this.ensureArtworkNode(titleNode, 'TitleArtwork')
-      this.applyArtwork(titleArtwork, SettingsArtwork.title, 250, 110)
+      this.applyArtwork(titleArtwork, SettingsArtwork.titleIcon, 190, 190)
+      titleArtwork.setPosition(-140, 0, 0)
     }
 
     this.closeButtonNode = this.closeButtonNode ?? panel.getChildByName('CloseBtn')
     if (this.closeButtonNode) {
-      this.closeButtonNode.setPosition(258, this.isHomeMode ? 292 : 328, 0)
-      this.applyArtwork(this.closeButtonNode, SettingsArtwork.close, 72, 74)
+      this.closeButtonNode.setPosition(280, this.isHomeMode ? 225 : 305, 0)
+      this.applyArtwork(this.closeButtonNode, SettingsArtwork.close, 96, 98)
     }
 
-    // 定稿要求“音效”在上、“音量（背景音乐）”在下，节点历史命名不再决定视觉顺序。
-    this.layoutAudioControl(this.soundEffectControl, this.isHomeMode ? 166 : 218, '音效', SettingsArtwork.sound)
-    this.layoutAudioControl(this.bgMusicControl, this.isHomeMode ? 34 : 92, '音量', SettingsArtwork.music)
-    this.ensureSeparator(panel, 'AudioSeparator', this.isHomeMode ? -86 : 12)
+    // 节点历史命名不决定视觉顺序；新版统一显示“音效”和“音乐”。
+    this.layoutAudioControl(this.soundEffectControl, this.isHomeMode ? 70 : 150, '音效', SettingsArtwork.sound)
+    this.layoutAudioControl(this.bgMusicControl, this.isHomeMode ? -94 : -14, '音乐', SettingsArtwork.music)
+    this.ensureSeparator(panel, 'AudioSeparator', this.isHomeMode ? -204 : -125)
     const actionSeparator = panel.getChildByName('ActionSeparator')
     if (this.isHomeMode) {
       if (actionSeparator) {
         actionSeparator.active = false
       }
     } else {
-      this.ensureSeparator(panel, 'ActionSeparator', -193)
+      this.ensureSeparator(panel, 'ActionSeparator', -270)
     }
   }
 
@@ -347,16 +371,29 @@ export class PauseOverlayController extends Component {
     if (!this.canUseNode(control)) {
       return
     }
-    control.setPosition(-202, y, 0)
-    this.applyArtwork(control, iconArtwork, 92, 97)
+    control.setPosition(0, y, 0)
+    const controlTransform = control.getComponent(UITransform) ?? control.addComponent(UITransform)
+    controlTransform.setContentSize(PAUSE_AUDIO_ROW_WIDTH, PAUSE_AUDIO_ROW_TOUCH_HEIGHT)
+    const controlSprite = control.getComponent(Sprite)
+    if (controlSprite) {
+      controlSprite.enabled = false
+    }
+
+    const rowBackground = this.ensureArtworkNode(control, 'RowBackground')
+    rowBackground.setSiblingIndex(0)
+    this.applyArtwork(rowBackground, SettingsArtwork.audioRow, PAUSE_AUDIO_ROW_WIDTH, PAUSE_AUDIO_ROW_ART_HEIGHT)
+
+    const iconNode = this.ensureArtworkNode(control, 'IconArtwork')
+    this.applyArtwork(iconNode, iconArtwork, 88, 92)
+    iconNode.setPosition(-222, 0, 0)
 
     const labelNode = this.ensureLabelNode(control, 'RowTitle')
-    labelNode.setPosition(104, 31, 0)
-    labelNode.getComponent(UITransform)?.setContentSize(140, 38)
+    labelNode.setPosition(-104, 0, 0)
+    labelNode.getComponent(UITransform)?.setContentSize(108, 54)
     const label = labelNode.getComponent(Label)!
     label.string = title
-    label.fontSize = 27
-    label.lineHeight = 34
+    label.fontSize = 40
+    label.lineHeight = 50
     label.color = PAUSE_TEXT_COLOR
     label.isBold = true
     label.horizontalAlign = Label.HorizontalAlign.LEFT
@@ -366,9 +403,9 @@ export class PauseOverlayController extends Component {
     if (!slider) {
       return
     }
-    slider.setPosition(242, -18, 0)
+    slider.setPosition(104, 0, 0)
     const sliderTransform = slider.getComponent(UITransform) ?? slider.addComponent(UITransform)
-    sliderTransform.setContentSize(400, 72)
+    sliderTransform.setContentSize(350, 100)
     sliderTransform.setAnchorPoint(0.5, 0.5)
     const base = slider.getChildByName('SliderBase')
     const fill = slider.getChildByName('Fill')
@@ -381,7 +418,7 @@ export class PauseOverlayController extends Component {
     if (fill) {
       fill.setPosition(PAUSE_SLIDER_TRACK_CENTER_X, 0, 0)
       ;(fill.getComponent(UITransform) ?? fill.addComponent(UITransform)).setAnchorPoint(0.5, 0.5)
-      this.applyArtwork(fill, SettingsArtwork.sliderFill, PAUSE_SLIDER_TRACK_WIDTH, 42)
+      this.applyArtwork(fill, SettingsArtwork.sliderFill, PAUSE_SLIDER_FILL_ART_WIDTH, 100)
     }
     if (knob) {
       knob.setPosition(PAUSE_SLIDER_DEFAULT_KNOB_X, 0, 0)
@@ -456,22 +493,22 @@ export class PauseOverlayController extends Component {
     this.bindPauseActionButton(this.feedbackButtonNode, this.onFeedbackButtonTap)
   }
 
-  // 平台操作和游戏操作各占一行；返回首页与重新开始严格等宽、同高、水平对齐。
+  // 平台入口保持轻量图文排布；游戏操作仍单独占一行并保持等宽同高。
   private layoutPauseActionButtons() {
     if (!this.pauseOverlayPanel) {
       return
     }
 
-    this.utilityActionsNode?.setPosition(0, this.isHomeMode ? -218 : -94, 0)
-    this.gameActionsNode?.setPosition(0, -272, 0)
+    this.utilityActionsNode?.setPosition(0, this.isHomeMode ? -268 : -190, 0)
+    this.gameActionsNode?.setPosition(0, -345, 0)
     if (this.gameActionsNode) {
       this.gameActionsNode.active = !this.isHomeMode
     }
     if (this.canUseNode(this.shareButtonNode)) {
-      this.shareButtonNode.setPosition(-133, 0, 0)
+      this.shareButtonNode.setPosition(-136, 0, 0)
     }
     if (this.canUseNode(this.feedbackButtonNode)) {
-      this.feedbackButtonNode.setPosition(133, 0, 0)
+      this.feedbackButtonNode.setPosition(166, 0, 0)
     }
     if (this.canUseNode(this.homeButtonNode)) {
       this.homeButtonNode.setPosition(-140, 0, 0)
@@ -487,8 +524,8 @@ export class PauseOverlayController extends Component {
       return
     }
 
-    this.utilityActionsNode = this.ensureContainer(panel, 'UtilityActions', 560, PAUSE_UTILITY_BUTTON_HEIGHT)
-    this.gameActionsNode = this.ensureContainer(panel, 'GameActions', 560, PAUSE_GAME_BUTTON_HEIGHT)
+    this.utilityActionsNode = this.ensureContainer(panel, 'UtilityActions', 620, PAUSE_UTILITY_BUTTON_HEIGHT)
+    this.gameActionsNode = this.ensureContainer(panel, 'GameActions', 620, PAUSE_GAME_BUTTON_HEIGHT)
     this.shareButtonNode =
       this.findChildDeep(panel, ['ShareButton', 'Share']) ?? this.createActionNode(this.utilityActionsNode, 'ShareButton')
     this.feedbackButtonNode =
@@ -505,18 +542,8 @@ export class PauseOverlayController extends Component {
     this.moveNodeToContainer(this.homeButtonNode, this.gameActionsNode)
     this.moveNodeToContainer(this.replayButtonNode, this.gameActionsNode)
 
-    this.styleArtworkButton(
-      this.shareButtonNode,
-      SettingsArtwork.share,
-      PAUSE_UTILITY_BUTTON_WIDTH,
-      PAUSE_UTILITY_BUTTON_HEIGHT
-    )
-    this.styleArtworkButton(
-      this.feedbackButtonNode,
-      SettingsArtwork.feedback,
-      PAUSE_UTILITY_BUTTON_WIDTH,
-      PAUSE_UTILITY_BUTTON_HEIGHT
-    )
+    this.styleUtilityActionButton(this.shareButtonNode, SettingsArtwork.share, '分享好友', 64, 66)
+    this.styleUtilityActionButton(this.feedbackButtonNode, SettingsArtwork.feedback, '客服反馈', 68, 78)
     this.styleArtworkButton(this.homeButtonNode, SettingsArtwork.home, PAUSE_GAME_BUTTON_WIDTH, PAUSE_GAME_BUTTON_HEIGHT)
     this.styleArtworkButton(
       this.replayButtonNode,
@@ -526,11 +553,60 @@ export class PauseOverlayController extends Component {
     )
   }
 
+  // 平台入口只保留图标与文字，根节点继续承担完整触摸热区，避免视觉变轻后难以点击。
+  private styleUtilityActionButton(
+    node: Node | null,
+    artwork: string,
+    text: string,
+    iconWidth: number,
+    iconHeight: number
+  ) {
+    if (!this.canUseNode(node)) {
+      return
+    }
+
+    node.active = true
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform)
+    transform.setContentSize(PAUSE_UTILITY_BUTTON_WIDTH, PAUSE_UTILITY_BUTTON_HEIGHT)
+    const rootSprite = node.getComponent(Sprite)
+    if (rootSprite) {
+      rootSprite.enabled = false
+    }
+    const rootLabel = node.getComponent(Label)
+    if (rootLabel) {
+      rootLabel.enabled = false
+    }
+
+    for (const child of node.children) {
+      if (child.name !== 'Icon' && child.name !== 'Text') {
+        child.active = false
+      }
+    }
+
+    const iconNode = this.ensureArtworkNode(node, 'Icon')
+    this.applyArtwork(iconNode, artwork, iconWidth, iconHeight)
+    iconNode.setPosition(-78, 0, 0)
+
+    const textNode = this.ensureLabelNode(node, 'Text')
+    textNode.setPosition(45, 0, 0)
+    textNode.getComponent(UITransform)?.setContentSize(160, 48)
+    const label = textNode.getComponent(Label)!
+    label.enabled = true
+    label.string = text
+    label.fontSize = 33
+    label.lineHeight = 44
+    label.color = PAUSE_TEXT_COLOR
+    label.isBold = true
+    label.horizontalAlign = Label.HorizontalAlign.LEFT
+    label.verticalAlign = Label.VerticalAlign.CENTER
+  }
+
   private ensureContainer(parent: Node, name: string, width: number, height: number) {
     let container = parent.getChildByName(name)
     if (!container) {
       container = new Node(name)
       container.setParent(parent)
+      container.layer = parent.layer
       container.addComponent(UITransform)
     }
     const transform = container.getComponent(UITransform) ?? container.addComponent(UITransform)
@@ -541,6 +617,7 @@ export class PauseOverlayController extends Component {
   private createActionNode(parent: Node, name: string) {
     const node = new Node(name)
     node.setParent(parent)
+    node.layer = parent.layer
     node.addComponent(UITransform)
     return node
   }
@@ -552,7 +629,7 @@ export class PauseOverlayController extends Component {
     node.setParent(container)
   }
 
-  // 操作按钮直接使用设计稿拆分出的完整按钮素材，避免符号图标和临时底板破坏手绘风格。
+  // 操作按钮直接使用单独生成的完整按钮素材，避免符号图标和临时底板破坏手绘风格。
   private styleArtworkButton(node: Node | null, artwork: string, width: number, height: number) {
     if (!this.canUseNode(node)) {
       return
@@ -595,8 +672,8 @@ export class PauseOverlayController extends Component {
       }
     }
 
-    // game.scene 已绑定新版 Settings 素材时直接用于首帧，动态创建的首页设置层才异步加载。
-    if (sprite.spriteFrame) {
+    // 同名资源可直接复用；旧场景若残留其他图标，仍需重新加载，避免运行效果与定稿不一致。
+    if (sprite.spriteFrame?.name === artwork) {
       finishArtworkSetup()
       return
     }
@@ -616,6 +693,7 @@ export class PauseOverlayController extends Component {
     if (!node) {
       node = new Node(name)
       node.setParent(parent)
+      node.layer = parent.layer
       node.addComponent(UITransform)
       node.addComponent(Sprite)
     }
@@ -629,9 +707,11 @@ export class PauseOverlayController extends Component {
     if (!node) {
       node = new Node(name)
       node.setParent(parent)
+      node.layer = parent.layer
       node.addComponent(UITransform)
-      node.addComponent(Label)
     }
+    node.getComponent(UITransform) ?? node.addComponent(UITransform)
+    node.getComponent(Label) ?? node.addComponent(Label)
     node.active = true
     return node
   }
@@ -642,6 +722,7 @@ export class PauseOverlayController extends Component {
     if (!node) {
       node = new Node(name)
       node.setParent(parent)
+      node.layer = parent.layer
       node.addComponent(UITransform)
       node.addComponent(Graphics)
     }
@@ -871,8 +952,10 @@ export class PauseOverlayController extends Component {
 
     const trackMinX = baseNode.position.x - baseTransform.width * baseTransform.anchorX
     const trackMaxX = trackMinX + baseTransform.width
-    const minX = trackMinX + controllerTransform.width * controllerTransform.anchorX
-    const maxX = trackMaxX - controllerTransform.width * (1 - controllerTransform.anchorX)
+    // 旋钮生成图保留了透明安全边，活动范围按可见圆形计算，端点才能与轨道视觉边缘对齐。
+    const controllerVisibleWidth = Math.min(controllerTransform.width, PAUSE_SLIDER_KNOB_VISIBLE_WIDTH)
+    const minX = trackMinX + controllerVisibleWidth * controllerTransform.anchorX
+    const maxX = trackMaxX - controllerVisibleWidth * (1 - controllerTransform.anchorX)
     if (maxX < minX) {
       return null
     }
@@ -897,8 +980,8 @@ export class PauseOverlayController extends Component {
     fillSprite.type = Sprite.Type.FILLED
     fillSprite.fillType = Sprite.FillType.HORIZONTAL
     fillSprite.fillStart = 0
-    fillTransform.setContentSize(fullWidth, fillTransform.height)
-    fillNode.setPosition(trackMinX + fullWidth * fillTransform.anchorX, fillNode.position.y, fillNode.position.z)
+    fillTransform.setContentSize(PAUSE_SLIDER_FILL_ART_WIDTH, fillTransform.height)
+    fillNode.setPosition(trackMinX + fullWidth * 0.5, fillNode.position.y, fillNode.position.z)
   }
 
   // 一次性处理多个滑块相关节点的触摸绑定，减少重复代码，也避免漏绑或重复绑。
@@ -958,15 +1041,18 @@ export class PauseOverlayController extends Component {
     value: number
   ) {
     const fillSprite = fillNode?.getComponent(Sprite)
-    if (!fillNode || !controllerNode || !fillSprite?.spriteFrame) {
+    const fillTransform = fillNode?.getComponent(UITransform)
+    if (!fillNode || !controllerNode || !fillSprite?.spriteFrame || !fillTransform) {
       return
     }
 
     const rangeMinX = Math.min(minX, maxX)
     const rangeMaxX = Math.max(minX, maxX)
     const controllerX = rangeMinX + (rangeMaxX - rangeMinX) * value
-    // Fill 直接裁剪到当前比例，避免滑动时左侧图片被横向拉伸变形。
-    fillSprite.fillRange = Math.max(0, Math.min(1, value))
+    // 以旋钮中心作为填充终点，补偿填充图左右透明留白后仍保持视觉同步。
+    const fillMinX = fillNode.position.x - fillTransform.width * fillTransform.anchorX
+    const fillRange = (controllerX - fillMinX) / Math.max(1, fillTransform.width)
+    fillSprite.fillRange = Math.max(0, Math.min(1, fillRange))
     controllerNode.setPosition(controllerX, controllerNode.position.y, controllerNode.position.z)
   }
 
@@ -1106,7 +1192,7 @@ export class PauseOverlayController extends Component {
     }
 
     const overlayHalfWidth = overlayTransform.width * 0.5
-    const panelHalfWidth = panelTransform.width * 0.5
+    const panelHalfWidth = panelTransform.width * Math.abs(this.pauseOverlayPanel?.scale.x ?? 1) * 0.5
     return overlayHalfWidth + panelHalfWidth + PAUSE_PANEL_HIDDEN_GAP
   }
 

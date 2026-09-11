@@ -94,12 +94,12 @@ node tools/wechat-startup-page/install.js --background /你的图片.jpg
 5. 清理 Cocos 默认品牌图、重复插屏数据、旧文字图片和与当前模式冲突的背景文件
 6. 使用 SHA-256 校验全部复制与写入结果
 7. 按 `game.json` 声明的分包目录统计真实主包体积，超过 4MB 时让命令失败
-8. 将 `assets/resources` 迁移到 `subpackages/resources`，生成微信要求的分包 `game.js`，并同步 `game.json` 与运行时配置
+8. 将 `assets/resources` 逐文件迁移到 `subpackages/resources`，让已打开的微信开发者工具完整索引 `config.json` 与资源文件；随后生成分包 `game.js`，并同步 `game.json` 与运行时配置
 9. 保留 Cocos 生成的 `game.js` 和游戏代码不变
 
 ## 为什么要在每次构建后重新执行
 
-`build/wechatgame/` 是 Cocos 自动生成目录，重新构建时 `first-screen.js` 会被 Creator 覆盖。因此每次重新构建微信小游戏后，都要再次运行 `npm run postbuild:wechat`。
+`build/wechatgame/` 是 Cocos 自动生成目录，重新构建时 `first-screen.js` 会被 Creator 覆盖。因此每次重新构建微信小游戏后，都要再次运行 `npm run postbuild:wechat`，并等命令输出“构建后处理完成”后再点击微信开发者工具的预览。
 
 可用背景与参数可随时查看：
 
