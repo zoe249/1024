@@ -48,7 +48,7 @@ tools/wechat-startup-page/     微信构建后处理
 - `PlayUIController`：界面渲染。
 - `PauseOverlayController`：设置弹窗、音量和暂停操作。
 
-设置弹窗使用 `resources/Settings` 中的手绘素材，整体按 86% 等比显示。
+设置弹窗使用 `resources/Settings` 中的手绘素材，整体按 86% 等比显示；游戏内提供分享、重玩和返回。
 
 ## 注意事项
 

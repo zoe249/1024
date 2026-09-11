@@ -2039,7 +2039,7 @@ export class StartPageController extends Component {
 
   private handleCoinResourceTap(event: EventTouch) {
     event.propagationStopped = true
-    this.shopHandler?.()
+    // 金币入口暂未开放，仅拦截点击，避免事件落到其他首页按钮。
   }
 
   private handleEnergyMoreTap(event: EventTouch) {

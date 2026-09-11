@@ -171,21 +171,9 @@ export class HomeSceneController extends Component {
     this.enterGameScene()
   }
 
-  // 首页商店入口用于手动补充技能；已有未结束对局时仍直接续局，避免覆盖当前棋盘快照。
+  // 首页商店是独立入口，只负责展示和购买技能，不参与新开或续局流程。
   private openSkillShop() {
     if (this.isLoadingGameScene) {
-      return
-    }
-
-    if (OngoingGameSession.hasActiveGame()) {
-      this.enterOngoingGameScene()
-      return
-    }
-
-    if (!this.canStartNewGame()) {
-      this.closeSkillShop()
-      this.startPageController?.showMessage('体力不足，请先点击体力条补充')
-      this.refreshPlayerResources()
       return
     }
 
