@@ -39,3 +39,10 @@ description: Cocos Creator 3.8.8 下落式数字合成项目
 - 微信相关改动需重新构建，并在构建产物存在后再运行 `npm run postbuild:wechat`。
 - 无法运行 Creator 或微信开发者工具时，明确说明未执行的人工验证，不得声称已通过。
 - 交付说明保持简洁：概括设计意图、修改文件、验证结果和待人工检查项。
+
+## 部署服务器
+
+- 腾讯云 Ubuntu 服务器：`ubuntu@43.142.81.188`，SSH 端口为 `22`。
+- 当前电脑已验证可用的身份文件为 `C:\Users\zoe\.ssh\tencent_1024_codex`；连接命令为 `ssh -i C:\Users\zoe\.ssh\tencent_1024_codex ubuntu@43.142.81.188`。
+- 服务器操作默认由本机 Codex 通过普通 SSH 执行，不依赖服务器端运行 Codex。
+- 不在项目中保存密码、私钥内容、令牌或其他密钥；更换电脑时应生成新密钥并将新公钥加入服务器。
