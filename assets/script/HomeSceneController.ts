@@ -10,11 +10,20 @@ import { DailyRewardPopupController } from './DailyRewardPopupController'
 import type { SkillKind } from './SkillStock'
 import { OngoingGameSession } from './OngoingGameSession'
 import { BOARD_CONFIG_LIMITS } from './BoardConfig'
+import { ApiError, type LeaderboardBoardDto, type LeaderboardEntryDto } from './online/api/GameApiClient'
+import { PlayerSessionStore } from './online/auth/PlayerSessionStore'
+import { PlayerCloudSyncStore } from './online/sync/PlayerCloudSyncStore'
+import { PlayerSyncOutbox } from './online/sync/PlayerSyncOutbox'
+import { LoginStatusController } from './ui/login/LoginStatusController'
 
 const { ccclass, property } = _decorator
 const HOME_RESOURCE_REFRESH_INTERVAL_SECONDS = 30
 // 切场景前给按钮 one-shot 留出起声时间，避免当前场景销毁时把点击反馈截断。
 const BUTTON_CLICK_SCENE_DELAY_SECONDS = 0.18
+const LEADERBOARD_AVATARS = [
+  'rabbit', 'fox', 'blue-bird', 'orange-cat', 'chick', 'turtle', 'deer',
+  'alpaca', 'squirrel', 'frog', 'hedgehog', 'raccoon'
+] as const
 
 @ccclass('HomeSceneController')
 export class HomeSceneController extends Component {
@@ -97,6 +106,12 @@ export class HomeSceneController extends Component {
   private readonly shareAdapter = new GameShareAdapter()
   private readonly feedbackAdapter = new GameFeedbackAdapter()
   private readonly economy = PlayerEconomyStore.getInstance()
+  private readonly playerSession = PlayerSessionStore.getInstance()
+  private readonly cloudSync = PlayerCloudSyncStore.getInstance()
+  private readonly syncOutbox = PlayerSyncOutbox.getInstance()
+  private loginStatusNode: Node | null = null
+  private loginStatusController: LoginStatusController | null = null
+  private isOpeningLeaderboard = false
   private isLoadingGameScene = false
   private dailyRewardStateKey = ''
   private readonly refreshResourceTick = () => this.refreshPlayerResources()
@@ -108,6 +123,7 @@ export class HomeSceneController extends Component {
     this.startPageController = this.getComponent(StartPageController) ?? this.addComponent(StartPageController)
     this.startPageController.setup({
       onStartTap: () => this.startGameFromHome(),
+      onRankTap: () => void this.openLeaderboard(),
       onShareTap: () => this.shareGameFromStartPage(),
       onButtonClick: () => this.playButtonClickFeedback(),
       backgroundSpriteFrame: this.startPageBackgroundSpriteFrame,
@@ -134,6 +150,7 @@ export class HomeSceneController extends Component {
     this.homeSettingsController?.syncLayout()
     this.audioManager?.playStartPageBackgroundMusic(this.getHomeBgmClip())
     this.schedule(this.refreshResourceTick, HOME_RESOURCE_REFRESH_INTERVAL_SECONDS)
+    void this.restoreOnlineSession()
   }
 
   onDestroy() {
@@ -144,6 +161,118 @@ export class HomeSceneController extends Component {
     this.dailyRewardNode = null
     this.homeSettingsController = null
     this.homeSettingsNode = null
+    this.loginStatusController = null
+    this.loginStatusNode = null
+  }
+
+  /** 已有凭证只做静默恢复；游客启动时绝不调用 wx.login。 */
+  private async restoreOnlineSession() {
+    const session = await this.playerSession.restore()
+    if (session.status !== 'authenticated' || !this.node.isValid) {
+      return
+    }
+    try {
+      await this.cloudSync.sync(this.economy)
+      if (this.node.isValid) {
+        this.refreshPlayerResources()
+      }
+    } catch (error) {
+      console.info('后台恢复云同步暂未完成，将在打开排行榜时重试', this.describeOnlineError(error))
+    }
+  }
+
+  /** 排行榜点击是首次微信登录的唯一触发点；登录、同步和取榜单共用一个去重流程。 */
+  private async openLeaderboard() {
+    if (this.isOpeningLeaderboard || this.isLoadingGameScene) {
+      return
+    }
+    this.isOpeningLeaderboard = true
+    const status = this.ensureLoginStatus()
+    try {
+      if (this.playerSession.getSnapshot().status !== 'authenticated') {
+        status.showLoading('正在登录…')
+        await this.playerSession.loginInteractively(this.syncOutbox.getInstallationId())
+      }
+      status.showLoading('正在同步游戏数据…')
+      await this.cloudSync.sync(this.economy)
+      this.refreshPlayerResources()
+      status.showLoading('正在加载排行榜…')
+      await this.startPageController?.prepareRankModal()
+      const leaderboard = await this.playerSession.getApiClient().getLeaderboard()
+      if (!this.node.isValid) {
+        return
+      }
+      this.startPageController?.setLeaderboardData({
+        tabs: leaderboard.boards.map(board => this.buildLeaderboardTab(board))
+      })
+      status.hide()
+      this.startPageController?.showRankModal()
+    } catch (error) {
+      if (!this.node.isValid) {
+        return
+      }
+      if (error instanceof ApiError && error.statusCode === 401) {
+        this.playerSession.markUnauthorized()
+      }
+      status.showFailure(this.describeOnlineError(error), () => void this.retryLeaderboard())
+    } finally {
+      this.isOpeningLeaderboard = false
+    }
+  }
+
+  private retryLeaderboard() {
+    this.loginStatusController?.hide()
+    void this.openLeaderboard()
+  }
+
+  private ensureLoginStatus() {
+    if (this.loginStatusNode?.isValid && this.loginStatusController?.isValid) {
+      this.loginStatusController.syncLayout()
+      return this.loginStatusController
+    }
+    const node = new Node('LoginStatus')
+    node.setParent(this.node)
+    node.setPosition(0, 0, 0)
+    node.addComponent(UITransform)
+    const controller = node.addComponent(LoginStatusController)
+    controller.setup(() => controller.hide())
+    this.loginStatusNode = node
+    this.loginStatusController = controller
+    return controller
+  }
+
+  private buildLeaderboardTab(board: LeaderboardBoardDto) {
+    const isScore = board.metric === 'score'
+    return {
+      id: board.metric,
+      label: isScore ? '最高分榜' : '最高合成',
+      entries: board.entries.map(entry => this.buildLeaderboardEntry(entry, isScore)),
+      self: this.buildLeaderboardEntry(board.self, isScore, true)
+    }
+  }
+
+  private buildLeaderboardEntry(entry: LeaderboardEntryDto, isScore: boolean, isSelf = false) {
+    return {
+      rank: entry.rank,
+      name: isSelf ? `我 · ${entry.displayName}` : entry.displayName,
+      score: entry.value > 0
+        ? isScore ? `${entry.value}分` : `合成 ${entry.value}`
+        : '暂无成绩',
+      avatar: LEADERBOARD_AVATARS[entry.avatarIndex % LEADERBOARD_AVATARS.length] ?? 'raccoon'
+    }
+  }
+
+  private describeOnlineError(error: unknown) {
+    if (error instanceof ApiError) {
+      if (error.statusCode === 429) {
+        return '操作频繁，请稍后再试'
+      }
+      if (error.statusCode === 0) {
+        return '网络异常，请稍后重试'
+      }
+      return error.message || '排行榜加载失败，请稍后重试'
+    }
+    return error instanceof Error ? error.message : '排行榜加载失败，请稍后重试'
   }
 
   /**

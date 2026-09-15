@@ -35,8 +35,11 @@ npm run postbuild:wechat
 ```text
 assets/prefab/                 棋子预制体
 assets/resources/Settings/     设置弹窗素材
+assets/resources/Leaderboard/  排行榜素材与 LeaderboardPopup Prefab
 assets/scence/                 游戏场景
-assets/script/                 玩法与 UI 脚本
+assets/script/online/          登录、接口与云同步
+assets/script/ui/              可复用 UI 控制器
+assets/script/                 玩法与场景流程脚本
 tools/wechat-startup-page/     微信构建后处理
 ```
 
@@ -47,6 +50,9 @@ tools/wechat-startup-page/     微信构建后处理
 - `BoardGeometry`：坐标计算。
 - `PlayUIController`：界面渲染。
 - `PauseOverlayController`：设置弹窗、音量和暂停操作。
+- `GameApiClient`：统一 `/v1` baseURL、超时、错误转换和 Bearer token 注入。
+- `PlayerSessionStore`：本地业务凭证、过期状态和登录并发去重。
+- `PlayerCloudSyncStore`：首次游客导入、增量操作队列和云端修订号同步。
 
 设置弹窗使用 `resources/Settings` 中的手绘素材，整体按 86% 等比显示；游戏内提供分享、重玩和返回。
 

@@ -18,19 +18,24 @@ import {
 
 const { ccclass } = _decorator
 
-type LeaderboardTabId = 'level' | 'friend'
+type LeaderboardTabId = 'score' | 'highestNumber'
 
-type LeaderboardEntry = {
+export type LeaderboardViewEntry = {
+  rank: number | null
   name: string
   score: string
   avatar: string
 }
 
-type LeaderboardTab = {
+export type LeaderboardViewTab = {
   id: LeaderboardTabId
   label: string
-  entries: LeaderboardEntry[]
-  self: LeaderboardEntry
+  entries: LeaderboardViewEntry[]
+  self: LeaderboardViewEntry
+}
+
+export type LeaderboardViewData = {
+  tabs: LeaderboardViewTab[]
 }
 
 type LeaderboardPopupOptions = {
@@ -47,6 +52,8 @@ type TabView = {
 }
 
 type RowView = {
+  node: Node
+  rank: Label
   avatar: Sprite
   name: Label
   score: Label
@@ -66,34 +73,18 @@ const CREAM = new Color(255, 248, 220, 255)
 const MUTED = new Color(137, 93, 60, 255)
 const WHITE = new Color(255, 255, 255, 255)
 
-const TABS: LeaderboardTab[] = [
+const DEFAULT_TABS: LeaderboardViewTab[] = [
   {
-    id: 'level',
-    label: '通关榜',
-    entries: [
-      { name: '糖糖', score: '第5940关', avatar: 'rabbit' },
-      { name: '森森', score: '第4296关', avatar: 'fox' },
-      { name: '小满', score: '第2125关', avatar: 'blue-bird' },
-      { name: '阿橙', score: '第2122关', avatar: 'orange-cat' },
-      { name: '七喜', score: '第1905关', avatar: 'chick' },
-      { name: '乌龟电车', score: '第1760关', avatar: 'turtle' },
-      { name: 'Vilma佳', score: '第1646关', avatar: 'deer' }
-    ],
-    self: { name: '我 · 我', score: '第3关', avatar: 'raccoon' }
+    id: 'score',
+    label: '最高分榜',
+    entries: [],
+    self: { rank: null, name: '我', score: '暂无成绩', avatar: 'raccoon' }
   },
   {
-    id: 'friend',
-    label: '好友榜',
-    entries: [
-      { name: '团子', score: '32680分', avatar: 'alpaca' },
-      { name: '小栗', score: '29840分', avatar: 'squirrel' },
-      { name: '橙橙', score: '26420分', avatar: 'orange-cat' },
-      { name: '芽芽', score: '21860分', avatar: 'frog' },
-      { name: '啾啾', score: '19640分', avatar: 'chick' },
-      { name: '小蓝', score: '17320分', avatar: 'blue-bird' },
-      { name: '刺刺', score: '15680分', avatar: 'hedgehog' }
-    ],
-    self: { name: '我 · 我', score: '1024分', avatar: 'raccoon' }
+    id: 'highestNumber',
+    label: '最高合成',
+    entries: [],
+    self: { rank: null, name: '我', score: '暂无成绩', avatar: 'raccoon' }
   }
 ]
 
@@ -130,10 +121,9 @@ const LEADERBOARD_SPRITE_PATHS = [
 ] as const
 
 /**
- * 排行榜静态展示控制器。
+ * 排行榜 Prefab 的数据渲染控制器。
  *
- * 当前只维护弹窗结构、素材加载、标签切换和模拟数据渲染；真实排行、开放数据域与
- * 邀请能力均通过回调留给外层，后续接入时不需要改动本组件的视觉层级。
+ * 外层只传入真实榜单纯数据和操作回调；本组件负责资源预热、榜单切换与行渲染。
  */
 @ccclass('LeaderboardPopupController')
 export class LeaderboardPopupController extends Component {
@@ -156,6 +146,7 @@ export class LeaderboardPopupController extends Component {
   private readonly spriteFrameCache = new Map<string, SpriteFrame>()
   private readonly pendingSprites = new Map<string, Set<Sprite>>()
   private readonly spriteResourcePaths = new Map<Sprite, string>()
+  private tabs: LeaderboardViewTab[] = DEFAULT_TABS.map(tab => ({ ...tab, entries: [], self: { ...tab.self } }))
 
   setup(options: LeaderboardPopupOptions) {
     this.isDisposed = false
@@ -165,6 +156,20 @@ export class LeaderboardPopupController extends Component {
     this.contentOpacity = this.node.getComponent(UIOpacity) ?? this.node.addComponent(UIOpacity)
     this.contentOpacity.opacity = 0
     void this.prepareContent()
+  }
+
+  setData(data: LeaderboardViewData) {
+    if (data.tabs.length === 0) {
+      return
+    }
+    this.tabs = data.tabs.map(tab => ({
+      ...tab,
+      entries: tab.entries.map(entry => ({ ...entry })),
+      self: { ...tab.self }
+    }))
+    if (this.isContentReady) {
+      this.renderTab(Math.min(this.currentTabIndex, this.tabs.length - 1))
+    }
   }
 
   /** 打开前先以几乎不可见的透明度真实渲染数帧，避免头像纹理首帧显示成白块。 */
@@ -325,7 +330,7 @@ export class LeaderboardPopupController extends Component {
 
   private createTabs() {
     const xPositions = [-140, 140]
-    TABS.forEach((tab, index) => {
+    this.tabs.forEach((tab, index) => {
       const node = new Node(`Tab-${tab.id}`)
       node.setParent(this.node)
       node.setPosition(xPositions[index], 224, 0)
@@ -457,7 +462,7 @@ export class LeaderboardPopupController extends Component {
     )
     scoreLabel.isBold = true
 
-    return { avatar, name: nameLabel, score: scoreLabel }
+    return { node: row, rank: rankLabel, avatar, name: nameLabel, score: scoreLabel }
   }
 
   private createInviteButton() {
@@ -496,8 +501,11 @@ export class LeaderboardPopupController extends Component {
   }
 
   private renderTab(index: number) {
-    const tab = TABS[index] ?? TABS[0]
-    this.currentTabIndex = Math.max(0, TABS.indexOf(tab))
+    const tab = this.tabs[index] ?? this.tabs[0]
+    if (!tab) {
+      return
+    }
+    this.currentTabIndex = Math.max(0, this.tabs.indexOf(tab))
     this.tabViews.forEach((view, tabIndex) => {
       const selected = tabIndex === this.currentTabIndex
       this.applySpriteFrame(
@@ -512,7 +520,10 @@ export class LeaderboardPopupController extends Component {
     this.rowViews.forEach((row, rowIndex) => {
       const entry = tab.entries[rowIndex]
       if (entry) {
+        row.node.active = true
         this.renderRow(row, entry)
+      } else {
+        row.node.active = false
       }
     })
     if (this.selfRowView) {
@@ -520,7 +531,8 @@ export class LeaderboardPopupController extends Component {
     }
   }
 
-  private renderRow(view: RowView, entry: LeaderboardEntry) {
+  private renderRow(view: RowView, entry: LeaderboardViewEntry) {
+    view.rank.string = entry.rank === null ? '—' : `${entry.rank}`
     view.name.string = entry.name
     view.score.string = entry.score
     this.applySpriteFrame(

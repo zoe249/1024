@@ -19,6 +19,7 @@ import {
   type BoardConfig
 } from './BoardConfig'
 import { OngoingGameSession, type OngoingGameSnapshot } from './OngoingGameSession'
+import { PlayerSyncOutbox } from './online/sync/PlayerSyncOutbox'
 
 // 保留原有导入路径，避免首页和后续关卡入口因会话模块拆分而立即迁移。
 export { OngoingGameSession } from './OngoingGameSession'
@@ -238,6 +239,7 @@ export class PlayController extends Component {
   private swapDragState: SwapDragState | null = null
   // 技能库存和金币来自跨场景经济仓库，重开或返回首页都不会重置玩家资产。
   private readonly economy = PlayerEconomyStore.getInstance()
+  private readonly syncOutbox = PlayerSyncOutbox.getInstance()
   // 棋盘坐标和分数规则都交给独立模块，PlayController 保留对局流程调度。
   private readonly boardModel = new BoardModel()
   private boardGeometry: BoardGeometry | null = null
@@ -2777,6 +2779,7 @@ export class PlayController extends Component {
     const highestValue = this.scoreManager.getHighestPieceValue()
     this.gameOverCoinReward = this.calculateGameOverCoinReward(finalScore, highestValue)
     this.economy.addCoins(this.gameOverCoinReward)
+    this.syncOutbox.recordGameFinished(finalScore, highestValue)
     this.isSwapSkillActive = false
     this.isHammerSkillActive = false
     this.isBombSkillActive = false

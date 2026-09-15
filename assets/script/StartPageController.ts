@@ -21,12 +21,16 @@ import {
   view
 } from 'cc'
 import { HomeSwingAnimator } from './HomeSwingAnimator'
-import { LeaderboardPopupController } from './LeaderboardPopupController'
+import {
+  LeaderboardPopupController,
+  type LeaderboardViewData
+} from './ui/leaderboard/LeaderboardPopupController'
 
 const { ccclass, property } = _decorator
 
 type StartPageOptions = {
   onStartTap: () => void
+  onRankTap?: () => void
   onShareTap?: () => void
   onButtonClick?: () => void
   backgroundSpriteFrame?: SpriteFrame | null
@@ -92,6 +96,7 @@ const RANK_MASK_PAUSE_COLOR = new Color(0, 0, 0, 0)
 const HOMEPAGE_ART_ROOT = 'Homepage/'
 const HOMEPAGE_DESIGN_WIDTH = 750
 const HOMEPAGE_DESIGN_HEIGHT = 1625
+const LEADERBOARD_PREFAB_PATH = 'Leaderboard/LeaderboardPopup'
 
 const HomepageArtwork = {
   background: 'SwingV14/background-tree-branch',
@@ -168,6 +173,7 @@ export class StartPageController extends Component {
   private toastNodeRef: Node | null = null
 
   private startHandler: (() => void) | null = null
+  private rankHandler: (() => void) | null = null
   private shareHandler: (() => void) | null = null
   private buttonClickHandler: (() => void) | null = null
   private energyMoreHandler: (() => void) | null = null
@@ -183,6 +189,8 @@ export class StartPageController extends Component {
   private rankPanelNode: Node | null = null
   private rankCloseButtonNode: Node | null = null
   private leaderboardController: LeaderboardPopupController | null = null
+  private leaderboardLoadPromise: Promise<void> | null = null
+  private pendingLeaderboardData: LeaderboardViewData | null = null
   private rankPanelLayoutScale = 1
   private backgroundNode: Node | null = null
   private backgroundImageNode: Node | null = null
@@ -218,6 +226,7 @@ export class StartPageController extends Component {
 
   setup(options: StartPageOptions) {
     this.startHandler = options.onStartTap
+    this.rankHandler = options.onRankTap ?? null
     this.shareHandler = options.onShareTap ?? null
     this.buttonClickHandler = options.onButtonClick ?? null
     this.backgroundSpriteFrame = options.backgroundSpriteFrame ?? null
@@ -373,6 +382,55 @@ export class StartPageController extends Component {
     tween(this.rankPanelNode)
       .to(0.18, { scale: this.getRankPanelScale() }, { easing: 'backOut' })
       .start()
+  }
+
+  setLeaderboardData(data: LeaderboardViewData) {
+    this.pendingLeaderboardData = data
+    this.leaderboardController?.setData(data)
+  }
+
+  prepareRankModal(): Promise<void> {
+    if (this.leaderboardController?.isValid) {
+      return Promise.resolve()
+    }
+    if (this.leaderboardLoadPromise) {
+      return this.leaderboardLoadPromise
+    }
+    if (!this.rankMaskNode) {
+      return Promise.reject(new Error('排行榜遮罩未初始化'))
+    }
+
+    this.leaderboardLoadPromise = new Promise<void>((resolve, reject) => {
+      resources.load(LEADERBOARD_PREFAB_PATH, Prefab, (error, prefab) => {
+        if (error || !prefab || !this.node.isValid || !this.rankMaskNode?.isValid) {
+          this.leaderboardLoadPromise = null
+          reject(new Error('排行榜预制件加载失败'))
+          return
+        }
+        const panel = instantiate(prefab)
+        panel.setParent(this.rankMaskNode)
+        panel.setPosition(0, 0, 0)
+        this.rankPanelNode = panel
+        this.bindSwallowTouch(panel)
+        const controller = panel.getComponent(LeaderboardPopupController)
+          ?? panel.addComponent(LeaderboardPopupController)
+        this.leaderboardController = controller
+        controller.setup({
+          onClose: () => this.hideRankModal(),
+          onInvite: () => this.shareHandler?.(),
+          onButtonClick: () => this.playButtonClickFeedback()
+        })
+        if (this.pendingLeaderboardData) {
+          controller.setData(this.pendingLeaderboardData)
+        }
+        const rootTransform = this.rootNode?.getComponent(UITransform)
+        if (rootTransform) {
+          this.layoutRankModal(rootTransform.width, rootTransform.height)
+        }
+        resolve()
+      })
+    })
+    return this.leaderboardLoadPromise
   }
 
   onDestroy() {
@@ -1702,19 +1760,8 @@ export class StartPageController extends Component {
     this.rankMaskNode = mask
     mask.addComponent(Graphics)
 
-    const panel = new Node('RankPanel')
-    panel.setParent(mask)
-    panel.addComponent(UITransform).setContentSize(720, 1240)
-    this.bindSwallowTouch(panel)
-    this.rankPanelNode = panel
-
-    const leaderboard = panel.addComponent(LeaderboardPopupController)
-    this.leaderboardController = leaderboard
-    leaderboard.setup({
-      onClose: () => this.hideRankModal(),
-      onInvite: () => this.showToast('邀请好友功能暂未接入'),
-      onButtonClick: () => this.playButtonClickFeedback()
-    })
+    // 面板本体由 Prefab 维护；这里只创建与首页尺寸绑定的全屏遮罩。
+    void this.prepareRankModal().catch(error => console.warn('排行榜预制件预加载失败', error))
   }
 
   private buildToast(parent: Node) {
@@ -2007,8 +2054,7 @@ export class StartPageController extends Component {
 
   private handleRankTap(event: EventTouch) {
     event.propagationStopped = true
-    // 排行榜数据尚未接入，入口先保留并给出统一提示，后续只需恢复弹窗调用即可。
-    this.showToast('敬请期待')
+    this.rankHandler?.()
   }
 
   private handleRankCloseTap(event: EventTouch) {

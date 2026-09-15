@@ -1,5 +1,6 @@
 import { sys } from 'cc'
 import type { SkillCounts, SkillKind } from './SkillStock'
+import { PlayerSyncOutbox } from './online/sync/PlayerSyncOutbox'
 
 export type ShareRewardKind = 'coins' | 'energy'
 
@@ -30,6 +31,20 @@ export type SkillPurchaseResult = {
   price: number
   balance: number
   reason: 'purchased' | 'insufficient-coins' | 'max-reached'
+}
+
+export type CloudEconomySnapshot = {
+  energy: number
+  maxEnergy: number
+  coins: number
+  skills: SkillCounts
+  lastEnergyRecoveryAt: string
+}
+
+export type CloudCheckInSnapshot = {
+  lastCheckInDate: string | null
+  consecutiveDays: number
+  claimedDates: string[]
 }
 
 // 所有经济数值集中在这里，策划调参时不需要进入首页或玩法流程代码。
@@ -69,6 +84,7 @@ const STORAGE_KEY = 'number-garden-player-economy-v1'
 export class PlayerEconomyStore {
   private static instance: PlayerEconomyStore | null = null
   private state: PersistedEconomyState
+  private readonly syncOutbox = PlayerSyncOutbox.getInstance()
 
   static getInstance() {
     if (!this.instance) {
@@ -89,6 +105,45 @@ export class PlayerEconomyStore {
       coins: this.state.coins,
       skills: { ...this.state.skills }
     }
+  }
+
+  /** 首次上云只导出纯数据，服务端仍会重新校验范围和签到自然日。 */
+  getCloudSnapshot(): { economy: CloudEconomySnapshot; checkIn: CloudCheckInSnapshot } {
+    this.syncEnergyRecovery()
+    return {
+      economy: {
+        energy: this.state.energy,
+        maxEnergy: this.state.maxEnergy,
+        coins: this.state.coins,
+        skills: { ...this.state.skills },
+        lastEnergyRecoveryAt: new Date(this.state.lastEnergyRecoveryAtMs).toISOString()
+      },
+      checkIn: {
+        lastCheckInDate: this.state.lastDailyLoginDate || null,
+        consecutiveDays: this.state.dailyLoginStreak,
+        claimedDates: this.state.lastDailyLoginDate ? [this.state.lastDailyLoginDate] : []
+      }
+    }
+  }
+
+  /** 云端响应成功后落入权威余额；调用过程不再生成新的同步操作。 */
+  applyCloudSnapshot(economy: CloudEconomySnapshot, checkIn: CloudCheckInSnapshot) {
+    const recoveryTime = new Date(economy.lastEnergyRecoveryAt).getTime()
+    this.state = {
+      version: 2,
+      energy: Math.min(ECONOMY_CONFIG.maxEnergy, Math.max(0, Math.floor(economy.energy))),
+      maxEnergy: ECONOMY_CONFIG.maxEnergy,
+      coins: Math.max(0, Math.floor(economy.coins)),
+      skills: {
+        bomb: this.clampSkillCount(economy.skills.bomb),
+        hammer: this.clampSkillCount(economy.skills.hammer),
+        swap: this.clampSkillCount(economy.skills.swap)
+      },
+      lastDailyLoginDate: checkIn.lastCheckInDate ?? '',
+      dailyLoginStreak: this.clampDailyLoginStreak(checkIn.consecutiveDays),
+      lastEnergyRecoveryAtMs: this.normalizeRecoveryTime(recoveryTime)
+    }
+    this.saveState()
   }
 
   /**
@@ -139,6 +194,7 @@ export class PlayerEconomyStore {
       this.state.coins = previousCoins
       return { claimed: false, amount: 0, reason: 'storage-failed' }
     }
+    this.syncOutbox.recordDailyCheckIn(this.state.lastDailyLoginDate)
     return {
       claimed: true,
       amount: rewardState.todayAmount,
@@ -168,6 +224,7 @@ export class PlayerEconomyStore {
       }
     }
     this.saveState()
+    this.syncOutbox.recordShareReward(kind)
     return { claimed: true, amount, reason: 'claimed' }
   }
 
@@ -202,6 +259,7 @@ export class PlayerEconomyStore {
       this.state.lastEnergyRecoveryAtMs = Date.now()
     }
     this.saveState()
+    this.syncOutbox.recordEnergyConsumed(cost)
     return true
   }
 
@@ -216,6 +274,7 @@ export class PlayerEconomyStore {
 
     this.state.skills[skill] -= 1
     this.saveState()
+    this.syncOutbox.recordSkillConsumed(skill)
     return true
   }
 
@@ -242,6 +301,7 @@ export class PlayerEconomyStore {
     this.state.coins -= price
     this.state.skills[skill] += 1
     this.saveState()
+    this.syncOutbox.recordSkillPurchased(skill)
     return {
       purchased: true,
       price,
