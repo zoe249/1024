@@ -1,6 +1,7 @@
 // baseURL 统一包含接口版本，业务方法只声明资源路径，避免调用处重复拼接 `/v1`。
 export const ONLINE_SERVICE_CONFIG = {
-  baseURL: 'https://leyian.online/v1',
+  // baseURL: 'https://leyian.online/v1',
+  baseURL: 'http://43.142.81.188/v1',
   requestTimeoutMs: 10_000
 } as const
 

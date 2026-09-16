@@ -1,4 +1,4 @@
-import { _decorator, AudioClip, CCInteger, Component, director, instantiate, Node, Prefab, SpriteFrame, UITransform } from 'cc'
+import { _decorator, AudioClip, CCInteger, Component, director, instantiate, Node, Prefab, resources, SpriteFrame, UITransform } from 'cc'
 import { StartPageController } from './StartPageController'
 import { GameAudioManager } from '../platform/GameAudioManager'
 import { GameFeedbackAdapter } from '../platform/GameFeedbackAdapter'
@@ -15,15 +15,18 @@ import { PlayerSessionStore } from '../online/auth/PlayerSessionStore'
 import { PlayerCloudSyncStore } from '../online/sync/PlayerCloudSyncStore'
 import { PlayerSyncOutbox } from '../online/sync/PlayerSyncOutbox'
 import { LoginStatusController } from '../online/auth/LoginStatusController'
+import { getAvatarKey } from '../profile/AvatarCatalog'
+import { PlayerProfileStore } from '../profile/PlayerProfileStore'
+import {
+  ProfilePopupController,
+  type ProfileViewState
+} from '../profile/ProfilePopupController'
 
 const { ccclass, property } = _decorator
 const HOME_RESOURCE_REFRESH_INTERVAL_SECONDS = 30
 // 切场景前给按钮 one-shot 留出起声时间，避免当前场景销毁时把点击反馈截断。
 const BUTTON_CLICK_SCENE_DELAY_SECONDS = 0.18
-const LEADERBOARD_AVATARS = [
-  'rabbit', 'fox', 'blue-bird', 'orange-cat', 'chick', 'turtle', 'deer',
-  'alpaca', 'squirrel', 'frog', 'hedgehog', 'raccoon'
-] as const
+const PROFILE_PREFAB_PATH = 'Profile/ProfilePopup'
 
 @ccclass('HomeSceneController')
 export class HomeSceneController extends Component {
@@ -107,11 +110,16 @@ export class HomeSceneController extends Component {
   private readonly feedbackAdapter = new GameFeedbackAdapter()
   private readonly economy = PlayerEconomyStore.getInstance()
   private readonly playerSession = PlayerSessionStore.getInstance()
+  private readonly playerProfile = PlayerProfileStore.getInstance()
   private readonly cloudSync = PlayerCloudSyncStore.getInstance()
   private readonly syncOutbox = PlayerSyncOutbox.getInstance()
   private loginStatusNode: Node | null = null
   private loginStatusController: LoginStatusController | null = null
   private isOpeningLeaderboard = false
+  private isOpeningProfile = false
+  private profileNode: Node | null = null
+  private profileController: ProfilePopupController | null = null
+  private profileLoadPromise: Promise<ProfilePopupController> | null = null
   private isLoadingGameScene = false
   private dailyRewardStateKey = ''
   private readonly refreshResourceTick = () => this.refreshPlayerResources()
@@ -137,7 +145,9 @@ export class HomeSceneController extends Component {
       onEnergyMoreTap: () => void this.shareForEnergyReward(),
       onSettingsTap: () => this.openHomeSettings(),
       onDailyRewardTap: () => this.openDailyReward(),
-      onShopTap: () => this.openSkillShop()
+      onShopTap: () => this.openSkillShop(),
+      onProfileTap: () => void this.openProfile(),
+      avatarIndex: this.playerProfile.getSnapshot()?.avatarIndex ?? 0
     })
   }
 
@@ -148,6 +158,7 @@ export class HomeSceneController extends Component {
     this.skillShopController?.syncLayout()
     this.dailyRewardController?.syncLayout()
     this.homeSettingsController?.syncLayout()
+    this.profileController?.syncLayout()
     this.audioManager?.playStartPageBackgroundMusic(this.getHomeBgmClip())
     this.schedule(this.refreshResourceTick, HOME_RESOURCE_REFRESH_INTERVAL_SECONDS)
     void this.restoreOnlineSession()
@@ -163,6 +174,9 @@ export class HomeSceneController extends Component {
     this.homeSettingsNode = null
     this.loginStatusController = null
     this.loginStatusNode = null
+    this.profileController = null
+    this.profileNode = null
+    this.profileLoadPromise = null
   }
 
   /** 已有凭证只做静默恢复；游客启动时绝不调用 wx.login。 */
@@ -178,6 +192,14 @@ export class HomeSceneController extends Component {
       }
     } catch (error) {
       console.info('后台恢复云同步暂未完成，将在打开排行榜时重试', this.describeOnlineError(error))
+    }
+    try {
+      const profile = await this.playerProfile.load(true)
+      if (this.node.isValid) {
+        this.startPageController?.renderProfileAvatar(profile.avatarIndex)
+      }
+    } catch (error) {
+      console.info('个人资料后台恢复暂未完成，将在打开个人中心时重试', this.describeOnlineError(error))
     }
   }
 
@@ -225,6 +247,107 @@ export class HomeSceneController extends Component {
     void this.openLeaderboard()
   }
 
+  private async openProfile() {
+    if (this.isOpeningProfile || this.isLoadingGameScene) {
+      return
+    }
+    this.isOpeningProfile = true
+    const status = this.ensureLoginStatus()
+    try {
+      if (this.playerSession.getSnapshot().status !== 'authenticated') {
+        status.showLoading('正在登录…')
+        await this.playerSession.loginInteractively(this.syncOutbox.getInstallationId())
+      }
+      status.showLoading('正在读取个人资料…')
+      await this.cloudSync.sync(this.economy)
+      const [controller, profile] = await Promise.all([
+        this.ensureProfilePopup(),
+        this.playerProfile.load(true)
+      ])
+      if (!this.node.isValid) {
+        return
+      }
+      this.refreshPlayerResources()
+      controller.renderState(this.buildProfileViewState(profile))
+      this.startPageController?.renderProfileAvatar(profile.avatarIndex)
+      status.hide()
+      controller.show()
+    } catch (error) {
+      if (!this.node.isValid) {
+        return
+      }
+      status.showFailure(this.describeOnlineError(error), () => void this.openProfile())
+    } finally {
+      this.isOpeningProfile = false
+    }
+  }
+
+  private ensureProfilePopup(): Promise<ProfilePopupController> {
+    if (this.profileController?.isValid && this.profileNode?.isValid) {
+      this.profileController.syncLayout()
+      return Promise.resolve(this.profileController)
+    }
+    if (this.profileLoadPromise) {
+      return this.profileLoadPromise
+    }
+    this.profileLoadPromise = new Promise<ProfilePopupController>((resolve, reject) => {
+      resources.load(PROFILE_PREFAB_PATH, Prefab, (error, prefab) => {
+        this.profileLoadPromise = null
+        if (error || !prefab || !this.node.isValid) {
+          reject(new Error('个人中心预制件加载失败'))
+          return
+        }
+        const node = instantiate(prefab)
+        node.setParent(this.node)
+        node.setPosition(0, 0, 0)
+        const controller = node.getComponent(ProfilePopupController)
+          ?? node.addComponent(ProfilePopupController)
+        controller.setup({
+          hostNode: this.node,
+          onClose: () => this.closeProfile(),
+          onAvatarSelect: avatarIndex => this.saveProfileAvatar(avatarIndex),
+          onDisplayNameSubmit: displayName => this.saveProfileDisplayName(displayName),
+          onButtonClick: () => this.playButtonClickFeedback()
+        })
+        this.profileNode = node
+        this.profileController = controller
+        resolve(controller)
+      })
+    })
+    return this.profileLoadPromise
+  }
+
+  private async saveProfileAvatar(avatarIndex: number) {
+    try {
+      const profile = await this.playerProfile.update({ avatarIndex })
+      this.profileController?.renderState(this.buildProfileViewState(profile))
+      this.startPageController?.renderProfileAvatar(profile.avatarIndex)
+    } catch (error) {
+      throw new Error(this.describeOnlineError(error))
+    }
+  }
+
+  private async saveProfileDisplayName(displayName: string) {
+    try {
+      const profile = await this.playerProfile.update({ displayName })
+      this.profileController?.renderState(this.buildProfileViewState(profile))
+    } catch (error) {
+      throw new Error(this.describeOnlineError(error))
+    }
+  }
+
+  private buildProfileViewState(profile: ProfileViewState): ProfileViewState {
+    return {
+      displayName: profile.displayName,
+      avatarIndex: profile.avatarIndex,
+      highestScore: profile.highestScore
+    }
+  }
+
+  private closeProfile() {
+    this.profileController?.hide()
+  }
+
   private ensureLoginStatus() {
     if (this.loginStatusNode?.isValid && this.loginStatusController?.isValid) {
       this.loginStatusController.syncLayout()
@@ -258,7 +381,7 @@ export class HomeSceneController extends Component {
       score: entry.value > 0
         ? isScore ? `${entry.value}分` : `合成 ${entry.value}`
         : '暂无成绩',
-      avatar: LEADERBOARD_AVATARS[entry.avatarIndex % LEADERBOARD_AVATARS.length] ?? 'raccoon'
+      avatar: getAvatarKey(entry.avatarIndex)
     }
   }
 
@@ -270,9 +393,9 @@ export class HomeSceneController extends Component {
       if (error.statusCode === 0) {
         return '网络异常，请稍后重试'
       }
-      return error.message || '排行榜加载失败，请稍后重试'
+      return error.message || '请求失败，请稍后重试'
     }
-    return error instanceof Error ? error.message : '排行榜加载失败，请稍后重试'
+    return error instanceof Error ? error.message : '请求失败，请稍后重试'
   }
 
   /**

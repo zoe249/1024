@@ -1,6 +1,6 @@
 import { getApiBaseUrl, ONLINE_SERVICE_CONFIG } from './OnlineServiceConfig'
 
-type HttpMethod = 'GET' | 'POST'
+type HttpMethod = 'GET' | 'POST' | 'PATCH'
 
 type WechatRequestApi = {
   request?: (options: {
@@ -47,6 +47,18 @@ export type LeaderboardBoardDto = {
 
 export type LeaderboardResponse = {
   boards: LeaderboardBoardDto[]
+}
+
+export type PlayerProfileResponse = {
+  playerId: string
+  displayName: string
+  avatarIndex: number
+  highestScore: number
+}
+
+export type UpdatePlayerProfileRequest = {
+  displayName?: string
+  avatarIndex?: number
 }
 
 export type SyncResponse<TSnapshot> = {
@@ -96,6 +108,14 @@ export class GameApiClient {
   getLeaderboard(limit = 7) {
     const safeLimit = Math.min(20, Math.max(1, Math.floor(limit)))
     return this.request<LeaderboardResponse>('GET', `/leaderboard?limit=${safeLimit}`, undefined, true)
+  }
+
+  getProfile() {
+    return this.request<PlayerProfileResponse>('GET', '/profile', undefined, true)
+  }
+
+  updateProfile(body: UpdatePlayerProfileRequest) {
+    return this.request<PlayerProfileResponse>('PATCH', '/profile', body, true)
   }
 
   private request<T>(method: HttpMethod, path: string, body?: unknown, requiresAuth = false): Promise<T> {

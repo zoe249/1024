@@ -36,6 +36,7 @@ npm run postbuild:wechat
 assets/prefab/                 棋子预制体
 assets/resources/Settings/     设置弹窗素材
 assets/resources/Leaderboard/  排行榜素材与 LeaderboardPopup Prefab
+assets/resources/Profile/      个人中心素材与 ProfilePopup Prefab
 assets/scence/                 游戏场景
 assets/script/home/            首页流程与首页 UI
 assets/script/gameplay/        棋盘、玩法流程与玩法 UI
@@ -47,6 +48,7 @@ assets/script/settlement/      单局结算功能及其 UI
 assets/script/tutorial/        新手引导功能及其 UI
 assets/script/loading/         加载场景
 assets/script/platform/        音频、分享与设备反馈适配
+assets/script/profile/         个人资料、头像编号映射与个人中心 UI
 assets/script/online/          接口、登录、云同步与排行榜
 tools/wechat-startup-page/     微信构建后处理
 ```
@@ -61,6 +63,7 @@ tools/wechat-startup-page/     微信构建后处理
 - `GameApiClient`：统一 `/v1` baseURL、超时、错误转换和 Bearer token 注入。
 - `PlayerSessionStore`：本地业务凭证、过期状态和登录并发去重。
 - `PlayerCloudSyncStore`：首次游客导入、增量操作队列和云端修订号同步。
+- `PlayerProfileStore`：读取和保存昵称、头像编号与最高分；头像编号统一映射项目内置资源。
 
 设置弹窗使用 `resources/Settings` 中的手绘素材，整体按 86% 等比显示；游戏内提供分享、重玩和返回。
 

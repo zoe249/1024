@@ -25,6 +25,7 @@ import {
   LeaderboardPopupController,
   type LeaderboardViewData
 } from '../online/leaderboard/LeaderboardPopupController'
+import { getAvatarSpritePath, normalizeAvatarIndex } from '../profile/AvatarCatalog'
 
 const { ccclass, property } = _decorator
 
@@ -45,6 +46,8 @@ type StartPageOptions = {
   onSettingsTap?: () => void
   onDailyRewardTap?: () => void
   onShopTap?: () => void
+  onProfileTap?: () => void
+  avatarIndex?: number
 }
 
 // 只读取首页胶囊避让所需字段，避免项目依赖额外的微信类型声明。
@@ -180,6 +183,8 @@ export class StartPageController extends Component {
   private settingsHandler: (() => void) | null = null
   private dailyRewardHandler: (() => void) | null = null
   private shopHandler: (() => void) | null = null
+  private profileHandler: (() => void) | null = null
+  private currentAvatarIndex = 0
   private currentCoins = 0
   private currentEnergy = 0
   private currentMaxEnergy = DEFAULT_MAX_ENERGY
@@ -221,6 +226,8 @@ export class StartPageController extends Component {
   private shopButtonNode: Node | null = null
   private coinResourceButtonNode: Node | null = null
   private staminaResourceButtonNode: Node | null = null
+  private profileButtonNode: Node | null = null
+  private profileAvatarSprite: Sprite | null = null
   private coinValueLabel: Label | null = null
   private staminaValueLabel: Label | null = null
 
@@ -237,6 +244,8 @@ export class StartPageController extends Component {
     this.settingsHandler = options.onSettingsTap ?? null
     this.dailyRewardHandler = options.onDailyRewardTap ?? null
     this.shopHandler = options.onShopTap ?? null
+    this.profileHandler = options.onProfileTap ?? null
+    this.currentAvatarIndex = normalizeAvatarIndex(options.avatarIndex ?? 0)
     this.currentCoins = Math.max(0, Math.floor(options.coins ?? 0))
     this.currentEnergy = Math.max(0, Math.floor(options.energy ?? 0))
     this.currentMaxEnergy = Math.max(1, Math.floor(options.maxEnergy ?? DEFAULT_MAX_ENERGY))
@@ -245,6 +254,7 @@ export class StartPageController extends Component {
       this.ensureEnergyBar(options.energyBarPrefab ?? null)
     }
     this.renderPlayerResources(options.energy ?? 0, options.maxEnergy ?? DEFAULT_MAX_ENERGY)
+    this.renderProfileAvatar(this.currentAvatarIndex)
     this.syncLayout()
     this.show()
   }
@@ -301,6 +311,21 @@ export class StartPageController extends Component {
     if (this.staminaValueLabel) {
       this.staminaValueLabel.string = `${this.currentEnergy}/${this.currentMaxEnergy}`
     }
+  }
+
+  /** 首页头像只保存编号，实际 SpriteFrame 始终通过统一头像目录映射加载。 */
+  public renderProfileAvatar(avatarIndex: number) {
+    this.currentAvatarIndex = normalizeAvatarIndex(avatarIndex)
+    const expectedIndex = this.currentAvatarIndex
+    resources.load(getAvatarSpritePath(expectedIndex), SpriteFrame, (error, spriteFrame) => {
+      if (
+        error || !spriteFrame || !this.profileAvatarSprite?.isValid ||
+        this.currentAvatarIndex !== expectedIndex
+      ) {
+        return
+      }
+      this.profileAvatarSprite.spriteFrame = spriteFrame
+    })
   }
 
   // 首页逻辑层统一通过这个入口展示领取、分享和体力不足提示。
@@ -441,6 +466,7 @@ export class StartPageController extends Component {
     this.unbindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
     this.unbindPressableButton(this.dailyRewardButtonNode, this.handleDailyRewardTap)
     this.unbindPressableButton(this.shopButtonNode, this.handleShopTap)
+    this.unbindPressableButton(this.profileButtonNode, this.handleProfileTap)
     this.unbindPressableButton(this.coinResourceButtonNode, this.handleCoinResourceTap)
     this.unbindPressableButton(this.staminaResourceButtonNode, this.handleEnergyMoreTap)
     this.unbindAmountBar(this.energyMoreButtonNode, this.handleEnergyMoreTap)
@@ -616,6 +642,7 @@ export class StartPageController extends Component {
       HomepageArtwork.stamina,
       true
     )
+    this.profileButtonNode = this.ensureProfileButton(this.homepageLayerNode)
 
     this.dailyRewardButtonNode = this.ensureHomepageButton(
       this.homepageLayerNode,
@@ -696,6 +723,31 @@ export class StartPageController extends Component {
       this.coinValueLabel = value
     }
     return bar
+  }
+
+  private ensureProfileButton(parent: Node) {
+    const button = this.getOrCreatePageNode(parent, 'ProfileButton')
+    button.active = true
+    ;(button.getComponent(UITransform) ?? button.addComponent(UITransform)).setContentSize(82, 82)
+    const frame = button.getComponent(Graphics) ?? button.addComponent(Graphics)
+    frame.clear()
+    frame.fillColor = new Color(255, 247, 218, 255)
+    frame.circle(0, 0, 40)
+    frame.fill()
+    frame.lineWidth = 4
+    frame.strokeColor = new Color(229, 91, 31, 255)
+    frame.circle(0, 0, 38)
+    frame.stroke()
+
+    const avatar = this.getOrCreatePageNode(button, 'Avatar')
+    avatar.setPosition(0, 0, 0)
+    ;(avatar.getComponent(UITransform) ?? avatar.addComponent(UITransform)).setContentSize(68, 68)
+    this.profileAvatarSprite = avatar.getComponent(Sprite) ?? avatar.addComponent(Sprite)
+    this.profileAvatarSprite.type = Sprite.Type.SIMPLE
+    this.profileAvatarSprite.sizeMode = Sprite.SizeMode.CUSTOM
+    this.profileAvatarSprite.trim = false
+    this.renderProfileAvatar(this.currentAvatarIndex)
+    return button
   }
 
   private ensureHomepageValueLabel(parent: Node, name: string, text: string) {
@@ -823,6 +875,7 @@ export class StartPageController extends Component {
     this.settingsButtonNode?.setPosition(-318, topControlsY, 0)
     this.coinResourceButtonNode?.setPosition(-164, topControlsY, 0)
     this.staminaResourceButtonNode?.setPosition(90, topControlsY, 0)
+    this.profileButtonNode?.setPosition(304, topControlsY - 104, 0)
     this.dailyRewardButtonNode?.setPosition(-294, -292 * verticalScale, 0)
     this.rankButtonNode?.setPosition(-294, -455 * verticalScale, 0)
     this.shopButtonNode?.setPosition(294, -292 * verticalScale, 0)
@@ -1215,6 +1268,7 @@ export class StartPageController extends Component {
     this.unbindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
     this.unbindPressableButton(this.dailyRewardButtonNode, this.handleDailyRewardTap)
     this.unbindPressableButton(this.shopButtonNode, this.handleShopTap)
+    this.unbindPressableButton(this.profileButtonNode, this.handleProfileTap)
     this.unbindPressableButton(this.coinResourceButtonNode, this.handleCoinResourceTap)
     this.unbindPressableButton(this.staminaResourceButtonNode, this.handleEnergyMoreTap)
     this.bindPressableButton(this.startButtonNode, this.handleStartTap)
@@ -1223,6 +1277,7 @@ export class StartPageController extends Component {
     this.bindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
     this.bindPressableButton(this.dailyRewardButtonNode, this.handleDailyRewardTap)
     this.bindPressableButton(this.shopButtonNode, this.handleShopTap)
+    this.bindPressableButton(this.profileButtonNode, this.handleProfileTap)
     this.bindPressableButton(this.coinResourceButtonNode, this.handleCoinResourceTap)
     this.bindPressableButton(this.staminaResourceButtonNode, this.handleEnergyMoreTap)
 
@@ -2081,6 +2136,11 @@ export class StartPageController extends Component {
   private handleShopTap(event: EventTouch) {
     event.propagationStopped = true
     this.shopHandler?.()
+  }
+
+  private handleProfileTap(event: EventTouch) {
+    event.propagationStopped = true
+    this.profileHandler?.()
   }
 
   private handleCoinResourceTap(event: EventTouch) {
