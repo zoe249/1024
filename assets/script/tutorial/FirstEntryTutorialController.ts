@@ -16,7 +16,7 @@ import {
   UITransform,
   Vec3
 } from 'cc'
-import { getBoardCellCenterOffset, getBoardGridSize, getBoardGridStep } from './BoardGeometry'
+import { getBoardCellCenterOffset, getBoardGridSize, getBoardGridStep } from '../gameplay/BoardGeometry'
 
 const { ccclass } = _decorator
 

@@ -15,8 +15,8 @@ import {
   UIOpacity,
   Vec3
 } from 'cc'
-import { ECONOMY_CONFIG, type EconomySnapshot } from './PlayerEconomyStore'
-import type { SkillKind } from './SkillStock'
+import { ECONOMY_CONFIG, type EconomySnapshot } from '../economy/PlayerEconomyStore'
+import type { SkillKind } from '../economy/SkillStock'
 
 const { ccclass, property } = _decorator
 

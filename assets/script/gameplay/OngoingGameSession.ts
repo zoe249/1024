@@ -1,4 +1,4 @@
-import type { SkillKind } from './SkillStock'
+import type { SkillKind } from '../economy/SkillStock'
 import {
   areBoardConfigsEqual,
   cloneBoardConfig,

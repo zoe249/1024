@@ -24,7 +24,7 @@ import { HomeSwingAnimator } from './HomeSwingAnimator'
 import {
   LeaderboardPopupController,
   type LeaderboardViewData
-} from './ui/leaderboard/LeaderboardPopupController'
+} from '../online/leaderboard/LeaderboardPopupController'
 
 const { ccclass, property } = _decorator
 

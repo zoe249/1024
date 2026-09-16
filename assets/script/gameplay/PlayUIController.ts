@@ -23,12 +23,12 @@
   Widget,
   sys
 } from 'cc'
-import { PauseOverlayController } from './PauseOverlayController'
-import { GameOverOverlayController } from './GameOverOverlayController'
+import { PauseOverlayController } from '../settings/PauseOverlayController'
+import { GameOverOverlayController } from '../settlement/GameOverOverlayController'
 import {
   FirstEntryTutorialController,
   type FirstEntryTutorialUIState
-} from './FirstEntryTutorialController'
+} from '../tutorial/FirstEntryTutorialController'
 import {
   getBoardCellCenterOffset,
   getBoardGridSize,

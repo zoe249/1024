@@ -1,6 +1,6 @@
 import { sys } from 'cc'
-import type { ShareRewardKind } from '../../PlayerEconomyStore'
-import type { SkillKind } from '../../SkillStock'
+import type { ShareRewardKind } from '../../economy/PlayerEconomyStore'
+import type { SkillKind } from '../../economy/SkillStock'
 
 export type SyncOperation = {
   operationId: string

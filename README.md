@@ -37,9 +37,17 @@ assets/prefab/                 棋子预制体
 assets/resources/Settings/     设置弹窗素材
 assets/resources/Leaderboard/  排行榜素材与 LeaderboardPopup Prefab
 assets/scence/                 游戏场景
-assets/script/online/          登录、接口与云同步
-assets/script/ui/              可复用 UI 控制器
-assets/script/                 玩法与场景流程脚本
+assets/script/home/            首页流程与首页 UI
+assets/script/gameplay/        棋盘、玩法流程与玩法 UI
+assets/script/economy/         金币、体力与技能库存
+assets/script/daily-reward/    每日奖励功能及其 UI
+assets/script/skill-shop/      技能商店功能及其 UI
+assets/script/settings/        设置与暂停功能及其 UI
+assets/script/settlement/      单局结算功能及其 UI
+assets/script/tutorial/        新手引导功能及其 UI
+assets/script/loading/         加载场景
+assets/script/platform/        音频、分享与设备反馈适配
+assets/script/online/          接口、登录、云同步与排行榜
 tools/wechat-startup-page/     微信构建后处理
 ```
 

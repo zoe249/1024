@@ -3,7 +3,7 @@ import {
   PlayerEconomyStore,
   type CloudCheckInSnapshot,
   type CloudEconomySnapshot
-} from '../../PlayerEconomyStore'
+} from '../../economy/PlayerEconomyStore'
 import { PlayerSessionStore } from '../auth/PlayerSessionStore'
 import { PlayerSyncOutbox } from './PlayerSyncOutbox'
 

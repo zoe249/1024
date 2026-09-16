@@ -15,7 +15,7 @@ import {
   UIOpacity,
   Vec3
 } from 'cc'
-import type { DailyRewardState } from './PlayerEconomyStore'
+import type { DailyRewardState } from '../economy/PlayerEconomyStore'
 
 const { ccclass, property } = _decorator
 

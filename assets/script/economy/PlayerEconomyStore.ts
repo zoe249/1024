@@ -1,6 +1,6 @@
 import { sys } from 'cc'
 import type { SkillCounts, SkillKind } from './SkillStock'
-import { PlayerSyncOutbox } from './online/sync/PlayerSyncOutbox'
+import { PlayerSyncOutbox } from '../online/sync/PlayerSyncOutbox'
 
 export type ShareRewardKind = 'coins' | 'energy'
 

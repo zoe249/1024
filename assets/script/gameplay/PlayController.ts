@@ -2,11 +2,11 @@
 import { PieceController } from './PieceController'
 import { AudioClip, director, resources, sys } from 'cc'
 import { PlayUIController, type PlayUIState } from './PlayUIController'
-import { GameAudioManager } from './GameAudioManager'
-import { GameShareAdapter } from './GameShareAdapter'
-import { GameFeedbackAdapter } from './GameFeedbackAdapter'
-import type { SkillKind } from './SkillStock'
-import { PlayerEconomyStore } from './PlayerEconomyStore'
+import { GameAudioManager } from '../platform/GameAudioManager'
+import { GameShareAdapter } from '../platform/GameShareAdapter'
+import { GameFeedbackAdapter } from '../platform/GameFeedbackAdapter'
+import type { SkillKind } from '../economy/SkillStock'
+import { PlayerEconomyStore } from '../economy/PlayerEconomyStore'
 import { BoardGeometry } from './BoardGeometry'
 import { ScoreManager, type ScoreRewardEvent } from './ScoreManager'
 import { BoardModel, type BoardCell } from './BoardModel'
@@ -19,7 +19,7 @@ import {
   type BoardConfig
 } from './BoardConfig'
 import { OngoingGameSession, type OngoingGameSnapshot } from './OngoingGameSession'
-import { PlayerSyncOutbox } from './online/sync/PlayerSyncOutbox'
+import { PlayerSyncOutbox } from '../online/sync/PlayerSyncOutbox'
 
 // 保留原有导入路径，避免首页和后续关卡入口因会话模块拆分而立即迁移。
 export { OngoingGameSession } from './OngoingGameSession'
