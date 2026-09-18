@@ -561,8 +561,8 @@ export class PauseOverlayController extends Component {
     if (this.isHomeMode) {
       this.moveNodeToContainer(this.shareButtonNode, this.utilityActionsNode)
       this.moveNodeToContainer(this.feedbackButtonNode, this.utilityActionsNode)
-      this.styleUtilityActionButton(this.shareButtonNode, SettingsArtwork.share, '分享好友', 64, 66)
-      this.styleUtilityActionButton(this.feedbackButtonNode, SettingsArtwork.feedback, '客服反馈', 68, 78)
+      this.styleUtilityActionButton(this.shareButtonNode, SettingsArtwork.share, '分享好友', 100, 100)
+      this.styleUtilityActionButton(this.feedbackButtonNode, SettingsArtwork.feedback, '客服反馈', 100, 100)
       return
     }
 

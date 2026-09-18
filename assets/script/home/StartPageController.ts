@@ -427,7 +427,7 @@ export class StartPageController extends Component {
 
     this.leaderboardLoadPromise = new Promise<void>((resolve, reject) => {
       resources.load(LEADERBOARD_PREFAB_PATH, Prefab, (error, prefab) => {
-        if (error || !prefab || !this.node.isValid || !this.rankMaskNode?.isValid) {
+        if (error || !prefab || !this.isValid || !this.node.isValid || !this.rankMaskNode?.isValid) {
           this.leaderboardLoadPromise = null
           reject(new Error('排行榜预制件加载失败'))
           return
@@ -460,21 +460,27 @@ export class StartPageController extends Component {
 
   onDestroy() {
     this.unscheduleAllCallbacks()
-    this.unbindPressableButton(this.startButtonNode, this.handleStartTap)
-    this.unbindPressableButton(this.rankButtonNode, this.handleRankTap)
-    this.unbindPressableButton(this.shareButtonNode, this.handleShareTap)
-    this.unbindPressableButton(this.settingsButtonNode, this.handleSettingsTap)
-    this.unbindPressableButton(this.dailyRewardButtonNode, this.handleDailyRewardTap)
-    this.unbindPressableButton(this.shopButtonNode, this.handleShopTap)
-    this.unbindPressableButton(this.profileButtonNode, this.handleProfileTap)
-    this.unbindPressableButton(this.coinResourceButtonNode, this.handleCoinResourceTap)
-    this.unbindPressableButton(this.staminaResourceButtonNode, this.handleEnergyMoreTap)
-    this.unbindAmountBar(this.energyMoreButtonNode, this.handleEnergyMoreTap)
-    this.safeOff(this.rankCloseButtonNode, Node.EventType.TOUCH_END, this.handleRankCloseTap)
-    this.safeOff(this.rankMaskNode, Node.EventType.TOUCH_END, this.hideRankModal)
-    this.safeOff(this.toastNode, Node.EventType.TOUCH_END, this.consumeTouch)
+    // 场景销毁时 Node 会自动释放事件。此阶段子节点可能已经进入销毁流程，
+    // 再逐个调用 off 会让微信运行时访问已释放的事件处理器。
+    this.startHandler = null
+    this.rankHandler = null
+    this.shareHandler = null
+    this.buttonClickHandler = null
+    this.energyMoreHandler = null
+    this.settingsHandler = null
+    this.dailyRewardHandler = null
+    this.shopHandler = null
+    this.profileHandler = null
+    this.leaderboardController = null
+    this.leaderboardLoadPromise = null
+    this.pendingLeaderboardData = null
+  }
+
+  onDisable() {
+    // onDisable 早于节点销毁，此时停止动画仍能安全访问完整层级。
+    this.unscheduleAllCallbacks()
     this.stopPageTweens()
-    if (this.tipOpacity) {
+    if (this.tipOpacity?.isValid) {
       Tween.stopAllByTarget(this.tipOpacity)
     }
   }

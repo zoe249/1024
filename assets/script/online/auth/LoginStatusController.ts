@@ -64,8 +64,11 @@ export class LoginStatusController extends Component {
   }
 
   onDestroy() {
-    this.retryButton?.off(Node.EventType.TOUCH_END, this.onRetryTap, this)
-    this.closeButton?.off(Node.EventType.TOUCH_END, this.onCloseTap, this)
+    // 节点销毁时引擎会自动清理事件。子按钮可能先于父控制器进入销毁流程，
+    // 此处不能再次调用 off，否则微信运行时会访问已释放的事件处理器。
+    this.messageLabel = null
+    this.retryButton = null
+    this.closeButton = null
     this.retryHandler = null
     this.closeHandler = null
   }

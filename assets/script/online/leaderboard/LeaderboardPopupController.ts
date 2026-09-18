@@ -2,8 +2,6 @@ import {
   _decorator,
   Color,
   Component,
-  director,
-  Director,
   EventTouch,
   Graphics,
   Label,
@@ -189,6 +187,21 @@ export class LeaderboardPopupController extends Component {
     this.cancelRevealSchedule()
   }
 
+  lateUpdate() {
+    if (this.warmupDrawsRemaining <= 0) {
+      return
+    }
+    if (this.isDisposed || !this.wantsVisible) {
+      this.cancelRevealSchedule()
+      return
+    }
+
+    this.warmupDrawsRemaining -= 1
+    if (this.warmupDrawsRemaining <= 0) {
+      this.revealContent()
+    }
+  }
+
   // 外层退场动画完成后再真正隐藏内容，避免下一次激活时闪出上一帧。
   hideContent() {
     this.prepareForHide()
@@ -243,25 +256,9 @@ export class LeaderboardPopupController extends Component {
       return
     }
 
-    // opacity=1 会进入渲染提交但肉眼不可见；按实际绘制次数计数，不依赖设备帧率。
+    // opacity=1 会进入渲染提交但肉眼不可见；组件自身逐帧计数，避免跨场景持有全局 director 监听。
     this.contentOpacity.opacity = 1
     this.warmupDrawsRemaining = TEXTURE_WARMUP_DRAW_COUNT
-    director.on(Director.EVENT_AFTER_DRAW, this.handleWarmupDraw, this)
-  }
-
-  private readonly handleWarmupDraw = () => {
-    if (this.isDisposed || !this.wantsVisible) {
-      this.cancelRevealSchedule()
-      return
-    }
-
-    this.warmupDrawsRemaining -= 1
-    if (this.warmupDrawsRemaining > 0) {
-      return
-    }
-
-    director.off(Director.EVENT_AFTER_DRAW, this.handleWarmupDraw, this)
-    this.revealContent()
   }
 
   private readonly revealContent = () => {
@@ -272,7 +269,6 @@ export class LeaderboardPopupController extends Component {
 
   private cancelRevealSchedule() {
     this.warmupDrawsRemaining = 0
-    director.off(Director.EVENT_AFTER_DRAW, this.handleWarmupDraw, this)
   }
 
   private preloadSpriteFrame(resourcePath: string) {

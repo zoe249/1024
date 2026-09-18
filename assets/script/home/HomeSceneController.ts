@@ -3,6 +3,10 @@ import { StartPageController } from './StartPageController'
 import { GameAudioManager } from '../platform/GameAudioManager'
 import { GameFeedbackAdapter } from '../platform/GameFeedbackAdapter'
 import { GameShareAdapter } from '../platform/GameShareAdapter'
+import {
+  WechatPrivacyAdapter,
+  WechatPrivacyAuthorizationError
+} from '../platform/WechatPrivacyAdapter'
 import { PauseOverlayController } from '../settings/PauseOverlayController'
 import { ECONOMY_CONFIG, PlayerEconomyStore } from '../economy/PlayerEconomyStore'
 import { SkillShopPopupController } from '../skill-shop/SkillShopPopupController'
@@ -108,6 +112,7 @@ export class HomeSceneController extends Component {
   private audioManager: GameAudioManager | null = null
   private readonly shareAdapter = new GameShareAdapter()
   private readonly feedbackAdapter = new GameFeedbackAdapter()
+  private readonly privacyAdapter = new WechatPrivacyAdapter()
   private readonly economy = PlayerEconomyStore.getInstance()
   private readonly playerSession = PlayerSessionStore.getInstance()
   private readonly playerProfile = PlayerProfileStore.getInstance()
@@ -182,12 +187,12 @@ export class HomeSceneController extends Component {
   /** 已有凭证只做静默恢复；游客启动时绝不调用 wx.login。 */
   private async restoreOnlineSession() {
     const session = await this.playerSession.restore()
-    if (session.status !== 'authenticated' || !this.node.isValid) {
+    if (session.status !== 'authenticated' || !this.isValid || !this.node.isValid) {
       return
     }
     try {
       await this.cloudSync.sync(this.economy)
-      if (this.node.isValid) {
+      if (this.isValid && this.node.isValid) {
         this.refreshPlayerResources()
       }
     } catch (error) {
@@ -195,7 +200,7 @@ export class HomeSceneController extends Component {
     }
     try {
       const profile = await this.playerProfile.load(true)
-      if (this.node.isValid) {
+      if (this.isValid && this.node.isValid) {
         this.startPageController?.renderProfileAvatar(profile.avatarIndex)
       }
     } catch (error) {
@@ -203,39 +208,40 @@ export class HomeSceneController extends Component {
     }
   }
 
-  /** 排行榜点击是首次微信登录的唯一触发点；登录、同步和取榜单共用一个去重流程。 */
+  /** 排行榜首次使用先完成微信隐私授权，再触发登录、同步和取榜单。 */
   private async openLeaderboard() {
     if (this.isOpeningLeaderboard || this.isLoadingGameScene) {
       return
     }
     this.isOpeningLeaderboard = true
-    const status = this.ensureLoginStatus()
     try {
+      await this.privacyAdapter.authorizeIfNeeded()
       if (this.playerSession.getSnapshot().status !== 'authenticated') {
-        status.showLoading('正在登录…')
         await this.playerSession.loginInteractively(this.syncOutbox.getInstallationId())
       }
-      status.showLoading('正在同步游戏数据…')
       await this.cloudSync.sync(this.economy)
       this.refreshPlayerResources()
-      status.showLoading('正在加载排行榜…')
       await this.startPageController?.prepareRankModal()
       const leaderboard = await this.playerSession.getApiClient().getLeaderboard()
-      if (!this.node.isValid) {
+      if (!this.isValid || !this.node.isValid) {
         return
       }
       this.startPageController?.setLeaderboardData({
         tabs: leaderboard.boards.map(board => this.buildLeaderboardTab(board))
       })
-      status.hide()
       this.startPageController?.showRankModal()
     } catch (error) {
-      if (!this.node.isValid) {
+      if (!this.isValid || !this.node.isValid) {
+        return
+      }
+      if (error instanceof WechatPrivacyAuthorizationError) {
+        this.startPageController?.showMessage(error.message)
         return
       }
       if (error instanceof ApiError && error.statusCode === 401) {
         this.playerSession.markUnauthorized()
       }
+      const status = this.ensureLoginStatus()
       status.showFailure(this.describeOnlineError(error), () => void this.retryLeaderboard())
     } finally {
       this.isOpeningLeaderboard = false
@@ -252,34 +258,42 @@ export class HomeSceneController extends Component {
       return
     }
     this.isOpeningProfile = true
-    const status = this.ensureLoginStatus()
     try {
+      await this.privacyAdapter.authorizeIfNeeded()
       if (this.playerSession.getSnapshot().status !== 'authenticated') {
-        status.showLoading('正在登录…')
         await this.playerSession.loginInteractively(this.syncOutbox.getInstallationId())
       }
-      status.showLoading('正在读取个人资料…')
       await this.cloudSync.sync(this.economy)
       const [controller, profile] = await Promise.all([
         this.ensureProfilePopup(),
         this.playerProfile.load(true)
       ])
-      if (!this.node.isValid) {
+      if (!this.isValid || !this.node.isValid) {
         return
       }
       this.refreshPlayerResources()
       controller.renderState(this.buildProfileViewState(profile))
       this.startPageController?.renderProfileAvatar(profile.avatarIndex)
-      status.hide()
+      this.loginStatusController?.hide()
       controller.show()
     } catch (error) {
-      if (!this.node.isValid) {
+      if (!this.isValid || !this.node.isValid) {
         return
       }
-      status.showFailure(this.describeOnlineError(error), () => void this.openProfile())
+      if (error instanceof WechatPrivacyAuthorizationError) {
+        this.startPageController?.showMessage(error.message)
+        return
+      }
+      const status = this.ensureLoginStatus()
+      status.showFailure(this.describeOnlineError(error), () => this.retryProfile())
     } finally {
       this.isOpeningProfile = false
     }
+  }
+
+  private retryProfile() {
+    this.loginStatusController?.hide()
+    void this.openProfile()
   }
 
   private ensureProfilePopup(): Promise<ProfilePopupController> {
@@ -293,7 +307,7 @@ export class HomeSceneController extends Component {
     this.profileLoadPromise = new Promise<ProfilePopupController>((resolve, reject) => {
       resources.load(PROFILE_PREFAB_PATH, Prefab, (error, prefab) => {
         this.profileLoadPromise = null
-        if (error || !prefab || !this.node.isValid) {
+        if (error || !prefab || !this.isValid || !this.node.isValid) {
           reject(new Error('个人中心预制件加载失败'))
           return
         }
@@ -539,7 +553,7 @@ export class HomeSceneController extends Component {
     }
 
     const result = await this.shareAdapter.shareReward('energy')
-    if (!this.node.isValid) {
+    if (!this.isValid || !this.node.isValid) {
       return
     }
     if (result === 'cancelled') {
@@ -602,7 +616,7 @@ export class HomeSceneController extends Component {
 
   private async openHomeFeedback() {
     const result = await this.feedbackAdapter.open('home_settings')
-    if (!this.node.isValid || result === 'opened') {
+    if (!this.isValid || !this.node.isValid || result === 'opened') {
       return
     }
     this.startPageController?.showMessage(

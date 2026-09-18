@@ -2,7 +2,6 @@ import {
   _decorator,
   Color,
   Component,
-  EditBox,
   EventTouch,
   Graphics,
   Label,
@@ -21,6 +20,7 @@ import {
   normalizeAvatarIndex,
   PLAYER_AVATAR_COUNT
 } from './AvatarCatalog'
+import { WechatNicknameAdapter } from '../platform/WechatNicknameAdapter'
 
 const { ccclass } = _decorator
 
@@ -41,7 +41,6 @@ type ProfilePopupOptions = {
 const PANEL_WIDTH = 620
 const PANEL_HEIGHT = 960
 const TEXT_COLOR = new Color(104, 49, 21, 255)
-const MUTED_TEXT_COLOR = new Color(139, 91, 48, 255)
 const CREAM = new Color(255, 249, 226, 255)
 const ORANGE = new Color(243, 92, 32, 255)
 const GREEN = new Color(75, 181, 71, 255)
@@ -61,7 +60,8 @@ export class ProfilePopupController extends Component {
   private panelNode: Node | null = null
   private contentOpacity: UIOpacity | null = null
   private currentAvatarSprite: Sprite | null = null
-  private displayNameEditBox: EditBox | null = null
+  private displayNameLabel: Label | null = null
+  private displayNameValueNode: Node | null = null
   private highestScoreLabel: Label | null = null
   private messageLabel: Label | null = null
   private avatarSprites: Sprite[] = []
@@ -70,6 +70,7 @@ export class ProfilePopupController extends Component {
   private avatarFrames: Array<SpriteFrame | null> = Array.from({ length: PLAYER_AVATAR_COUNT }, () => null)
   private selectedOverlayFrame: SpriteFrame | null = null
   private state: ProfileViewState = { displayName: '花园玩家', avatarIndex: 0, highestScore: 0 }
+  private readonly nicknameAdapter = new WechatNicknameAdapter()
   private isBusy = false
   private built = false
 
@@ -89,8 +90,8 @@ export class ProfilePopupController extends Component {
       avatarIndex: normalizeAvatarIndex(state.avatarIndex),
       highestScore: Math.max(0, Math.floor(state.highestScore))
     }
-    if (this.displayNameEditBox && this.displayNameEditBox.string !== this.state.displayName) {
-      this.displayNameEditBox.string = this.state.displayName
+    if (this.displayNameLabel) {
+      this.displayNameLabel.string = this.state.displayName
     }
     if (this.highestScoreLabel) {
       this.highestScoreLabel.string = this.state.highestScore.toLocaleString('zh-CN')
@@ -112,9 +113,13 @@ export class ProfilePopupController extends Component {
     this.panelNode.setScale(0.94, 0.94, 1)
     tween(this.contentOpacity).to(0.16, { opacity: 255 }).start()
     tween(this.panelNode).to(0.2, { scale: Vec3.ONE }, { easing: 'backOut' }).start()
+    this.unschedule(this.refreshWechatNicknameButton)
+    this.scheduleOnce(this.refreshWechatNicknameButton, 0.22)
   }
 
   hide() {
+    this.unschedule(this.refreshWechatNicknameButton)
+    this.nicknameAdapter.detach()
     if (!this.panelNode || !this.contentOpacity) {
       this.node.active = false
       return
@@ -168,15 +173,8 @@ export class ProfilePopupController extends Component {
   }
 
   onDestroy() {
-    this.node.off(Node.EventType.TOUCH_END, this.consumeTouch, this)
-    this.maskNode?.off(Node.EventType.TOUCH_END, this.handleMaskTap, this)
-    this.displayNameEditBox?.node.off(EditBox.EventType.EDITING_DID_ENDED, this.handleNameEditingEnded, this)
-    this.avatarSprites.forEach((sprite, index) => {
-      const handler = this.avatarTouchHandlers[index]
-      if (handler) {
-        sprite.node.parent?.off(Node.EventType.TOUCH_END, handler, this)
-      }
-    })
+    // 节点销毁时引擎会自动释放事件，避免再次访问已进入销毁流程的子节点。
+    this.nicknameAdapter.detach()
     if (this.panelNode) {
       Tween.stopAllByTarget(this.panelNode)
     }
@@ -210,15 +208,15 @@ export class ProfilePopupController extends Component {
     this.panelNode.on(Node.EventType.TOUCH_END, this.consumeTouch, this)
 
     const header = this.createSpriteNode(this.panelNode, 'Header', 390, 145, 0, 440)
-    const closeButton = this.createRoundButton(this.panelNode, 'CloseButton', 72, 274, 412)
-    this.createLabel(closeButton, 'Label', '×', 60, TEXT_COLOR, 0, 4, 70, 70)
+    const closeButton = this.createRoundButton(this.panelNode, 'CloseButton', 64, 252, 402)
+    this.createLabel(closeButton, 'Label', '×', 50, TEXT_COLOR, 0, 3, 60, 60)
     closeButton.on(Node.EventType.TOUCH_END, this.handleCloseTap, this)
 
     const currentAvatarRoot = this.createNode(this.panelNode, 'CurrentAvatar', 190, 190, -188, 276)
-    this.drawCircle(currentAvatarRoot, 92, new Color(255, 222, 154, 255))
-    this.currentAvatarSprite = this.createSpriteNode(currentAvatarRoot, 'Avatar', 170, 170, 0, 0)
+    this.drawCircle(currentAvatarRoot, 82, new Color(255, 222, 154, 255))
+    this.currentAvatarSprite = this.createSpriteNode(currentAvatarRoot, 'Avatar', 138, 138, 0, 0)
       .getComponent(Sprite)
-    const currentSelection = this.createSpriteNode(currentAvatarRoot, 'SelectedOverlay', 194, 194, 0, 0)
+    const currentSelection = this.createSpriteNode(currentAvatarRoot, 'SelectedOverlay', 174, 174, 0, 0)
     this.selectedOverlays.push(currentSelection)
 
     this.createInfoRow(this.panelNode, '昵称', 78, 306, true)
@@ -268,26 +266,23 @@ export class ProfilePopupController extends Component {
     valueGraphics.roundRect(-107.5, -31, 215, 62, 22)
     valueGraphics.fill()
     if (editable) {
-      this.displayNameEditBox = this.createEditBox(value)
+      this.displayNameValueNode = value
+      this.displayNameLabel = this.createLabel(
+        value,
+        'DisplayName',
+        this.state.displayName,
+        29,
+        TEXT_COLOR,
+        0,
+        0,
+        195,
+        58
+      )
+      value.on(Node.EventType.TOUCH_END, this.handleNameValueTap, this)
       return
     }
     this.highestScoreLabel = this.createLabel(value, 'Score', '0', 35, TEXT_COLOR, 0, 0, 205, 60)
     this.highestScoreLabel.isBold = true
-  }
-
-  private createEditBox(parent: Node) {
-    const editBox = parent.addComponent(EditBox)
-    editBox.maxLength = 16
-    editBox.inputMode = EditBox.InputMode.SINGLE_LINE
-    editBox.returnType = EditBox.KeyboardReturnType.DONE
-    const textLabel = this.createLabel(parent, 'Text', this.state.displayName, 29, TEXT_COLOR, 0, 0, 195, 58)
-    textLabel.horizontalAlign = Label.HorizontalAlign.CENTER
-    const placeholder = this.createLabel(parent, 'Placeholder', '输入昵称', 27, MUTED_TEXT_COLOR, 0, 0, 195, 58)
-    editBox.textLabel = textLabel
-    editBox.placeholderLabel = placeholder
-    editBox.string = this.state.displayName
-    editBox.node.on(EditBox.EventType.EDITING_DID_ENDED, this.handleNameEditingEnded, this)
-    return editBox
   }
 
   private buildAvatarGrid() {
@@ -306,12 +301,12 @@ export class ProfilePopupController extends Component {
         xPositions[column],
         -20 - row * 142
       )
-      this.drawCircle(item, 61, new Color(255, 232, 179, 255))
-      const sprite = this.createSpriteNode(item, 'Avatar', 112, 112, 0, 0).getComponent(Sprite)
+      this.drawCircle(item, 56, new Color(255, 232, 179, 255))
+      const sprite = this.createSpriteNode(item, 'Avatar', 92, 92, 0, 0).getComponent(Sprite)
       if (sprite) {
         this.avatarSprites.push(sprite)
       }
-      const overlay = this.createSpriteNode(item, 'SelectedOverlay', 130, 130, 0, 0)
+      const overlay = this.createSpriteNode(item, 'SelectedOverlay', 120, 120, 0, 0)
       this.selectedOverlays.push(overlay)
       const handler = (event: EventTouch) => {
         event.propagationStopped = true
@@ -397,32 +392,73 @@ export class ProfilePopupController extends Component {
     }
   }
 
-  private handleNameEditingEnded() {
-    void this.submitDisplayName()
+  private handleNameValueTap(event: EventTouch) {
+    event.propagationStopped = true
+    if (!this.nicknameAdapter.isSupported()) {
+      this.showMessage('请在微信小游戏中使用微信昵称')
+    }
   }
 
-  private async submitDisplayName() {
-    if (this.isBusy || !this.displayNameEditBox) {
+  private readonly refreshWechatNicknameButton = () => {
+    const hostTransform = this.hostNode?.getComponent(UITransform)
+      ?? this.node.parent?.getComponent(UITransform)
+    const valueTransform = this.displayNameValueNode?.getComponent(UITransform)
+    if (!hostTransform || !valueTransform || !this.panelNode || !this.displayNameValueNode) {
       return
     }
-    const nextName = this.displayNameEditBox.string.trim()
+
+    let centerX = 0
+    let centerY = 0
+    let current: Node | null = this.displayNameValueNode
+    while (current && current !== this.panelNode) {
+      centerX += current.position.x
+      centerY += current.position.y
+      current = current.parent
+    }
+    if (current !== this.panelNode) {
+      return
+    }
+
+    const panelScale = this.panelNode.scale.x
+    centerX = this.panelNode.position.x + centerX * panelScale
+    centerY = this.panelNode.position.y + centerY * panelScale
+    this.nicknameAdapter.attach(
+      {
+        canvasWidth: hostTransform.width,
+        canvasHeight: hostTransform.height,
+        centerX,
+        centerY,
+        width: valueTransform.width * panelScale,
+        height: valueTransform.height * panelScale
+      },
+      nickname => void this.applyWechatNickname(nickname),
+      message => this.showMessage(message)
+    )
+  }
+
+  private async applyWechatNickname(nickname: string) {
+    const nextName = nickname.trim()
+    if (this.isBusy || nextName === this.state.displayName) {
+      return
+    }
     if (!nextName || Array.from(nextName).length > 16) {
-      this.displayNameEditBox.string = this.state.displayName
-      this.showMessage('昵称需为 1～16 个字符')
+      this.showMessage('微信昵称需为 1～16 个字符')
       return
     }
-    if (nextName === this.state.displayName) {
-      return
-    }
+
     const previous = this.state.displayName
     this.isBusy = true
+    this.buttonClickHandler?.()
     try {
       await this.displayNameSubmitHandler?.(nextName)
       this.state.displayName = nextName
-      this.showMessage('昵称已保存', true)
+      if (this.displayNameLabel) {
+        this.displayNameLabel.string = nextName
+      }
+      this.showMessage('微信昵称已保存', true)
     } catch (error) {
-      this.displayNameEditBox.string = previous
-      this.showMessage(error instanceof Error ? error.message : '昵称保存失败')
+      this.state.displayName = previous
+      this.showMessage(error instanceof Error ? error.message : '微信昵称保存失败')
     } finally {
       this.isBusy = false
     }
