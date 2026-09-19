@@ -1,0 +1,4 @@
+interface:
+  display_name: "1024 奶油风 UI 素材"
+  short_description: "生成适配 1024 项目的轻量奶油风格游戏 UI 素材"
+  default_prompt: "使用 $cocos-cream-ui-assets 为 1024 项目生成并校验一组奶油风 UI 素材。"

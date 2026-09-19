@@ -42,16 +42,10 @@ type LeaderboardPopupOptions = {
   onButtonClick?: () => void
 }
 
-type TabView = {
-  node: Node
-  background: Sprite
-  label: Label
-  endHandler: (event: EventTouch) => void
-}
-
 type RowView = {
   node: Node
   rank: Label
+  showRank: boolean
   avatar: Sprite
   name: Label
   score: Label
@@ -61,8 +55,8 @@ const PANEL_WIDTH = 720
 const PANEL_HEIGHT = 1240
 const ROW_WIDTH = 610
 const ROW_HEIGHT = 76
-const ROW_START_Y = 140
-const ROW_STEP_Y = 74
+const ROW_START_Y = 165
+const ROW_STEP_Y = 78
 const TEXTURE_WARMUP_DRAW_COUNT = 2
 
 const BROWN = new Color(79, 46, 27, 255)
@@ -77,21 +71,12 @@ const DEFAULT_TABS: LeaderboardViewTab[] = [
     label: '最高分榜',
     entries: [],
     self: { rank: null, name: '我', score: '暂无成绩', avatar: 'raccoon' }
-  },
-  {
-    id: 'highestNumber',
-    label: '最高合成',
-    entries: [],
-    self: { rank: null, name: '我', score: '暂无成绩', avatar: 'raccoon' }
   }
 ]
 
 // 先一次性载入弹窗会用到的全部贴图，再显示内容，避免首开和切榜时出现白色头像占位。
 const LEADERBOARD_SPRITE_PATHS = [
   'Leaderboard/panel-background/spriteFrame',
-  'Leaderboard/header-leaderboard/spriteFrame',
-  'Leaderboard/tab-selected/spriteFrame',
-  'Leaderboard/tab-default/spriteFrame',
   'Leaderboard/row-gold/spriteFrame',
   'Leaderboard/row-silver/spriteFrame',
   'Leaderboard/row-bronze/spriteFrame',
@@ -121,7 +106,7 @@ const LEADERBOARD_SPRITE_PATHS = [
 /**
  * 排行榜 Prefab 的数据渲染控制器。
  *
- * 外层只传入真实榜单纯数据和操作回调；本组件负责资源预热、榜单切换与行渲染。
+ * 外层只传入真实榜单纯数据和操作回调；本组件负责资源预热与最高分榜渲染。
  */
 @ccclass('LeaderboardPopupController')
 export class LeaderboardPopupController extends Component {
@@ -131,8 +116,6 @@ export class LeaderboardPopupController extends Component {
   private closeButtonNode: Node | null = null
   private inviteButtonNode: Node | null = null
   private inviteButtonSprite: Sprite | null = null
-  private currentTabIndex = 0
-  private readonly tabViews: TabView[] = []
   private readonly rowViews: RowView[] = []
   private selfRowView: RowView | null = null
   private contentOpacity: UIOpacity | null = null
@@ -157,16 +140,19 @@ export class LeaderboardPopupController extends Component {
   }
 
   setData(data: LeaderboardViewData) {
-    if (data.tabs.length === 0) {
+    const scoreTab = data.tabs.find(tab => tab.id === 'score')
+    if (!scoreTab) {
       return
     }
-    this.tabs = data.tabs.map(tab => ({
-      ...tab,
-      entries: tab.entries.map(entry => ({ ...entry })),
-      self: { ...tab.self }
-    }))
+    this.tabs = [
+      {
+        ...scoreTab,
+        entries: scoreTab.entries.map(entry => ({ ...entry })),
+        self: { ...scoreTab.self }
+      }
+    ]
     if (this.isContentReady) {
-      this.renderTab(Math.min(this.currentTabIndex, this.tabs.length - 1))
+      this.renderScoreBoard()
     }
   }
 
@@ -216,7 +202,6 @@ export class LeaderboardPopupController extends Component {
     this.cancelRevealSchedule()
     // 节点销毁时引擎会自动清理事件。这里不再访问已经进入销毁流程的子节点，
     // 避免切换游戏场景时重复解绑导致 Node.off 空对象错误。
-    this.tabViews.length = 0
     this.rowViews.length = 0
     this.pendingSprites.clear()
     this.spriteResourcePaths.clear()
@@ -228,7 +213,7 @@ export class LeaderboardPopupController extends Component {
     this.contentOpacity = null
   }
 
-  /** 等待所有公共素材和两套榜单头像载入，再一次性创建并显示弹窗内容。 */
+  /** 等待所有公共素材和榜单头像载入，再一次性创建并显示弹窗内容。 */
   private async prepareContent() {
     if (!this.preloadPromise) {
       this.preloadPromise = Promise.all(
@@ -242,7 +227,7 @@ export class LeaderboardPopupController extends Component {
     }
 
     this.ensureStructure()
-    this.renderTab(0)
+    this.renderScoreBoard()
     this.isContentReady = true
     if (this.wantsVisible) {
       this.beginTextureWarmup()
@@ -304,51 +289,16 @@ export class LeaderboardPopupController extends Component {
       this.node,
       'PanelBackground',
       'Leaderboard/panel-background/spriteFrame',
-      680,
-      982,
+      720,
+      1160,
       0,
-      -70
+      0
     )
-    this.createTabs()
+    const title = this.createLabel(this.node, 'Title', '排行榜', 43, BROWN, 0, 268, 280, 60)
+    title.isBold = true
     this.createRows()
     this.createInviteButton()
-    this.createSpriteNode(
-      this.node,
-      'Header',
-      'Leaderboard/header-leaderboard/spriteFrame',
-      720,
-      356,
-      0,
-      450
-    )
     this.createCloseButton()
-  }
-
-  private createTabs() {
-    const xPositions = [-140, 140]
-    this.tabs.forEach((tab, index) => {
-      const node = new Node(`Tab-${tab.id}`)
-      node.setParent(this.node)
-      node.setPosition(xPositions[index], 224, 0)
-      node.addComponent(UITransform).setContentSize(254, 74)
-      const background = node.addComponent(Sprite)
-      this.configureSprite(background)
-      const label = this.createLabel(node, 'Label', tab.label, 25, BROWN, 0, 0, 220, 48)
-      label.isBold = true
-
-      const endHandler = (event: EventTouch) => {
-        event.propagationStopped = true
-        node.setScale(Vec3.ONE)
-        if (this.currentTabIndex !== index) {
-          this.buttonClickHandler?.()
-          this.renderTab(index)
-        }
-      }
-      node.on(Node.EventType.TOUCH_START, this.handlePressStart, this)
-      node.on(Node.EventType.TOUCH_CANCEL, this.handlePressCancel, this)
-      node.on(Node.EventType.TOUCH_END, endHandler, this)
-      this.tabViews.push({ node, background, label, endHandler })
-    })
   }
 
   private createRows() {
@@ -365,6 +315,7 @@ export class LeaderboardPopupController extends Component {
     row.setParent(this.node)
     row.setPosition(0, y, 0)
     row.addComponent(UITransform).setContentSize(ROW_WIDTH, ROW_HEIGHT)
+    const hasCrown = rank > 0 && rank <= 3
 
     const rowAsset = isSelf
       ? 'row-self'
@@ -385,7 +336,7 @@ export class LeaderboardPopupController extends Component {
       0
     )
 
-    if (rank > 0 && rank <= 3) {
+    if (hasCrown) {
       const medal = rank === 1 ? 'gold' : rank === 2 ? 'silver' : 'bronze'
       this.createSpriteNode(
         row,
@@ -401,7 +352,7 @@ export class LeaderboardPopupController extends Component {
     const rankLabel = this.createLabel(
       row,
       'Rank',
-      isSelf ? '—' : `${rank}`,
+      hasCrown ? '' : isSelf ? '—' : `${rank}`,
       21,
       isSelf ? CORAL : BROWN,
       -268,
@@ -458,7 +409,7 @@ export class LeaderboardPopupController extends Component {
     )
     scoreLabel.isBold = true
 
-    return { node: row, rank: rankLabel, avatar, name: nameLabel, score: scoreLabel }
+    return { node: row, rank: rankLabel, showRank: !hasCrown, avatar, name: nameLabel, score: scoreLabel }
   }
 
   private createInviteButton() {
@@ -466,14 +417,14 @@ export class LeaderboardPopupController extends Component {
       this.node,
       'InviteButton',
       'Leaderboard/button-invite/spriteFrame',
-      500,
-      114,
+      420,
+      96,
       0,
-      -548
+      -510
     )
     this.inviteButtonNode = result.node
     this.inviteButtonSprite = result.sprite
-    const label = this.createLabel(result.node, 'Label', '邀请好友挑战', 31, WHITE, 0, 1, 430, 64)
+    const label = this.createLabel(result.node, 'Label', '邀请好友挑战', 27, WHITE, 0, 1, 360, 54)
     label.isBold = true
     result.node.on(Node.EventType.TOUCH_START, this.handleInvitePressStart, this)
     result.node.on(Node.EventType.TOUCH_CANCEL, this.handleInvitePressCancel, this)
@@ -485,10 +436,10 @@ export class LeaderboardPopupController extends Component {
       this.node,
       'CloseButton',
       'Settings/button-close/spriteFrame',
-      70,
-      71,
-      310,
-      505
+      86,
+      88,
+      285,
+      285
     )
     this.closeButtonNode = result.node
     result.node.on(Node.EventType.TOUCH_START, this.handlePressStart, this)
@@ -496,22 +447,11 @@ export class LeaderboardPopupController extends Component {
     result.node.on(Node.EventType.TOUCH_END, this.handleCloseTap, this)
   }
 
-  private renderTab(index: number) {
-    const tab = this.tabs[index] ?? this.tabs[0]
+  private renderScoreBoard() {
+    const tab = this.tabs[0]
     if (!tab) {
       return
     }
-    this.currentTabIndex = Math.max(0, this.tabs.indexOf(tab))
-    this.tabViews.forEach((view, tabIndex) => {
-      const selected = tabIndex === this.currentTabIndex
-      this.applySpriteFrame(
-        view.background,
-        selected
-          ? 'Leaderboard/tab-selected/spriteFrame'
-          : 'Leaderboard/tab-default/spriteFrame'
-      )
-      view.label.color = selected ? WHITE : BROWN
-    })
 
     this.rowViews.forEach((row, rowIndex) => {
       const entry = tab.entries[rowIndex]
@@ -528,7 +468,7 @@ export class LeaderboardPopupController extends Component {
   }
 
   private renderRow(view: RowView, entry: LeaderboardViewEntry) {
-    view.rank.string = entry.rank === null ? '—' : `${entry.rank}`
+    view.rank.string = view.showRank ? entry.rank === null ? '—' : `${entry.rank}` : ''
     view.name.string = entry.name
     view.score.string = entry.score
     this.applySpriteFrame(
