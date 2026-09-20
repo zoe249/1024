@@ -23,8 +23,8 @@ class Profile:
 
 
 PROFILES = {
-    "rank-icon": Profile(88, 96, 16 * 1024, exact_size=(88, 96)),
-    "ui-icon": Profile(256, 256, 64 * 1024),
+    "rank-icon": Profile(256, 256, 100 * 1024, exact_size=(256, 256)),
+    "ui-icon": Profile(256, 256, 100 * 1024, exact_size=(256, 256)),
     "row-strip": Profile(650, 96, 32 * 1024, exact_size=(650, 96)),
     "button": Profile(640, 228, 96 * 1024),
     "panel": Profile(750, 1200, 256 * 1024),

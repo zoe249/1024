@@ -1,6 +1,6 @@
 ---
 name: cocos-cream-ui-assets
-description: 为 1024 Cocos Creator 项目生成、替换或优化奶油风格的 PNG UI 素材。当任务涉及弹窗背景、按钮、排行榜皇冠、功能图标、头部装饰或榜单行底图时使用；不用于场景插画、音频或玩法代码。
+description: 为 1024 Cocos Creator 项目生成、替换或优化统一奶油风格的轻量 PNG UI 素材。生成任何界面位图素材时都应使用本技能，不限于弹窗背景、按钮、排行榜皇冠、功能图标、头部装饰或榜单行底图；不用于场景插画、音频或玩法代码。
 ---
 
 # 1024 奶油风 UI 素材
@@ -11,6 +11,7 @@ description: 为 1024 Cocos Creator 项目生成、替换或优化奶油风格�
 
 ## 风格约束
 
+- 下列风格、像素、透明度和体积要求适用于所有新生成或优化的 UI 位图素材，不能只在弹窗背景、按钮、皇冠和功能图标上执行。
 - 使用温暖奶油白、蜂蜜金、珊瑚橙、柔和叶绿和深暖棕轮廓。建议基础色：`#FFF9ED`、`#F6B43A`、`#FF6848`、`#7DBD43`、`#62391F`。
 - 哑光手绘卡通、圆润轮廓、少量两段式色块阴影。禁止白色高光线、镜面反射、镜头光晕、重噪点和写实材质。
 - 白色内区必须干净：使用单一奶油色，Alpha 为 `255`；不允许渐变光圈、纸张纹理或多档半透明像素。
@@ -19,12 +20,11 @@ description: 为 1024 Cocos Creator 项目生成、替换或优化奶油风格�
 
 ## 像素与文件大小
 
-源图不得超过运行时显示尺寸的 2 倍。优先使用下表规格；“目标”是日常交付预算，“硬上限”不得超过。
+除固定为 `256×256` 的图标外，源图不得超过运行时显示尺寸的 2 倍。优先使用下表规格；“目标”是日常交付预算，“硬上限”不得超过。
 
 | 类型 | 源图像素 | 建议显示尺寸 | 目标体积 | 硬上限 |
 | --- | --- | --- | ---: | ---: |
-| 排名皇冠/微型图标 | `88×96` | `55×60` | 8 KB | 16 KB |
-| 普通功能图标 | 最大 `256×256` | `70–100 px` | 32 KB | 64 KB |
+| 图标（含排名皇冠、微型图标和功能图标） | 必须为 `256×256` | 按界面需要缩放 | 64 KB | 100 KB |
 | 榜单行底图 | `650×96` | `610×76` | 16 KB | 32 KB |
 | 横向按钮 | 最大 `640×228`，优先 `560×128` | 次按钮优先 `420×96` | 48 KB | 96 KB |
 | 弹窗背景 | 最大 `750×1200`，优先 `720×1040` | 宽度不超过 `720` | 160 KB | 256 KB |
@@ -34,8 +34,10 @@ description: 为 1024 Cocos Creator 项目生成、替换或优化奶油风格�
 
 ### 图标小尺寸规则
 
-- 画布和内容边界对齐整数像素；四周保留 `6%–10%` 透明安全边距。
-- `88×96` 的微型图标在源图上使用 `3–5 px` 深棕轮廓，缩小到 `55×60` 时仍保留至少 `2 px` 视觉轮廓。
+- 所有图标画布必须是方形，像素宽高必须为 `256×256`，单个文件不得超过 `100 KB`；排行榜皇冠、微型图标和功能图标均不例外。
+- 同组图标的主体最大边、透明安全边距和视觉重心应统一，不能只统一画布尺寸。以缩放后并排查看时的视觉重量一致为准，避免窄长图形显得明显更小或厚重图形显得明显更大。
+- 画布和内容边界对齐整数像素；通常四周保留 `6%–10%` 透明安全边距，并通过光学居中修正不对称轮廓。
+- 轮廓粗细应按实际显示尺寸设计，缩小后仍保留至少 `2 px` 的视觉轮廓。
 - 只保留一个主轮廓和最多两层内部色块；删除缩小后低于 `2 px` 的装饰。
 - 透明背景使用真实 Alpha，边缘不得带黑底、白边或未预乘杂色。
 
@@ -53,6 +55,7 @@ description: 为 1024 Cocos Creator 项目生成、替换或优化奶油风格�
 
 ```bash
 python3 Skills/cocos-cream-ui-assets/scripts/check_asset.py --profile rank-icon assets/resources/Leaderboard/medal-gold.png
+python3 Skills/cocos-cream-ui-assets/scripts/check_asset.py --profile ui-icon assets/resources/Skills/hammer.png
 python3 Skills/cocos-cream-ui-assets/scripts/check_asset.py --profile button assets/resources/Leaderboard/button-invite.png
 python3 Skills/cocos-cream-ui-assets/scripts/check_asset.py --profile panel assets/resources/Leaderboard/panel-background.png
 ```
