@@ -45,7 +45,8 @@ const PAUSE_UTILITY_BUTTON_HEIGHT = 90
 const PAUSE_GAME_ACTION_WIDTH = 170
 const PAUSE_GAME_ACTION_HEIGHT = 160
 const PAUSE_GAME_ACTION_ICON_SIZE = 128
-const PAUSE_REPLAY_ACTION_ICON_SIZE = 140
+// 重玩和返回素材主体更饱满，显示尺寸单独收小以统一三枚操作图标的视觉重量。
+const PAUSE_REPLAY_HOME_ACTION_ICON_SIZE = 100
 const PAUSE_CLOSE_ACCENT_WIDTH = 220
 const PAUSE_CLOSE_ACCENT_HEIGHT = 110
 // 滑块轨道略向右收窄，并把旋钮活动区内缩半个旋钮宽度，避免静音时压住左侧图标。
@@ -577,9 +578,14 @@ export class PauseOverlayController extends Component {
       this.replayButtonNode,
       SettingsArtwork.replay,
       '重玩',
-      PAUSE_REPLAY_ACTION_ICON_SIZE
+      PAUSE_REPLAY_HOME_ACTION_ICON_SIZE
     )
-    this.styleGameActionButton(this.homeButtonNode, SettingsArtwork.home, '返回')
+    this.styleGameActionButton(
+      this.homeButtonNode,
+      SettingsArtwork.home,
+      '返回',
+      PAUSE_REPLAY_HOME_ACTION_ICON_SIZE
+    )
   }
 
   // 图标是主要识别元素，文字只做简短补充；根节点保留较大的触摸区域。
