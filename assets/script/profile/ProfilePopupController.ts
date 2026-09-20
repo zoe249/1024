@@ -38,12 +38,17 @@ type ProfilePopupOptions = {
   onButtonClick?: () => void
 }
 
-const PANEL_WIDTH = 620
+const PANEL_WIDTH = 680
 const PANEL_HEIGHT = 960
+const PANEL_MAX_SCALE = 0.9
+const PANEL_SIDE_MARGIN = 32
 const TEXT_COLOR = new Color(104, 49, 21, 255)
+const MUTED_TEXT_COLOR = new Color(153, 111, 73, 255)
 const CREAM = new Color(255, 249, 226, 255)
 const ORANGE = new Color(243, 92, 32, 255)
 const GREEN = new Color(75, 181, 71, 255)
+const SOFT_GREEN = new Color(125, 189, 67, 255)
+const PALE_HONEY = new Color(255, 232, 181, 255)
 
 /**
  * 个人中心 Prefab 的渲染控制器。
@@ -58,10 +63,10 @@ export class ProfilePopupController extends Component {
   private buttonClickHandler: (() => void) | null = null
   private maskNode: Node | null = null
   private panelNode: Node | null = null
-  private contentOpacity: UIOpacity | null = null
   private currentAvatarSprite: Sprite | null = null
   private displayNameLabel: Label | null = null
   private displayNameValueNode: Node | null = null
+  private editPencilSprite: Sprite | null = null
   private highestScoreLabel: Label | null = null
   private messageLabel: Label | null = null
   private avatarSprites: Sprite[] = []
@@ -69,10 +74,14 @@ export class ProfilePopupController extends Component {
   private avatarTouchHandlers: Array<(event: EventTouch) => void> = []
   private avatarFrames: Array<SpriteFrame | null> = Array.from({ length: PLAYER_AVATAR_COUNT }, () => null)
   private selectedOverlayFrame: SpriteFrame | null = null
+  private artworkPromise: Promise<void> | null = null
   private state: ProfileViewState = { displayName: '花园玩家', avatarIndex: 0, highestScore: 0 }
   private readonly nicknameAdapter = new WechatNicknameAdapter()
   private isBusy = false
   private built = false
+  private wantsVisible = false
+  private visibilityRevision = 0
+  private panelLayoutScale = 1
 
   setup(options: ProfilePopupOptions) {
     this.hostNode = options.hostNode
@@ -102,39 +111,61 @@ export class ProfilePopupController extends Component {
   show() {
     this.ensureBuilt()
     this.syncLayout()
-    this.node.active = true
-    this.node.setSiblingIndex((this.node.parent?.children.length ?? 1) - 1)
-    if (!this.panelNode || !this.contentOpacity) {
-      return
-    }
-    Tween.stopAllByTarget(this.panelNode)
-    Tween.stopAllByTarget(this.contentOpacity)
-    this.contentOpacity.opacity = 0
-    this.panelNode.setScale(0.94, 0.94, 1)
-    tween(this.contentOpacity).to(0.16, { opacity: 255 }).start()
-    tween(this.panelNode).to(0.2, { scale: Vec3.ONE }, { easing: 'backOut' }).start()
-    this.unschedule(this.refreshWechatNicknameButton)
-    this.scheduleOnce(this.refreshWechatNicknameButton, 0.22)
+    this.wantsVisible = true
+    const revision = ++this.visibilityRevision
+    void this.revealWhenArtworkReady(revision)
   }
 
   hide() {
+    this.wantsVisible = false
+    this.visibilityRevision += 1
     this.unschedule(this.refreshWechatNicknameButton)
     this.nicknameAdapter.detach()
-    if (!this.panelNode || !this.contentOpacity) {
+    if (!this.panelNode || !this.node.active) {
       this.node.active = false
       return
     }
     Tween.stopAllByTarget(this.panelNode)
-    Tween.stopAllByTarget(this.contentOpacity)
-    tween(this.contentOpacity)
-      .to(0.14, { opacity: 0 })
+    tween(this.panelNode)
+      .to(
+        0.14,
+        { scale: new Vec3(this.panelLayoutScale * 0.96, this.panelLayoutScale * 0.96, 1) },
+        { easing: 'quadIn' }
+      )
       .call(() => {
         if (this.node.isValid) {
           this.node.active = false
         }
       })
       .start()
-    tween(this.panelNode).to(0.14, { scale: new Vec3(0.96, 0.96, 1) }).start()
+  }
+
+  /** 等全部贴图就绪后再统一激活面板，避免底框和头像分帧出现。 */
+  private async revealWhenArtworkReady(revision: number) {
+    await (this.artworkPromise ?? Promise.resolve())
+    if (
+      !this.node.isValid
+      || !this.panelNode
+      || !this.wantsVisible
+      || revision !== this.visibilityRevision
+    ) {
+      return
+    }
+
+    this.node.active = true
+    this.node.setSiblingIndex((this.node.parent?.children.length ?? 1) - 1)
+    Tween.stopAllByTarget(this.panelNode)
+    const startScale = this.panelLayoutScale * 0.94
+    this.panelNode.setScale(startScale, startScale, 1)
+    tween(this.panelNode)
+      .to(
+        0.2,
+        { scale: new Vec3(this.panelLayoutScale, this.panelLayoutScale, 1) },
+        { easing: 'backOut' }
+      )
+      .start()
+    this.unschedule(this.refreshWechatNicknameButton)
+    this.scheduleOnce(this.refreshWechatNicknameButton, 0.22)
   }
 
   showMessage(message: string, success = false) {
@@ -168,8 +199,12 @@ export class ProfilePopupController extends Component {
       maskGraphics.rect(-width / 2, -height / 2, width, height)
       maskGraphics.fill()
     }
-    const scale = Math.min(1, (width - 28) / PANEL_WIDTH, (height - 42) / PANEL_HEIGHT)
-    this.panelNode?.setScale(scale, scale, 1)
+    this.panelLayoutScale = Math.min(
+      PANEL_MAX_SCALE,
+      (width - PANEL_SIDE_MARGIN) / PANEL_WIDTH,
+      (height - 42) / PANEL_HEIGHT
+    )
+    this.panelNode?.setScale(this.panelLayoutScale, this.panelLayoutScale, 1)
   }
 
   onDestroy() {
@@ -178,9 +213,8 @@ export class ProfilePopupController extends Component {
     if (this.panelNode) {
       Tween.stopAllByTarget(this.panelNode)
     }
-    if (this.contentOpacity) {
-      Tween.stopAllByTarget(this.contentOpacity)
-    }
+    this.wantsVisible = false
+    this.visibilityRevision += 1
   }
 
   private ensureBuilt() {
@@ -189,7 +223,6 @@ export class ProfilePopupController extends Component {
     }
     this.built = true
     this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform)
-    this.contentOpacity = this.node.getComponent(UIOpacity) ?? this.node.addComponent(UIOpacity)
     this.node.on(Node.EventType.TOUCH_END, this.consumeTouch, this)
 
     this.maskNode = this.createNode(this.node, 'Mask', 750, 1334, 0, 0)
@@ -197,42 +230,40 @@ export class ProfilePopupController extends Component {
     this.maskNode.on(Node.EventType.TOUCH_END, this.handleMaskTap, this)
 
     this.panelNode = this.createNode(this.node, 'Panel', PANEL_WIDTH, PANEL_HEIGHT, 0, -10)
-    this.panelNode.addComponent(UIOpacity)
-    const panelFallback = this.panelNode.addComponent(Graphics)
-    panelFallback.fillColor = CREAM
-    panelFallback.roundRect(-PANEL_WIDTH / 2, -PANEL_HEIGHT / 2, PANEL_WIDTH, PANEL_HEIGHT, 46)
-    panelFallback.fill()
     const panelSprite = this.panelNode.addComponent(Sprite)
-    panelSprite.type = Sprite.Type.SLICED
+    panelSprite.type = Sprite.Type.SIMPLE
     panelSprite.sizeMode = Sprite.SizeMode.CUSTOM
+    panelSprite.trim = false
     this.panelNode.on(Node.EventType.TOUCH_END, this.consumeTouch, this)
 
-    const header = this.createSpriteNode(this.panelNode, 'Header', 390, 145, 0, 440)
-    const closeButton = this.createRoundButton(this.panelNode, 'CloseButton', 64, 252, 402)
-    this.createLabel(closeButton, 'Label', '×', 50, TEXT_COLOR, 0, 3, 60, 60)
+    this.createLabel(this.panelNode, 'Title', '个人中心', 46, TEXT_COLOR, 0, 390, 300, 82)
+    const closeButton = this.createSpriteNode(this.panelNode, 'CloseButton', 88, 90, 278, 382)
     closeButton.on(Node.EventType.TOUCH_END, this.handleCloseTap, this)
 
-    const currentAvatarRoot = this.createNode(this.panelNode, 'CurrentAvatar', 190, 190, -188, 276)
-    this.drawCircle(currentAvatarRoot, 82, new Color(255, 222, 154, 255))
-    this.currentAvatarSprite = this.createSpriteNode(currentAvatarRoot, 'Avatar', 138, 138, 0, 0)
+    const summaryCard = this.createNode(this.panelNode, 'ProfileSummary', 570, 220, 0, 236)
+    this.drawRoundedCard(summaryCard, 570, 220, new Color(255, 224, 157, 255), CREAM, 32, 6)
+
+    const currentAvatarRoot = this.createNode(summaryCard, 'CurrentAvatar', 168, 168, -202, 0)
+    this.drawCircle(currentAvatarRoot, 72, PALE_HONEY)
+    this.currentAvatarSprite = this.createSpriteNode(currentAvatarRoot, 'Avatar', 122, 122, 0, 0)
       .getComponent(Sprite)
-    const currentSelection = this.createSpriteNode(currentAvatarRoot, 'SelectedOverlay', 174, 174, 0, 0)
+    const currentSelection = this.createSpriteNode(currentAvatarRoot, 'SelectedOverlay', 154, 154, 0, 0)
     this.selectedOverlays.push(currentSelection)
 
-    this.createInfoRow(this.panelNode, '昵称', 78, 306, true)
-    this.createInfoRow(this.panelNode, '最高分', 78, 205, false)
+    this.createNicknameCard(summaryCard, 96, 42)
+    this.createScoreCard(summaryCard, 96, -54)
 
-    const separator = this.createNode(this.panelNode, 'Separator', 520, 6, 0, 127)
+    const separator = this.createNode(this.panelNode, 'Separator', 570, 6, 0, 82)
     const separatorGraphics = separator.addComponent(Graphics)
-    separatorGraphics.strokeColor = new Color(238, 193, 103, 210)
-    separatorGraphics.lineWidth = 3
-    for (let x = -250; x < 250; x += 22) {
-      separatorGraphics.moveTo(x, 0)
-      separatorGraphics.lineTo(Math.min(x + 11, 250), 0)
-    }
+    separatorGraphics.strokeColor = SOFT_GREEN
+    separatorGraphics.lineWidth = 2.5
+    separatorGraphics.moveTo(-275, 0)
+    separatorGraphics.lineTo(-112, 0)
+    separatorGraphics.moveTo(112, 0)
+    separatorGraphics.lineTo(275, 0)
     separatorGraphics.stroke()
 
-    this.createLabel(this.panelNode, 'AvatarTitle', '🍃  切换头像  🍃', 35, TEXT_COLOR, 0, 81, 420, 58)
+    this.createLabel(this.panelNode, 'AvatarTitle', '选择头像', 36, TEXT_COLOR, 0, 82, 220, 58)
     this.buildAvatarGrid()
     this.messageLabel = this.createLabel(
       this.panelNode,
@@ -247,41 +278,44 @@ export class ProfilePopupController extends Component {
     )
     this.messageLabel.node.addComponent(UIOpacity).opacity = 0
 
-    void this.loadArtwork(panelSprite, header.getComponent(Sprite))
+    this.artworkPromise = this.loadArtwork(panelSprite, closeButton.getComponent(Sprite))
     this.renderState(this.state)
     this.node.active = false
   }
 
-  private createInfoRow(parent: Node, title: string, x: number, y: number, editable: boolean) {
-    const row = this.createNode(parent, `${title}Row`, 360, 82, x, y)
-    const graphics = row.addComponent(Graphics)
-    graphics.fillColor = new Color(255, 232, 181, 218)
-    graphics.roundRect(-180, -41, 360, 82, 24)
-    graphics.fill()
-    this.createLabel(row, 'Title', title, 29, TEXT_COLOR, -105, 0, 115, 60)
+  private createNicknameCard(parent: Node, x: number, y: number) {
+    const row = this.createNode(parent, '昵称Row', 348, 90, x, y)
+    this.drawRoundedCard(row, 348, 90, PALE_HONEY, new Color(255, 242, 207, 255), 22, 0)
+    this.createLabel(row, 'Title', '昵称', 26, TEXT_COLOR, -120, 17, 76, 42)
 
-    const value = this.createNode(row, 'Value', 215, 62, 58, 0)
-    const valueGraphics = value.addComponent(Graphics)
-    valueGraphics.fillColor = new Color(255, 250, 231, 245)
-    valueGraphics.roundRect(-107.5, -31, 215, 62, 22)
-    valueGraphics.fill()
-    if (editable) {
-      this.displayNameValueNode = value
-      this.displayNameLabel = this.createLabel(
-        value,
-        'DisplayName',
-        this.state.displayName,
-        29,
-        TEXT_COLOR,
-        0,
-        0,
-        195,
-        58
-      )
-      value.on(Node.EventType.TOUCH_END, this.handleNameValueTap, this)
-      return
-    }
-    this.highestScoreLabel = this.createLabel(value, 'Score', '0', 35, TEXT_COLOR, 0, 0, 205, 60)
+    const value = this.createNode(row, 'Value', 214, 52, 53, 16)
+    this.drawRoundedCard(value, 214, 52, CREAM, CREAM, 18, 0)
+    this.displayNameLabel = this.createLabel(
+      value,
+      'DisplayName',
+      this.state.displayName,
+      26,
+      TEXT_COLOR,
+      -14,
+      0,
+      152,
+      46
+    )
+    this.editPencilSprite = this.createSpriteNode(value, 'EditPencil', 40, 40, 84, 0)
+      .getComponent(Sprite)
+    this.createLabel(row, 'Hint', '点击同步微信昵称', 17, MUTED_TEXT_COLOR, 48, -27, 230, 26)
+    this.displayNameValueNode = row
+    row.on(Node.EventType.TOUCH_END, this.handleNameValueTap, this)
+  }
+
+  private createScoreCard(parent: Node, x: number, y: number) {
+    const row = this.createNode(parent, '最高分Row', 348, 68, x, y)
+    this.drawRoundedCard(row, 348, 68, PALE_HONEY, PALE_HONEY, 21, 0)
+    this.createLabel(row, 'Title', '最高分', 26, TEXT_COLOR, -112, 0, 96, 52)
+
+    const value = this.createNode(row, 'Value', 214, 52, 53, 0)
+    this.drawRoundedCard(value, 214, 52, CREAM, CREAM, 18, 0)
+    this.highestScoreLabel = this.createLabel(value, 'Score', '0', 33, TEXT_COLOR, 0, 0, 196, 48)
     this.highestScoreLabel.isBold = true
   }
 
@@ -289,24 +323,24 @@ export class ProfilePopupController extends Component {
     if (!this.panelNode) {
       return
     }
-    const xPositions = [-222, -74, 74, 222]
+    const xPositions = [-210, -70, 70, 210]
     for (let index = 0; index < PLAYER_AVATAR_COUNT; index += 1) {
       const row = Math.floor(index / 4)
       const column = index % 4
       const item = this.createNode(
         this.panelNode,
         `AvatarOption${index}`,
-        126,
-        126,
+        118,
+        118,
         xPositions[column],
-        -20 - row * 142
+        -34 - row * 132
       )
-      this.drawCircle(item, 56, new Color(255, 232, 179, 255))
-      const sprite = this.createSpriteNode(item, 'Avatar', 92, 92, 0, 0).getComponent(Sprite)
+      this.drawCircle(item, 54, PALE_HONEY)
+      const sprite = this.createSpriteNode(item, 'Avatar', 86, 86, 0, 0).getComponent(Sprite)
       if (sprite) {
         this.avatarSprites.push(sprite)
       }
-      const overlay = this.createSpriteNode(item, 'SelectedOverlay', 120, 120, 0, 0)
+      const overlay = this.createSpriteNode(item, 'SelectedOverlay', 114, 114, 0, 0)
       this.selectedOverlays.push(overlay)
       const handler = (event: EventTouch) => {
         event.propagationStopped = true
@@ -317,10 +351,14 @@ export class ProfilePopupController extends Component {
     }
   }
 
-  private async loadArtwork(panelSprite: Sprite | null, headerSprite: Sprite | null) {
-    const [panelFrame, headerFrame, selectedFrame, ...avatarFrames] = await Promise.all([
+  private async loadArtwork(
+    panelSprite: Sprite | null,
+    closeSprite: Sprite | null
+  ) {
+    const [panelFrame, closeFrame, editPencilFrame, selectedFrame, ...avatarFrames] = await Promise.all([
       this.loadSpriteFrame('Profile/profile-panel-background/spriteFrame'),
-      this.loadSpriteFrame('Profile/header-profile/spriteFrame'),
+      this.loadSpriteFrame('Settings/button-close/spriteFrame'),
+      this.loadSpriteFrame('Profile/icon-edit-pencil/spriteFrame'),
       this.loadSpriteFrame('Profile/avatar-selected-overlay/spriteFrame'),
       ...Array.from({ length: PLAYER_AVATAR_COUNT }, (_, index) => this.loadSpriteFrame(getAvatarSpritePath(index)))
     ])
@@ -330,8 +368,11 @@ export class ProfilePopupController extends Component {
     if (panelSprite) {
       panelSprite.spriteFrame = panelFrame
     }
-    if (headerSprite) {
-      headerSprite.spriteFrame = headerFrame
+    if (closeSprite) {
+      closeSprite.spriteFrame = closeFrame
+    }
+    if (this.editPencilSprite) {
+      this.editPencilSprite.spriteFrame = editPencilFrame
     }
     this.selectedOverlayFrame = selectedFrame
     this.avatarFrames = avatarFrames
@@ -520,17 +561,31 @@ export class ProfilePopupController extends Component {
     return label
   }
 
-  private createRoundButton(parent: Node, name: string, size: number, x: number, y: number) {
-    const node = this.createNode(parent, name, size, size, x, y)
+  private drawRoundedCard(
+    node: Node,
+    width: number,
+    height: number,
+    borderColor: Color,
+    fillColor: Color,
+    radius: number,
+    borderWidth: number
+  ) {
     const graphics = node.addComponent(Graphics)
-    graphics.fillColor = CREAM
-    graphics.circle(0, 0, size / 2)
+    graphics.fillColor = borderColor
+    graphics.roundRect(-width * 0.5, -height * 0.5, width, height, radius)
     graphics.fill()
-    graphics.lineWidth = 5
-    graphics.strokeColor = ORANGE
-    graphics.circle(0, 0, size / 2 - 2.5)
-    graphics.stroke()
-    return node
+    if (borderWidth <= 0) {
+      return
+    }
+    graphics.fillColor = fillColor
+    graphics.roundRect(
+      -width * 0.5 + borderWidth,
+      -height * 0.5 + borderWidth,
+      width - borderWidth * 2,
+      height - borderWidth * 2,
+      Math.max(1, radius - borderWidth)
+    )
+    graphics.fill()
   }
 
   private drawCircle(node: Node, radius: number, color: Color) {
@@ -539,4 +594,5 @@ export class ProfilePopupController extends Component {
     graphics.circle(0, 0, radius)
     graphics.fill()
   }
+
 }
