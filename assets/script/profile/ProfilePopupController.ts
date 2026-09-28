@@ -265,6 +265,7 @@ export class ProfilePopupController extends Component {
 
     this.createLabel(this.panelNode, 'AvatarTitle', '选择头像', 36, TEXT_COLOR, 0, 82, 220, 58)
     this.buildAvatarGrid()
+    // 提示放在最后一排头像与面板底框之间，避免文字压住边框。
     this.messageLabel = this.createLabel(
       this.panelNode,
       'Message',
@@ -272,7 +273,7 @@ export class ProfilePopupController extends Component {
       24,
       ORANGE,
       0,
-      -438,
+      -390,
       500,
       40
     )
