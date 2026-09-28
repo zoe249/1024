@@ -9,8 +9,74 @@ const HOME_SHARE_MESSAGES = [
   '再玩一局就收手，真的',
 ] as const
 
+type WechatShareOptions = {
+  title: string
+  query?: string
+  imageUrl?: string
+  success?: () => void
+  fail?: (error: unknown) => void
+}
+
+type WechatShareApi = {
+  shareAppMessage?: (options: WechatShareOptions) => void
+  showShareMenu?: (options: {
+    withShareTicket: boolean
+    menus: string[]
+    fail?: (error: unknown) => void
+  }) => void
+  onShareAppMessage?: (callback: () => WechatShareOptions) => void
+  offShareAppMessage?: (callback: () => WechatShareOptions) => void
+  onShareTimeline?: (callback: () => WechatShareOptions) => void
+  offShareTimeline?: (callback: () => WechatShareOptions) => void
+  onShow?: (callback: () => void) => void
+  offShow?: (callback: () => void) => void
+}
+
 // 分享适配和玩法状态无关，单独放在这里方便后续替换微信或 Web 分享实现。
 export class GameShareAdapter {
+  private menuShareApi: WechatShareApi | null = null
+  private menuShareImageUrl: string | undefined
+  private readonly handleMenuShare = (): WechatShareOptions => ({
+    title: HOME_SHARE_MESSAGES[Math.floor(Math.random() * HOME_SHARE_MESSAGES.length)],
+    query: 'from=menu_share',
+    ...(this.menuShareImageUrl ? { imageUrl: this.menuShareImageUrl } : {})
+  })
+  private readonly handleTimelineShare = (): WechatShareOptions => ({
+    title: '1024 数字花园，来挑战一下吧',
+    query: 'from=timeline_share',
+    ...(this.menuShareImageUrl ? { imageUrl: this.menuShareImageUrl } : {})
+  })
+
+  // 微信小游戏的好友转发和朋友圈分享需要分别声明菜单入口与回调。
+  enableWechatShareMenu() {
+    const wxApi = (globalThis as { wx?: WechatShareApi }).wx
+    if (!wxApi || this.menuShareApi) {
+      return
+    }
+    if (typeof wxApi.onShareAppMessage === 'function') {
+      wxApi.onShareAppMessage(this.handleMenuShare)
+      this.menuShareApi = wxApi
+    }
+    if (typeof wxApi.onShareTimeline === 'function') {
+      wxApi.onShareTimeline(this.handleTimelineShare)
+      this.menuShareApi = wxApi
+    }
+    wxApi.showShareMenu?.({
+      withShareTicket: false,
+      menus: ['shareAppMessage', 'shareTimeline'],
+      fail: error => console.warn('微信分享菜单启用失败', error)
+    })
+    void this.loadWechatShareImageUrl().then(imageUrl => {
+      this.menuShareImageUrl = imageUrl
+    })
+  }
+
+  disableWechatShareMenu() {
+    this.menuShareApi?.offShareAppMessage?.(this.handleMenuShare)
+    this.menuShareApi?.offShareTimeline?.(this.handleTimelineShare)
+    this.menuShareApi = null
+  }
+
   shareScore(score: number, source: string) {
     return this.shareMessage(`我在 1024 数字花园合成了 ${score} 分，来挑战一下吧`, source)
   }
@@ -30,19 +96,7 @@ export class GameShareAdapter {
   }
 
   private shareMessage(message: string, source: string): Promise<ShareResult> {
-    const wxApi = (globalThis as {
-      wx?: {
-        shareAppMessage?: (options: {
-          title: string
-          query?: string
-          imageUrl?: string
-          success?: () => void
-          fail?: () => void
-        }) => void
-        onShow?: (callback: () => void) => void
-        offShow?: (callback: () => void) => void
-      }
-    }).wx
+    const wxApi = (globalThis as { wx?: WechatShareApi }).wx
 
     if (typeof wxApi?.shareAppMessage === 'function') {
       return this.loadWechatShareImageUrl().then(imageUrl =>
@@ -100,13 +154,7 @@ export class GameShareAdapter {
    */
   private shareWechatMessage(
     wxApi: {
-      shareAppMessage: (options: {
-        title: string
-        query?: string
-        imageUrl?: string
-        success?: () => void
-        fail?: () => void
-      }) => void
+      shareAppMessage: (options: WechatShareOptions) => void
       onShow?: (callback: () => void) => void
       offShow?: (callback: () => void) => void
     },
@@ -146,9 +194,13 @@ export class GameShareAdapter {
           ...(imageUrl ? { imageUrl } : {}),
           // 旧基础库仍可能回调 success/fail；有回调时优先收口，没有时使用 onShow 回流。
           success: () => finish('shared'),
-          fail: () => finish('cancelled')
+          fail: error => {
+            console.warn('微信分享失败', error)
+            finish('cancelled')
+          }
         })
-      } catch {
+      } catch (error) {
+        console.warn('微信分享调用异常', error)
         finish('cancelled')
       }
     })

@@ -130,6 +130,7 @@ export class HomeSceneController extends Component {
   private readonly refreshResourceTick = () => this.refreshPlayerResources()
 
   onLoad() {
+    this.shareAdapter.enableWechatShareMenu()
     this.audioManager = new GameAudioManager(this.node)
     this.audioManager.setup()
     const resources = this.economy.getSnapshot()
@@ -170,6 +171,7 @@ export class HomeSceneController extends Component {
   }
 
   onDestroy() {
+    this.shareAdapter.disableWechatShareMenu()
     this.unschedule(this.refreshResourceTick)
     this.skillShopController = null
     this.skillShopNode = null

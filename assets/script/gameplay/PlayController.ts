@@ -267,6 +267,7 @@ export class PlayController extends Component {
   private usedSkillsThisGame: Record<SkillKind, boolean> = this.createEmptySkillUsageState()
   // 生命周期入口：先准备棋盘数据，再把界面初始化交给独立的 UI 组件。
   onLoad() {
+    this.shareAdapter.enableWechatShareMenu()
     const ongoingSnapshot = OngoingGameSession.consumeSnapshot()
     if (!OngoingGameSession.hasActiveGame()) {
       // Creator 直接预览 game.scene 时沿用 Inspector 尺寸，便于直接验证 3×7 等关卡布局。
@@ -349,6 +350,7 @@ export class PlayController extends Component {
   }
 
   onDestroy() {
+    this.shareAdapter.disableWechatShareMenu()
     this.node.off(Node.EventType.TOUCH_START, this.handleTouchStart, this)
     this.node.off(Node.EventType.TOUCH_MOVE, this.handleTouchMove, this)
     this.node.off(Node.EventType.TOUCH_END, this.handleTouchEnd, this)
