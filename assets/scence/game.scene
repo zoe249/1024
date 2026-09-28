@@ -8508,15 +8508,15 @@
       "__expectedType__": "cc.SpriteFrame"
     },
     "gameOverReplayButtonSpriteFrame": {
-      "__uuid__": "9398946b-40c1-4f34-a1b4-4f0feaea4583@f9941",
+      "__uuid__": "2e2f210e-232a-4ad7-9caa-b01ce1b67500@f9941",
       "__expectedType__": "cc.SpriteFrame"
     },
     "gameOverHomeButtonSpriteFrame": {
-      "__uuid__": "13e809a2-c558-4209-8415-cab669075b2d@f9941",
+      "__uuid__": "710ece5a-13db-4fd2-89cd-461235a115ec@f9941",
       "__expectedType__": "cc.SpriteFrame"
     },
     "gameOverShareButtonSpriteFrame": {
-      "__uuid__": "eb3ce2ed-4faf-43d3-a45d-a2eb869d1ecc@f9941",
+      "__uuid__": "c0733c77-085e-4fea-af09-27de9d46313a@f9941",
       "__expectedType__": "cc.SpriteFrame"
     },
     "collisionAudioClip": {

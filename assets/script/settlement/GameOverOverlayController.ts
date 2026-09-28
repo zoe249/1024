@@ -26,28 +26,19 @@ const SETTLEMENT_EDGE_INSET = 20
 const SETTLEMENT_VERTICAL_INSET = 32
 const SETTLEMENT_ART_ROOT = 'Settlement/'
 const CELEBRATION_ART_ROOT = `${SETTLEMENT_ART_ROOT}Celebration/`
-const SETTINGS_ART_ROOT = 'Settings/'
 
 const ACTION_BUTTON_HEIGHT = 126
 const ACTION_ICON_BUTTON_WIDTH = 126
 const ACTION_SHARE_BUTTON_WIDTH = 316
 const ACTION_BUTTON_GAP = 18
-const ACTION_BUTTON_RADIUS = 42
-const ACTION_BUTTON_BORDER_WIDTH = 6
-const ACTION_BUTTON_SHADOW_OFFSET = 8
-const ACTION_BORDER_COLOR = new Color(88, 48, 23, 255)
-const ACTION_SHADOW_COLOR = new Color(66, 42, 24, 220)
 
 const SettlementArtwork = {
   header: 'victory-header',
   statistics: 'statistics-strip',
-  rewardCoin: 'reward-coin'
-} as const
-
-const ActionArtwork = {
-  home: `${SETTINGS_ART_ROOT}button-return-home`,
-  replay: `${SETTINGS_ART_ROOT}button-restart`,
-  share: `${SETTINGS_ART_ROOT}button-share-friend`
+  rewardCoin: 'reward-coin',
+  homeButton: 'button-home-v3',
+  replayButton: 'button-replay-v3',
+  shareButton: 'button-share-v3'
 } as const
 
 type GameOverOverlayOptions = {
@@ -56,7 +47,7 @@ type GameOverOverlayOptions = {
   homeHandler: (() => void) | null
   shareHandler: (() => void) | null
   onButtonClick?: () => void
-  // 旧资源参数只保留接口兼容；新结算页统一从 resources 下加载拆分素材。
+  // 结算按钮由场景直接引用 SpriteFrame，避免微信端首次展示时动态加载失败留下空按钮。
   popupSpriteFrame?: SpriteFrame | null
   replayButtonSpriteFrame?: SpriteFrame | null
   homeButtonSpriteFrame?: SpriteFrame | null
@@ -83,8 +74,13 @@ export class GameOverOverlayController extends Component {
   private replayHandler: (() => void) | null = null
   private shareHandler: (() => void) | null = null
   private buttonClickHandler: (() => void) | null = null
+  private homeButtonSpriteFrame: SpriteFrame | null = null
+  private replayButtonSpriteFrame: SpriteFrame | null = null
+  private shareButtonSpriteFrame: SpriteFrame | null = null
   private isVisible = false
   private contentLayoutScale = 1
+  private pendingArtworkLoads = 0
+  private showWhenArtworkReady = false
 
   setup(options: GameOverOverlayOptions) {
     this.hostNode = options.hostNode
@@ -92,6 +88,9 @@ export class GameOverOverlayController extends Component {
     this.replayHandler = options.replayHandler
     this.shareHandler = options.shareHandler
     this.buttonClickHandler = options.onButtonClick ?? null
+    this.homeButtonSpriteFrame = options.homeButtonSpriteFrame ?? null
+    this.replayButtonSpriteFrame = options.replayButtonSpriteFrame ?? null
+    this.shareButtonSpriteFrame = options.shareButtonSpriteFrame ?? null
     this.ensureOverlayStructure()
     this.bindTouchEvents()
     this.syncLayout()
@@ -137,6 +136,7 @@ export class GameOverOverlayController extends Component {
   }
 
   onDestroy() {
+    this.showWhenArtworkReady = false
     this.unbindSwallowNode(this.maskNode)
     this.unbindSwallowNode(this.contentNode)
     this.unbindButtonTouchEvents(this.homeButtonNode, this.onHomeButtonTap)
@@ -299,7 +299,7 @@ export class GameOverOverlayController extends Component {
     actions.setPosition(0, -455, 0)
     ;(actions.getComponent(UITransform) ?? actions.addComponent(UITransform)).setContentSize(700, 150)
 
-    // 首页和重玩用紧凑图标承载，分享保留文字并加宽，三项操作在同一行完成层级区分。
+    // 三个按钮各用一张完整素材，底色、图标和文字在图内统一完成。
     for (const child of actions.children) {
       child.active = false
     }
@@ -309,88 +309,45 @@ export class GameOverOverlayController extends Component {
     const replayX = rowStartX + ACTION_ICON_BUTTON_WIDTH + ACTION_BUTTON_GAP + ACTION_ICON_BUTTON_WIDTH * 0.5
     const shareX = rowStartX + ACTION_ICON_BUTTON_WIDTH * 2 + ACTION_BUTTON_GAP * 2 + ACTION_SHARE_BUTTON_WIDTH * 0.5
 
-    this.homeButtonNode = this.ensureIconActionButton(
+    this.homeButtonNode = this.ensureActionButton(
       actions,
       'HomeButton',
       homeX,
-      new Color(255, 247, 226, 255),
-      ActionArtwork.home
+      ACTION_ICON_BUTTON_WIDTH,
+      SettlementArtwork.homeButton,
+      this.homeButtonSpriteFrame
     )
-    this.continueButtonNode = this.ensureIconActionButton(
+    this.continueButtonNode = this.ensureActionButton(
       actions,
       'ReplayButton',
       replayX,
-      new Color(247, 77, 31, 255),
-      ActionArtwork.replay
+      ACTION_ICON_BUTTON_WIDTH,
+      SettlementArtwork.replayButton,
+      this.replayButtonSpriteFrame
     )
-    this.shareButtonNode = this.ensureShareActionButton(
+    this.shareButtonNode = this.ensureActionButton(
       actions,
       'ShareButton',
-      shareX
+      shareX,
+      ACTION_SHARE_BUTTON_WIDTH,
+      SettlementArtwork.shareButton,
+      this.shareButtonSpriteFrame
     )
   }
 
-  /** 图标按钮只承担单一动作，保留完整方形热区，避免去掉文字后变得难以点击。 */
-  private ensureIconActionButton(
+  /** 按钮根节点保持完整热区，单张透明贴图提供最终视觉。 */
+  private ensureActionButton(
     parent: Node,
     name: string,
     x: number,
-    fillColor: Color,
-    artwork: string
+    width: number,
+    artwork: string,
+    spriteFrame: SpriteFrame | null
   ) {
     const button = this.getOrCreateNode(parent, name)
     button.active = true
     button.setPosition(x, 0, 0)
-    ;(button.getComponent(UITransform) ?? button.addComponent(UITransform)).setContentSize(
-      ACTION_ICON_BUTTON_WIDTH,
-      ACTION_BUTTON_HEIGHT
-    )
-
-    this.clearLegacyButtonRenderers(button)
-    this.ensureActionButtonSurface(button, ACTION_ICON_BUTTON_WIDTH, fillColor)
-
-    const icon = this.getOrCreateNode(button, 'Icon')
-    icon.active = true
-    icon.setPosition(0, 4, 0)
-    this.applyResourceArtwork(icon, artwork, 76, 76)
-    return button
-  }
-
-  /** 分享是结算后的主传播入口，宽按钮同时保留图标和文字以强化可发现性。 */
-  private ensureShareActionButton(parent: Node, name: string, x: number) {
-    const button = this.getOrCreateNode(parent, name)
-    button.active = true
-    button.setPosition(x, 0, 0)
-    ;(button.getComponent(UITransform) ?? button.addComponent(UITransform)).setContentSize(
-      ACTION_SHARE_BUTTON_WIDTH,
-      ACTION_BUTTON_HEIGHT
-    )
-
-    this.clearLegacyButtonRenderers(button)
-    this.ensureActionButtonSurface(button, ACTION_SHARE_BUTTON_WIDTH, new Color(126, 184, 47, 255))
-
-    const icon = this.getOrCreateNode(button, 'Icon')
-    icon.active = true
-    icon.setPosition(-86, 3, 0)
-    this.applyResourceArtwork(icon, ActionArtwork.share, 66, 66)
-
-    this.ensureLabel(
-      button,
-      'Text',
-      '分享',
-      44,
-      Color.WHITE,
-      new Vec3(48, 1, 0),
-      150,
-      82,
-      true,
-      ACTION_BORDER_COLOR,
-      4
-    )
-    return button
-  }
-
-  private clearLegacyButtonRenderers(button: Node) {
+    ;(button.getComponent(UITransform) ?? button.addComponent(UITransform)).setContentSize(width, ACTION_BUTTON_HEIGHT)
     const background = button.getComponent(Graphics)
     if (background) {
       background.clear()
@@ -407,52 +364,25 @@ export class GameOverOverlayController extends Component {
     for (const child of button.children) {
       child.active = false
     }
-  }
-
-  private ensureActionButtonSurface(button: Node, width: number, fillColor: Color) {
-    const shadow = this.getOrCreateNode(button, 'Shadow')
-    shadow.active = true
-    shadow.setPosition(0, -ACTION_BUTTON_SHADOW_OFFSET, 0)
-    this.drawRoundedButtonLayer(shadow, width, ACTION_BUTTON_HEIGHT, ACTION_SHADOW_COLOR, false)
-
-    const surface = this.getOrCreateNode(button, 'Surface')
-    surface.active = true
-    surface.setPosition(0, 0, 0)
-    this.drawRoundedButtonLayer(surface, width, ACTION_BUTTON_HEIGHT, fillColor, true)
-
-    const highlight = this.getOrCreateNode(button, 'Highlight')
-    highlight.active = true
-    highlight.setPosition(0, ACTION_BUTTON_HEIGHT * 0.22, 0)
-    const highlightTransform = highlight.getComponent(UITransform) ?? highlight.addComponent(UITransform)
-    highlightTransform.setContentSize(width - 34, 18)
-    const highlightGraphics = highlight.getComponent(Graphics) ?? highlight.addComponent(Graphics)
-    highlightGraphics.enabled = true
-    highlightGraphics.clear()
-    highlightGraphics.fillColor = new Color(255, 255, 255, 48)
-    highlightGraphics.roundRect(-(width - 34) * 0.5, -9, width - 34, 18, 9)
-    highlightGraphics.fill()
-  }
-
-  private drawRoundedButtonLayer(
-    node: Node,
-    width: number,
-    height: number,
-    fillColor: Color,
-    drawBorder: boolean
-  ) {
-    ;(node.getComponent(UITransform) ?? node.addComponent(UITransform)).setContentSize(width, height)
-    const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics)
-    graphics.enabled = true
-    graphics.clear()
-    graphics.fillColor = fillColor
-    graphics.roundRect(-width * 0.5, -height * 0.5, width, height, ACTION_BUTTON_RADIUS)
-    graphics.fill()
-    if (drawBorder) {
-      graphics.lineWidth = ACTION_BUTTON_BORDER_WIDTH
-      graphics.strokeColor = ACTION_BORDER_COLOR
-      graphics.roundRect(-width * 0.5, -height * 0.5, width, height, ACTION_BUTTON_RADIUS)
-      graphics.stroke()
+    const artworkNode = this.getOrCreateNode(button, 'Artwork')
+    artworkNode.active = true
+    artworkNode.setPosition(0, 0, 0)
+    artworkNode.setSiblingIndex(button.children.length - 1)
+    if (spriteFrame) {
+      const transform = artworkNode.getComponent(UITransform) ?? artworkNode.addComponent(UITransform)
+      const sprite = artworkNode.getComponent(Sprite) ?? artworkNode.addComponent(Sprite)
+      sprite.enabled = true
+      sprite.sizeMode = Sprite.SizeMode.CUSTOM
+      sprite.type = Sprite.Type.SIMPLE
+      sprite.trim = false
+      sprite.color = Color.WHITE
+      sprite.spriteFrame = spriteFrame
+      // 贴图赋值可能将节点恢复到素材原尺寸，最后重设设计尺寸避免分享按钮盖住重玩按钮。
+      transform.setContentSize(width, ACTION_BUTTON_HEIGHT)
+    } else {
+      this.applyArtwork(artworkNode, artwork, width, ACTION_BUTTON_HEIGHT)
     }
+    return button
   }
 
   private applyArtwork(node: Node, artwork: string, width: number, height: number) {
@@ -469,13 +399,18 @@ export class GameOverOverlayController extends Component {
     sprite.trim = false
     sprite.color = Color.WHITE
 
+    this.pendingArtworkLoads += 1
     resources.load(`${resourcePath}/spriteFrame`, SpriteFrame, (error, spriteFrame) => {
       if (error || !spriteFrame || !this.canUseNode(node)) {
         console.warn(`[结算弹窗] 素材加载失败: ${resourcePath}`, error)
-        return
+      } else {
+        sprite.spriteFrame = spriteFrame
+        transform.setContentSize(width, height)
       }
-      sprite.spriteFrame = spriteFrame
-      transform.setContentSize(width, height)
+      this.pendingArtworkLoads = Math.max(0, this.pendingArtworkLoads - 1)
+      if (this.pendingArtworkLoads === 0 && this.showWhenArtworkReady) {
+        this.show()
+      }
     })
   }
 
@@ -747,6 +682,11 @@ export class GameOverOverlayController extends Component {
     if (!this.overlayOpacity) {
       return
     }
+    if (this.pendingArtworkLoads > 0) {
+      this.showWhenArtworkReady = true
+      return
+    }
+    this.showWhenArtworkReady = false
     if (this.isVisible) {
       this.node.active = true
       this.overlayOpacity.opacity = 255
@@ -763,6 +703,16 @@ export class GameOverOverlayController extends Component {
     if (this.contentNode) {
       Tween.stopAllByTarget(this.contentNode)
     }
+    for (const node of [this.rewardNode, this.actionsNode]) {
+      if (!node) {
+        continue
+      }
+      Tween.stopAllByTarget(node)
+      node.setScale(Vec3.ONE)
+      const opacity = node.getComponent(UIOpacity) ?? node.addComponent(UIOpacity)
+      Tween.stopAllByTarget(opacity)
+      opacity.opacity = 255
+    }
     tween(this.overlayOpacity).to(SETTLEMENT_ANIM_DURATION, { opacity: 255 }, { easing: 'quadOut' }).start()
     if (this.contentNode) {
       tween(this.contentNode)
@@ -774,20 +724,10 @@ export class GameOverOverlayController extends Component {
         .start()
     }
     this.playCelebrationAnimation()
-
-    for (const [node, delay] of [[this.rewardNode, 0.9], [this.actionsNode, 1.15]] as const) {
-      if (!node) {
-        continue
-      }
-      const opacity = node.getComponent(UIOpacity) ?? node.addComponent(UIOpacity)
-      opacity.opacity = 0
-      node.setScale(new Vec3(0.92, 0.92, 1))
-      tween(opacity).delay(delay).to(0.18, { opacity: 255 }, { easing: 'quadOut' }).start()
-      tween(node).delay(delay).to(0.22, { scale: Vec3.ONE }, { easing: 'backOut' }).start()
-    }
   }
 
   private hide() {
+    this.showWhenArtworkReady = false
     if (!this.overlayOpacity) {
       return
     }
