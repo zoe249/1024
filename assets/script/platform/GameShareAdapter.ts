@@ -2,12 +2,17 @@ import { ImageAsset, resources } from 'cc'
 
 export type ShareResult = 'shared' | 'cancelled' | 'unsupported'
 
-const WECHAT_SHARE_CARD_RESOURCE = 'Share/share-card-rabbit'
-const HOME_SHARE_MESSAGES = [
-  '看着挺简单，你来试试能合到几？',
-  '找到一个摸鱼小游戏，发你试试',
-  '再玩一局就收手，真的',
+const WECHAT_SHARE_CARDS = [
+  { resourcePath: 'Share/share-card-rabbit', title: '摸鱼呢，来合一局？' },
+  { resourcePath: 'Share/share-card-fox', title: '摸个鱼，还得算数。' },
+  // 沿用旧文件名，图片内容已更新为数字进阶卡。
+  { resourcePath: 'Share/share-card-bear', title: '说好只玩一局的……' },
 ] as const
+
+type LoadedShareCard = {
+  title: string
+  imageUrl: string
+}
 
 type WechatShareOptions = {
   title: string
@@ -35,17 +40,24 @@ type WechatShareApi = {
 // 分享适配和玩法状态无关，单独放在这里方便后续替换微信或 Web 分享实现。
 export class GameShareAdapter {
   private menuShareApi: WechatShareApi | null = null
-  private menuShareImageUrl: string | undefined
-  private readonly handleMenuShare = (): WechatShareOptions => ({
-    title: HOME_SHARE_MESSAGES[Math.floor(Math.random() * HOME_SHARE_MESSAGES.length)],
-    query: 'from=menu_share',
-    ...(this.menuShareImageUrl ? { imageUrl: this.menuShareImageUrl } : {})
-  })
-  private readonly handleTimelineShare = (): WechatShareOptions => ({
-    title: '1024 数字花园，来挑战一下吧',
-    query: 'from=timeline_share',
-    ...(this.menuShareImageUrl ? { imageUrl: this.menuShareImageUrl } : {})
-  })
+  private shareCards: LoadedShareCard[] = []
+  private shareCardsPromise: Promise<void> | null = null
+  private readonly handleMenuShare = (): WechatShareOptions => {
+    const card = this.pickWechatShareCard()
+    return {
+      title: card?.title ?? this.pickShareTitle(),
+      query: 'from=menu_share',
+      ...(card ? { imageUrl: card.imageUrl } : {})
+    }
+  }
+  private readonly handleTimelineShare = (): WechatShareOptions => {
+    const card = this.pickWechatShareCard()
+    return {
+      title: card?.title ?? this.pickShareTitle(),
+      query: 'from=timeline_share',
+      ...(card ? { imageUrl: card.imageUrl } : {})
+    }
+  }
 
   // 微信小游戏的好友转发和朋友圈分享需要分别声明菜单入口与回调。
   enableWechatShareMenu() {
@@ -66,9 +78,7 @@ export class GameShareAdapter {
       menus: ['shareAppMessage', 'shareTimeline'],
       fail: error => console.warn('微信分享菜单启用失败', error)
     })
-    void this.loadWechatShareImageUrl().then(imageUrl => {
-      this.menuShareImageUrl = imageUrl
-    })
+    void this.loadWechatShareCards()
   }
 
   disableWechatShareMenu() {
@@ -78,41 +88,43 @@ export class GameShareAdapter {
   }
 
   shareScore(score: number, source: string) {
-    return this.shareMessage(`我在 1024 数字花园合成了 ${score} 分，来挑战一下吧`, source)
+    return this.shareMessage(`摸鱼摸出 ${score} 分，谁来超我？`, source)
   }
 
-  // 每次首页分享时等概率随机选一句，允许连续抽到同一句。
+  // 首页分享同时选择图片和对应文案，避免分别随机后错配。
   shareStartPage(source: string) {
-    const message = HOME_SHARE_MESSAGES[Math.floor(Math.random() * HOME_SHARE_MESSAGES.length)]
-    return this.shareMessage(message, source)
+    return this.shareMessage(undefined, source)
   }
 
   // 资源奖励分享使用独立文案和来源标识，便于后续统计两种奖励入口。
   shareReward(kind: 'coins' | 'energy') {
     const message = kind === 'coins'
-      ? '分享 1024 数字花园，一起领取金币奖励吧'
-      : '分享 1024 数字花园，一起补充闯关体力吧'
+      ? '摸个鱼，顺手攒点金币。'
+      : '摸个鱼，顺手补点体力。'
     return this.shareMessage(message, `reward_${kind}`)
   }
 
-  private shareMessage(message: string, source: string): Promise<ShareResult> {
+  private shareMessage(message: string | undefined, source: string): Promise<ShareResult> {
     const wxApi = (globalThis as { wx?: WechatShareApi }).wx
 
     if (typeof wxApi?.shareAppMessage === 'function') {
-      return this.loadWechatShareImageUrl().then(imageUrl =>
-        this.shareWechatMessage(
+      const shareAppMessage = wxApi.shareAppMessage
+      return this.loadWechatShareCards().then(() => {
+        const card = this.pickWechatShareCard()
+        return this.shareWechatMessage(
           {
-            shareAppMessage: wxApi.shareAppMessage,
+            shareAppMessage,
             onShow: wxApi.onShow,
             offShow: wxApi.offShow
           },
-          message,
+          message ?? card?.title ?? this.pickShareTitle(),
           source,
-          imageUrl
+          card?.imageUrl
         )
-      )
+      })
     }
 
+    const shareText = message ?? this.pickShareTitle()
     const webNavigator = (globalThis as {
       navigator?: {
         share?: (data: { title: string; text: string }) => Promise<void>
@@ -120,30 +132,47 @@ export class GameShareAdapter {
     }).navigator
     if (typeof webNavigator?.share === 'function') {
       return webNavigator
-        .share({ title: '1024 数字花园', text: message })
+        .share({ title: '1024 数字花园', text: shareText })
         .then(() => 'shared' as const)
         .catch(() => 'cancelled' as const)
     }
 
-    console.info('当前平台暂未接入分享能力', message)
+    console.info('当前平台暂未接入分享能力', shareText)
     return Promise.resolve('unsupported')
   }
 
+  private pickShareTitle(): string {
+    return WECHAT_SHARE_CARDS[Math.floor(Math.random() * WECHAT_SHARE_CARDS.length)].title
+  }
+
+  private pickWechatShareCard(): LoadedShareCard | undefined {
+    const cards = this.shareCards
+    return cards.length > 0 ? cards[Math.floor(Math.random() * cards.length)] : undefined
+  }
+
   /**
-   * 从 resources 取得构建后的原生图片路径，避免依赖开发目录路径或构建产物哈希。
-   * 加载失败时返回 undefined，微信会继续使用默认分享图，不阻断分享流程。
+   * 从 resources 取得三张分享图的原生路径，并保留各自对应的文案。
+   * 单张加载失败时跳过，全部失败时由微信使用平台默认分享图。
    */
-  private loadWechatShareImageUrl(): Promise<string | undefined> {
-    return new Promise(resolve => {
-      resources.load(WECHAT_SHARE_CARD_RESOURCE, ImageAsset, (error, imageAsset) => {
-        if (error || !imageAsset.nativeUrl) {
-          console.warn('分享卡片加载失败，将使用平台默认分享图', error)
-          resolve(undefined)
-          return
-        }
-        resolve(imageAsset.nativeUrl)
+  private loadWechatShareCards(): Promise<void> {
+    if (this.shareCardsPromise) {
+      return this.shareCardsPromise
+    }
+    this.shareCardsPromise = Promise.all(WECHAT_SHARE_CARDS.map(card =>
+      new Promise<LoadedShareCard | undefined>(resolve => {
+        resources.load(card.resourcePath, ImageAsset, (error, imageAsset) => {
+          if (error || !imageAsset?.nativeUrl) {
+            console.warn('分享卡片加载失败，已跳过该图片', card.resourcePath, error)
+            resolve(undefined)
+            return
+          }
+          resolve({ title: card.title, imageUrl: imageAsset.nativeUrl })
+        })
       })
+    )).then(cards => {
+      this.shareCards = cards.filter((card): card is LoadedShareCard => !!card)
     })
+    return this.shareCardsPromise
   }
 
   /**
