@@ -5,7 +5,8 @@ import { PlayUIController, type PlayUIState } from './PlayUIController'
 import { GameAudioManager } from '../platform/GameAudioManager'
 import { GameShareAdapter } from '../platform/GameShareAdapter'
 import { GameFeedbackAdapter } from '../platform/GameFeedbackAdapter'
-import type { SkillKind } from '../economy/SkillStock'
+import { GameRewardedAdAdapter, type RewardedAdResult } from '../platform/GameRewardedAdAdapter'
+import type { SkillAdRewardState, SkillKind } from '../economy/SkillStock'
 import { PlayerEconomyStore } from '../economy/PlayerEconomyStore'
 import { BoardGeometry } from './BoardGeometry'
 import { ScoreManager, type ScoreRewardEvent } from './ScoreManager'
@@ -261,13 +262,19 @@ export class PlayController extends Component {
   private defaultGameOverAudioClip: AudioClip | null = null
   private readonly shareAdapter = new GameShareAdapter()
   private readonly feedbackAdapter = new GameFeedbackAdapter()
+  private readonly rewardedAdAdapter = new GameRewardedAdAdapter()
   // 本局结束时发放的金币数，只用于结算弹窗展示，重开或回首页后清零。
   private gameOverCoinReward = 0
-  // 每局每种技能最多成功使用一次；库存可以大于 1，但本局按钮会在使用后置灰。
+  // 首次成功使用消耗库存；广告奖励的第二次使用只在本局内扣除。
   private usedSkillsThisGame: Record<SkillKind, boolean> = this.createEmptySkillUsageState()
+  private skillAdRewards: Record<SkillKind, SkillAdRewardState> = this.createEmptySkillAdRewards()
+  // 独立于暂停弹窗冻结玩法，避免点击广告时弹出设置界面。
+  private skillAdLoading: SkillKind | null = null
+  private skillAdRequestVersion = 0
   // 生命周期入口：先准备棋盘数据，再把界面初始化交给独立的 UI 组件。
   onLoad() {
     this.shareAdapter.enableWechatShareMenu()
+    this.rewardedAdAdapter.initialize()
     const ongoingSnapshot = OngoingGameSession.consumeSnapshot()
     if (!OngoingGameSession.hasActiveGame()) {
       // Creator 直接预览 game.scene 时沿用 Inspector 尺寸，便于直接验证 3×7 等关卡布局。
@@ -351,6 +358,8 @@ export class PlayController extends Component {
 
   onDestroy() {
     this.shareAdapter.disableWechatShareMenu()
+    this.skillAdRequestVersion += 1
+    this.rewardedAdAdapter.dispose()
     this.node.off(Node.EventType.TOUCH_START, this.handleTouchStart, this)
     this.node.off(Node.EventType.TOUCH_MOVE, this.handleTouchMove, this)
     this.node.off(Node.EventType.TOUCH_END, this.handleTouchEnd, this)
@@ -475,7 +484,7 @@ export class PlayController extends Component {
       return
     }
 
-    if (!this.currentPiece || this.isGameOver || this.isResolving || this.isPaused) {
+    if (!this.currentPiece || this.isGameOver || this.isResolving || this.isPaused || this.skillAdLoading) {
       return
     }
 
@@ -523,6 +532,9 @@ export class PlayController extends Component {
   }
   // 触摸按下时确定列并开启快速下落
   private handleTouchStart(event: EventTouch) {
+    if (this.skillAdLoading) {
+      return
+    }
     if (this.isGameOver) {
       void this.restartGame()
       return
@@ -729,6 +741,9 @@ export class PlayController extends Component {
     this.scoreManager.reset()
     this.gameOverCoinReward = 0
     this.usedSkillsThisGame = this.createEmptySkillUsageState()
+    this.skillAdRewards = this.createEmptySkillAdRewards()
+    this.skillAdRequestVersion += 1
+    this.skillAdLoading = null
     this.currentColumn = Math.floor(this.boardwidth / 2)
     this.nextPieceValue = this.firstEntryTutorialStep > 0
       ? FIRST_ENTRY_TUTORIAL_PIECE_VALUE
@@ -747,7 +762,8 @@ export class PlayController extends Component {
       currentColumn: this.currentColumn,
       bonusScore: this.scoreManager.getBonusScore(),
       highestPieceValue: this.scoreManager.getHighestPieceValue(),
-      usedSkillsThisGame: { ...this.usedSkillsThisGame }
+      usedSkillsThisGame: { ...this.usedSkillsThisGame },
+      skillAdRewards: { ...this.skillAdRewards }
     }
   }
 
@@ -798,6 +814,12 @@ export class PlayController extends Component {
       bomb: !!snapshot.usedSkillsThisGame?.bomb,
       hammer: !!snapshot.usedSkillsThisGame?.hammer,
       swap: !!snapshot.usedSkillsThisGame?.swap
+    }
+    for (const skill of ['bomb', 'hammer', 'swap'] as const) {
+      const reward = snapshot.skillAdRewards?.[skill]
+      this.skillAdRewards[skill] = this.usedSkillsThisGame[skill] && (reward === 'ready' || reward === 'used')
+        ? reward
+        : 'unclaimed'
     }
     const requestedColumn = Math.max(0, Math.min(this.boardwidth - 1, Math.floor(snapshot.currentColumn)))
     const availableColumn = this.getNearestAvailableColumn(requestedColumn)
@@ -1165,7 +1187,7 @@ export class PlayController extends Component {
       this.animateSwapMove(targetPiece.node, this.getCellPosition(source.row, source.column), Vec3.ONE, 0.18)
     ])
 
-    if (this.findMergeGroups(sourcePiece).length === 0) {
+    if (this.findMergeGroups(sourcePiece).length === 0 || !this.consumeSkillUse('swap')) {
       this.playSoundEffect(this.swapRollbackAudioClip)
       await this.rollbackSwapSkill(dragState, target)
       this.restoreSwapPieceLayer(dragState)
@@ -1174,9 +1196,6 @@ export class PlayController extends Component {
       return
     }
 
-    if (this.economy.consumeSkill('swap')) {
-      this.markSkillUsedThisGame('swap')
-    }
     this.playSoundEffect(this.soundEffectClips.swapSkillAudioClip)
     this.refreshUiState()
     await this.settleBoard(sourcePiece)
@@ -1303,11 +1322,11 @@ export class PlayController extends Component {
 
   // 执行锤子技能：先把目标棋子从棋盘数组移除，再播放碎裂动画并进入现有结算流程。
   private async executeHammerSkill(target: CellPosition, piece: PieceController) {
+    if (!this.consumeSkillUse('hammer')) {
+      return
+    }
     this.isResolving = true
     this.board[target.row][target.column] = null
-    if (this.economy.consumeSkill('hammer')) {
-      this.markSkillUsedThisGame('hammer')
-    }
     this.playSoundEffect(this.soundEffectClips.hammerSkillAudioClip)
     this.refreshUiState()
 
@@ -1355,10 +1374,10 @@ export class PlayController extends Component {
       return
     }
 
-    this.isResolving = true
-    if (this.economy.consumeSkill('bomb')) {
-      this.markSkillUsedThisGame('bomb')
+    if (!this.consumeSkillUse('bomb')) {
+      return
     }
+    this.isResolving = true
     this.playSoundEffect(this.soundEffectClips.bombSkillAudioClip)
     this.refreshUiState()
     const centerPosition = this.getCellPosition(center.row, center.column)
@@ -2481,8 +2500,18 @@ export class PlayController extends Component {
       isResolving: this.isResolving,
       activeSkill: this.isBombSkillActive ? 'bomb' : this.isHammerSkillActive ? 'hammer' : this.isSwapSkillActive ? 'swap' : null,
       coins: economy.coins,
-      skillCounts: economy.skills,
+      skillCounts: {
+        bomb: this.getSkillRemainingCount('bomb'),
+        hammer: this.getSkillRemainingCount('hammer'),
+        swap: this.getSkillRemainingCount('swap')
+      },
       skillUsed: { ...this.usedSkillsThisGame },
+      skillAdAvailable: {
+        bomb: this.isSkillAdAvailable('bomb'),
+        hammer: this.isSkillAdAvailable('hammer'),
+        swap: this.isSkillAdAvailable('swap')
+      },
+      skillAdLoading: this.skillAdLoading,
       tutorial: {
         active: this.firstEntryTutorialStep > 0,
         awaitingTap: this.isTutorialAwaitingTap,
@@ -2506,7 +2535,7 @@ export class PlayController extends Component {
       return
     }
 
-    if (this.isResolving || this.isGameOver) {
+    if (this.isResolving || this.isGameOver || this.skillAdLoading) {
       return
     }
 
@@ -2526,7 +2555,7 @@ export class PlayController extends Component {
 
   // 暂停弹窗点击返回首页时先保存对局快照，再清理场景节点并加载首页。
   private returnToStartPageFromPause() {
-    if (!this.hasStartedSession) {
+    if (!this.hasStartedSession || this.skillAdLoading) {
       return
     }
 
@@ -2551,7 +2580,7 @@ export class PlayController extends Component {
 
   // 结算弹窗点击回首页时，本局已经结束，因此不保存进行中快照，也不消耗体力。
   private returnToStartPageFromGameOver() {
-    if (!this.hasStartedSession) {
+    if (!this.hasStartedSession || this.skillAdLoading) {
       return
     }
 
@@ -2651,7 +2680,7 @@ export class PlayController extends Component {
 
   // UI 层第三技能按钮通过这个入口切换交换技能，技能态只冻结下落，不打开暂停弹窗。
   private toggleSwapSkillFromUi() {
-    if (!this.hasStartedSession || this.firstEntryTutorialStep > 0) {
+    if (!this.hasStartedSession || this.firstEntryTutorialStep > 0 || this.skillAdLoading) {
       return
     }
 
@@ -2676,7 +2705,7 @@ export class PlayController extends Component {
 
   // UI 层第二技能按钮通过这个入口切换锤子技能，技能态只等待点选棋子。
   private toggleHammerSkillFromUi() {
-    if (!this.hasStartedSession || this.firstEntryTutorialStep > 0) {
+    if (!this.hasStartedSession || this.firstEntryTutorialStep > 0 || this.skillAdLoading) {
       return
     }
 
@@ -2701,7 +2730,7 @@ export class PlayController extends Component {
 
   // UI 层第一个技能按钮通过这个入口切换炸弹技能，等待玩家点选爆炸中心。
   private toggleBombSkillFromUi() {
-    if (!this.hasStartedSession || this.firstEntryTutorialStep > 0) {
+    if (!this.hasStartedSession || this.firstEntryTutorialStep > 0 || this.skillAdLoading) {
       return
     }
 
@@ -2736,25 +2765,78 @@ export class PlayController extends Component {
     this.refreshUiState()
   }
 
-  // 技能统一通过首页商店购买；对局中库存不足时只提示，不临时扣金币打断玩法节奏。
+  // 角标为广告时整张技能卡直接播放视频；播放结束后仍由玩家再次点击选择目标。
   private ensureSkillAvailable(skill: SkillKind) {
-    if (this.usedSkillsThisGame[skill]) {
-      const skillName = this.getSkillDisplayName(skill)
-      this.uiController?.showTransientMessage(`${skillName}本局已使用过`)
-      return false
-    }
-
-    if (this.economy.hasSkill(skill)) {
+    if (this.getSkillRemainingCount(skill) > 0) {
       return true
     }
-
-    const skillName = this.getSkillDisplayName(skill)
-    this.uiController?.showTransientMessage(`${skillName}数量不足，请在首页商店补充`)
+    if (this.isSkillAdAvailable(skill)) {
+      void this.watchSkillRewardedAd(skill)
+    }
     return false
   }
 
-  private markSkillUsedThisGame(skill: SkillKind) {
+  private getSkillRemainingCount(skill: SkillKind) {
+    if (!this.usedSkillsThisGame[skill]) {
+      return this.economy.hasSkill(skill) ? 1 : 0
+    }
+    return this.skillAdRewards[skill] === 'ready' ? 1 : 0
+  }
+
+  private isSkillAdAvailable(skill: SkillKind) {
+    return this.usedSkillsThisGame[skill] && this.skillAdRewards[skill] === 'unclaimed'
+  }
+
+  /** 只在有效施放时扣除对应次数，取消选中或交换回弹均不会消耗广告奖励。 */
+  private consumeSkillUse(skill: SkillKind) {
+    if (this.usedSkillsThisGame[skill]) {
+      if (this.skillAdRewards[skill] !== 'ready') {
+        return false
+      }
+      this.skillAdRewards[skill] = 'used'
+      return true
+    }
+    if (!this.economy.consumeSkill(skill)) {
+      return false
+    }
     this.usedSkillsThisGame[skill] = true
+    return true
+  }
+
+  /** 广告请求期间冻结下落和入口，完整观看只增加本局次数，不自动施放技能。 */
+  private async watchSkillRewardedAd(skill: SkillKind) {
+    if (this.skillAdLoading || !this.isSkillAdAvailable(skill)) {
+      return
+    }
+    const requestVersion = this.skillAdRequestVersion
+    const wasFastDropping = this.isFastDropping
+    this.skillAdLoading = skill
+    this.isFastDropping = false
+    this.audioManager?.pauseBackgroundMusic()
+    this.refreshUiState()
+
+    let result: RewardedAdResult = 'failed'
+    try {
+      result = await this.rewardedAdAdapter.show()
+    } catch (error) {
+      console.warn('[技能广告] 请求失败', error)
+    }
+    // 切场景、重开或销毁后的旧回调不能把奖励带入下一局。
+    if (!this.node.isValid || !this.hasStartedSession || requestVersion !== this.skillAdRequestVersion) {
+      return
+    }
+    if (result === 'completed' && this.isSkillAdAvailable(skill)) {
+      this.skillAdRewards[skill] = 'ready'
+    }
+    this.skillAdLoading = null
+    this.isFastDropping = wasFastDropping
+    this.trailTimer = 0
+    this.audioManager?.playGameplayBackgroundMusic(this.gameplayBgmClip)
+    this.refreshUiState()
+  }
+
+  private createEmptySkillAdRewards(): Record<SkillKind, SkillAdRewardState> {
+    return { bomb: 'unclaimed', hammer: 'unclaimed', swap: 'unclaimed' }
   }
 
   private createEmptySkillUsageState(): Record<SkillKind, boolean> {
@@ -2763,10 +2845,6 @@ export class PlayController extends Component {
       hammer: false,
       swap: false
     }
-  }
-
-  private getSkillDisplayName(skill: SkillKind) {
-    return skill === 'bomb' ? '炸弹' : skill === 'hammer' ? '锤子' : '交换'
   }
 
   // 进入游戏结束流程
@@ -2819,7 +2897,7 @@ export class PlayController extends Component {
   }
   // 重新开始游戏并清空棋盘
   private async restartGame() {
-    if (this.isResolving) {
+    if (this.isResolving || this.skillAdLoading) {
       return
     }
     if (!this.economy.tryConsumeEnergy()) {

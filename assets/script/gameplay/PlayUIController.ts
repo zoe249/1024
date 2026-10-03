@@ -6,14 +6,17 @@
   Component,
   EventTouch,
   Graphics,
+  ImageAsset,
   Label,
   LabelOutline,
   Node,
   Prefab,
   ResolutionPolicy,
+  resources,
   screen,
   Sprite,
   SpriteFrame,
+  Texture2D,
   tween,
   Tween,
   UIOpacity,
@@ -63,6 +66,8 @@ export type PlayUIState = {
     hammer: boolean
     swap: boolean
   }
+  skillAdAvailable: Record<PlaySkillKind, boolean>
+  skillAdLoading: PlaySkillKind | null
   tutorial: FirstEntryTutorialUIState
 }
 
@@ -290,6 +295,8 @@ export class PlayUIController extends Component {
       hammer: false,
       swap: false
     },
+    skillAdAvailable: { bomb: false, hammer: false, swap: false },
+    skillAdLoading: null,
     tutorial: {
       active: false,
       awaitingTap: false,
@@ -302,6 +309,8 @@ export class PlayUIController extends Component {
   // private statusLabel: Label | null = null
   // 底部暂停按钮文字。
   private pauseButtonLabel: Label | null = null
+  private pauseButtonNode: Node | null = null
+  private settingsButtonNode: Node | null = null
   // 分数数值文本直接复用 scene 里的 Score/Number 节点，UI 层只负责刷新显示。
   private scoreNumberLabel: Label | null = null
   private objectiveProgressLabel: Label | null = null
@@ -335,6 +344,12 @@ export class PlayUIController extends Component {
   }
   // 技能数量 0-9 图片由 PlayController 传入，按图片名匹配当前数量。
   private counterNumberSpriteFrames: SpriteFrame[] = []
+  private rewardedAdIconSpriteFrame: SpriteFrame | null = null
+  private rewardedAdIconTexture: Texture2D | null = null
+  private isLoadingRewardedAdIcon = false
+  private readonly skillAdBadges = new Map<Sprite, Graphics>()
+  private readonly skillAdLoadingNodes = new Set<Node>()
+  private isUiDestroyed = false
   // 技能施放提示由运行时生成，避免为了一个提示再要求手动维护 scene 节点。
   private skillHintNode: Node | null = null
   // 提示透明度单独缓存，方便做进入、闪烁和退出动画。
@@ -481,17 +496,10 @@ export class PlayUIController extends Component {
   }
 
   onDestroy() {
-    // UI 组件自己负责解绑按钮事件，避免逻辑层还要知道具体节点层级。
-    const controlContainer = this.canUseNode(this.node) ? this.getControlContainer() : null
-    const pauseButtonNode = this.canUseNode(controlContainer) ? controlContainer.getChildByName('PauseButton') : null
-    const settingsButtonNode = this.canUseNode(this.node)
-      ? this.node
-        .getChildByName('Status')
-        ?.getChildByName('Content')
-        ?.getChildByName('SettingsBtn') ?? null
-      : null
-    this.safeOff(pauseButtonNode, Node.EventType.TOUCH_END, this.onPauseButtonTap)
-    this.safeOff(settingsButtonNode, Node.EventType.TOUCH_END, this.onPauseButtonTap)
+    this.isUiDestroyed = true
+    // Cocos 先销毁子节点再调用本组件的 onDestroy，清理只能使用缓存引用，不能重新查找层级。
+    this.safeOff(this.pauseButtonNode, Node.EventType.TOUCH_END, this.onPauseButtonTap)
+    this.safeOff(this.settingsButtonNode, Node.EventType.TOUCH_END, this.onPauseButtonTap)
     this.safeOff(this.bombSkillNode, Node.EventType.TOUCH_END, this.onBombSkillButtonTap)
     this.safeOff(this.hammerSkillNode, Node.EventType.TOUCH_END, this.onHammerSkillButtonTap)
     this.safeOff(this.swapSkillNode, Node.EventType.TOUCH_END, this.onSwapSkillButtonTap)
@@ -518,6 +526,26 @@ export class PlayUIController extends Component {
     if (this.canUseNode(this.swapSkillNode)) {
       Tween.stopAllByTarget(this.swapSkillNode)
     }
+    for (const loadingNode of this.skillAdLoadingNodes) {
+      Tween.stopAllByTarget(loadingNode)
+    }
+    this.skillAdLoadingNodes.clear()
+    for (const adSprite of this.skillAdBadges.keys()) {
+      if (adSprite?.isValid) {
+        adSprite.spriteFrame = null
+      }
+    }
+    this.skillAdBadges.clear()
+    if (this.rewardedAdIconSpriteFrame?.isValid) {
+      this.rewardedAdIconSpriteFrame.destroy()
+    }
+    this.rewardedAdIconSpriteFrame = null
+    if (this.rewardedAdIconTexture?.isValid) {
+      this.rewardedAdIconTexture.destroy()
+    }
+    this.rewardedAdIconTexture = null
+    this.pauseButtonNode = null
+    this.settingsButtonNode = null
     this.scoreNumberLabel = null
     this.objectiveProgressLabel = null
     this.nextValueLabel = null
@@ -1320,6 +1348,10 @@ export class PlayUIController extends Component {
 
   // 设置按钮视觉尺寸与触摸热区分离，保证图标克制但左上角仍容易点击。
   private ensureSettingsButtonVisual(settingsNode: Node | null) {
+    if (this.settingsButtonNode !== settingsNode) {
+      this.safeOff(this.settingsButtonNode, Node.EventType.TOUCH_END, this.onPauseButtonTap)
+    }
+    this.settingsButtonNode = settingsNode
     if (!settingsNode) {
       return
     }
@@ -1358,7 +1390,7 @@ export class PlayUIController extends Component {
     }
     iconSprite.sizeMode = Sprite.SizeMode.CUSTOM
     assetManager.loadAny(GAME_SETTINGS_SPRITE_FRAME_UUID, (error, asset) => {
-      if (!error && iconSprite.node.isValid && asset instanceof SpriteFrame) {
+      if (!error && !this.isUiDestroyed && iconSprite.isValid && this.canUseNode(iconSprite.node) && asset instanceof SpriteFrame) {
         iconSprite.spriteFrame = asset
         iconSprite.sizeMode = Sprite.SizeMode.CUSTOM
         iconSprite.node.getComponent(UITransform)?.setContentSize(HUD_SETTINGS_ICON_SIZE, HUD_SETTINGS_ICON_SIZE)
@@ -1508,6 +1540,9 @@ export class PlayUIController extends Component {
 
   private handleCoinMoreTap(event: EventTouch) {
     event.propagationStopped = true
+    if (this.currentState.skillAdLoading) {
+      return
+    }
     this.playButtonClickFeedback()
     this.coinMoreHandler?.()
   }
@@ -1523,6 +1558,7 @@ export class PlayUIController extends Component {
   // 底部控制栏的视觉样式尽量交给 scene，这里只做异形屏安全区补偿。
   private configureControlBar() {
     const container = this.getControlContainer()
+    this.pauseButtonNode = container.getChildByName('PauseButton')
     const rootTransform = this.node.getComponent(UITransform)
     const controlTransform = container.getComponent(UITransform)
     if (!rootTransform || !controlTransform) {
@@ -1775,6 +1811,9 @@ export class PlayUIController extends Component {
   // 暂停按钮只负责把点击事件转交给逻辑层，避免 UI 层直接改状态。
   private onPauseButtonTap(event: EventTouch) {
     event.propagationStopped = true
+    if (this.currentState.skillAdLoading) {
+      return
+    }
     this.playButtonClickFeedback()
     this.pauseHandler?.()
   }
@@ -1793,6 +1832,7 @@ export class PlayUIController extends Component {
     this.configureSkillButton(this.hammerSkillNode, 'hammer', this.onHammerSkillButtonTap)
     this.configureSkillButton(this.swapSkillNode, 'swap', this.onSwapSkillButtonTap)
     this.layoutSkillsContainer(skillsContainer)
+    this.preloadRewardedAdIcon()
   }
 
   // 把系统安全区顶部像素换算为当前固定宽度设计坐标，供非微信环境避让刘海和灵动岛。
@@ -1978,6 +2018,101 @@ export class PlayUIController extends Component {
     }
     const label = this.ensureHudLabel(badgeNode, 'Value', '1', 0, 0, 34, 32, 19, new Color(255, 255, 246, 255))
     label.enableOutline = false
+    this.ensureSkillAdBadge(badgeNode)
+  }
+
+  /** 广告和加载状态复用次数角标位置，不新增文字或确认弹窗。 */
+  private ensureSkillAdBadge(badgeNode: Node) {
+    let adNode = badgeNode.getChildByName('AdIcon')
+    if (!adNode) {
+      adNode = new Node('AdIcon')
+      adNode.setParent(badgeNode)
+      adNode.addComponent(UITransform).setContentSize(44, 44)
+      adNode.addComponent(Sprite)
+    }
+    adNode.setPosition(0, 0, 0)
+    adNode.active = false
+    const sprite = adNode.getComponent(Sprite)!
+    sprite.spriteFrame = this.rewardedAdIconSpriteFrame
+    sprite.sizeMode = Sprite.SizeMode.CUSTOM
+    sprite.trim = false
+    sprite.enabled = !!sprite.spriteFrame
+    // 图片异步加载时先绘制播放图形，避免广告角标短暂消失。
+    let fallbackNode = adNode.getChildByName('Fallback')
+    if (!fallbackNode) {
+      fallbackNode = new Node('Fallback')
+      fallbackNode.setParent(adNode)
+      fallbackNode.addComponent(UITransform).setContentSize(44, 44)
+      fallbackNode.addComponent(Graphics)
+    }
+    fallbackNode.setPosition(0, 0, 0)
+    const fallback = fallbackNode.getComponent(Graphics)!
+    fallback.clear()
+    fallback.fillColor = HUD_CARD_BORDER_COLOR
+    fallback.roundRect(-20, -14, 40, 30, 7)
+    fallback.fill()
+    fallback.fillColor = new Color(92, 170, 47, 255)
+    fallback.roundRect(-17, -11, 34, 24, 5)
+    fallback.fill()
+    fallback.fillColor = new Color(255, 255, 246, 255)
+    fallback.moveTo(-5, -7)
+    fallback.lineTo(8, 1)
+    fallback.lineTo(-5, 9)
+    fallback.close()
+    fallback.fill()
+    fallback.enabled = !sprite.spriteFrame
+    this.skillAdBadges.set(sprite, fallback)
+
+    let loadingNode = badgeNode.getChildByName('AdLoading')
+    if (!loadingNode) {
+      loadingNode = new Node('AdLoading')
+      loadingNode.setParent(badgeNode)
+      loadingNode.addComponent(UITransform).setContentSize(36, 36)
+      const loading = loadingNode.addComponent(Graphics)
+      loading.lineWidth = 5
+      loading.strokeColor = new Color(255, 248, 220, 255)
+      loading.arc(0, 0, 13, 0, Math.PI * 1.6, false)
+      loading.stroke()
+    }
+    loadingNode.setPosition(0, 0, 0)
+    loadingNode.active = false
+    this.skillAdLoadingNodes.add(loadingNode)
+  }
+
+  private preloadRewardedAdIcon() {
+    if (this.isUiDestroyed || this.rewardedAdIconSpriteFrame || this.isLoadingRewardedAdIcon) {
+      return
+    }
+    this.isLoadingRewardedAdIcon = true
+    // 直接读取图片，避免新资源尚未配置为 SpriteFrame 时角标加载失败。
+    resources.load('Skills/RewardedAdIcon', ImageAsset, (error, imageAsset) => {
+      this.isLoadingRewardedAdIcon = false
+      // 异步加载可能晚于返回首页，旧 UI 不再创建贴图或访问已销毁的技能节点。
+      if (this.isUiDestroyed || !this.canUseNode(this.node)) {
+        return
+      }
+      if (error || !imageAsset) {
+        if (error) {
+          console.warn('[技能角标] 广告图标加载失败', error)
+        }
+        return
+      }
+      const texture = new Texture2D()
+      texture.image = imageAsset
+      const spriteFrame = new SpriteFrame()
+      spriteFrame.texture = texture
+      this.rewardedAdIconTexture = texture
+      this.rewardedAdIconSpriteFrame = spriteFrame
+      for (const [sprite, fallback] of this.skillAdBadges) {
+        if (sprite.isValid && this.canUseNode(sprite.node)) {
+          sprite.spriteFrame = spriteFrame
+          sprite.enabled = true
+          if (fallback.isValid) {
+            fallback.enabled = false
+          }
+        }
+      }
+    })
   }
 
   private ensureSkillStateDecorations(skillNode: Node) {
@@ -2144,6 +2279,9 @@ export class PlayUIController extends Component {
   // 第一个技能当前定义为炸弹技能，点击后进入点选爆炸中心模式。
   private onBombSkillButtonTap(event: EventTouch) {
     event.propagationStopped = true
+    if (this.currentState.skillAdLoading) {
+      return
+    }
     this.playButtonClickFeedback()
     this.bombSkillHandler?.()
   }
@@ -2151,6 +2289,9 @@ export class PlayUIController extends Component {
   // 第二个技能当前定义为锤子技能，点击后进入点选敲碎模式。
   private onHammerSkillButtonTap(event: EventTouch) {
     event.propagationStopped = true
+    if (this.currentState.skillAdLoading) {
+      return
+    }
     this.playButtonClickFeedback()
     this.hammerSkillHandler?.()
   }
@@ -2158,6 +2299,9 @@ export class PlayUIController extends Component {
   // 第三个技能当前定义为交换技能，点击后只把意图交给 PlayController 处理。
   private onSwapSkillButtonTap(event: EventTouch) {
     event.propagationStopped = true
+    if (this.currentState.skillAdLoading) {
+      return
+    }
     this.playButtonClickFeedback()
     this.swapSkillHandler?.()
   }
@@ -2166,7 +2310,7 @@ export class PlayUIController extends Component {
     this.buttonClickHandler?.()
   }
 
-  // 三个技能统一刷新选中、库存为空和本局已使用状态。
+  // 三个技能统一刷新可用次数、广告机会和选中状态。
   private refreshSkillButtonState() {
     this.refreshSingleSkillVisual('bomb', this.bombSkillNode)
     this.refreshSingleSkillVisual('hammer', this.hammerSkillNode)
@@ -2183,11 +2327,14 @@ export class PlayUIController extends Component {
     const isActive = this.currentState.activeSkill === skill
     const isUsed = this.currentState.skillUsed[skill]
     const count = Math.max(0, this.currentState.skillCounts[skill])
-    const visualKey = `${isActive}-${isUsed}-${count}`
-    skillNode.getChildByName('SelectionRing')!.active = isActive && !isUsed && count > 0
-    skillNode.getChildByName('UsedLabel')!.active = isUsed
+    const canWatchAd = this.currentState.skillAdAvailable[skill]
+    const isAdBusy = this.currentState.skillAdLoading !== null
+    const visualKey = `${isActive}-${isUsed}-${count}-${canWatchAd}-${isAdBusy}`
+    skillNode.getChildByName('SelectionRing')!.active = isActive && count > 0 && !isAdBusy
+    // 技能状态只通过图标明暗和次数角标表达，避免文字遮挡图标。
+    skillNode.getChildByName('UsedLabel')!.active = false
     const opacity = skillNode.getComponent(UIOpacity) ?? skillNode.addComponent(UIOpacity)
-    opacity.opacity = isUsed ? SKILL_DISABLED_OPACITY : count <= 0 ? SKILL_EMPTY_OPACITY : 255
+    opacity.opacity = isAdBusy ? SKILL_EMPTY_OPACITY : count > 0 || canWatchAd ? 255 : isUsed ? SKILL_DISABLED_OPACITY : SKILL_EMPTY_OPACITY
 
     if (this.skillVisualKeys[skill] === visualKey) {
       return
@@ -2199,7 +2346,7 @@ export class PlayUIController extends Component {
       .start()
   }
 
-  // 技能库存使用小角标展示，库存为零时显示加号，本局已使用仍保留库存但整体置灰。
+  // 对局角标只展示本局剩余使用次数，避免库存数量让玩家误以为本局可以连续施放。
   private refreshSkillCountDisplay() {
     this.refreshSingleSkillCount('bomb', this.bombSkillNode)
     this.refreshSingleSkillCount('hammer', this.hammerSkillNode)
@@ -2207,7 +2354,6 @@ export class PlayUIController extends Component {
   }
 
   private refreshSingleSkillCount(skill: PlaySkillKind, skillNode: Node | null) {
-    const hasUsedThisGame = this.currentState.skillUsed[skill]
     if (!skillNode) {
       return
     }
@@ -2217,18 +2363,39 @@ export class PlayUIController extends Component {
     const amountBgNode = boxNode.getChildByName('AmountBG')
     const countNode = boxNode.getChildByName('Count')
 
-    const count = Math.max(0, Math.floor(this.currentState.skillCounts[skill]))
-    const hasStock = count > 0
+    const count = this.currentState.skillCounts[skill] > 0 ? 1 : 0
+    const isLoading = this.currentState.skillAdLoading === skill
+    const showsAd = this.currentState.skillAdAvailable[skill] && !isLoading
     const customBadge = skillNode.getChildByName('CountBadge')
     const customBadgeLabel = customBadge?.getChildByName('Value')?.getComponent(Label) ?? null
     if (customBadge) {
-      customBadge.active = hasStock || !hasUsedThisGame
+      customBadge.active = true
+      // 场景使用 Sprite 底图，旧场景补建 Graphics 底图；广告态需要同时兼容。
+      const background = customBadge.getComponent(Graphics) ?? customBadge.getComponent(Sprite)
+      if (background) {
+        background.enabled = !showsAd
+      }
+      const adNode = customBadge.getChildByName('AdIcon')
+      if (adNode) {
+        adNode.active = showsAd
+      }
+      const loadingNode = customBadge.getChildByName('AdLoading')
+      if (loadingNode && loadingNode.active !== isLoading) {
+        Tween.stopAllByTarget(loadingNode)
+        loadingNode.angle = 0
+        loadingNode.active = isLoading
+        if (isLoading) {
+          tween(loadingNode).by(0.8, { angle: -360 }).repeatForever().start()
+        }
+      }
     }
     if (customBadgeLabel) {
-      customBadgeLabel.string = hasStock ? (count >= 10 ? '9+' : `${count}`) : '+'
+      const showsCount = !showsAd && !isLoading
+      customBadgeLabel.string = showsCount ? `${count}` : ''
+      customBadgeLabel.node.active = showsCount
     }
     if (moreButtonNode) {
-      // 静态层移除后不再依赖旧版 MoreBtn 图片，零库存统一由绿色角标显示加号。
+      // 对局技能只展示次数或视频角标，不保留旧补货入口。
       moreButtonNode.active = false
     }
     if (amountBgNode) {
@@ -2243,7 +2410,7 @@ export class PlayUIController extends Component {
       countSprite.sizeMode = Sprite.SizeMode.CUSTOM
       const fallback = this.ensureSkillCountFallback(countNode)
       fallback.node.active = !spriteFrame
-      fallback.string = count >= 10 ? '9+' : `${count}`
+      fallback.string = `${count}`
     }
   }
 

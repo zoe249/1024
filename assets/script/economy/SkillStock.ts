@@ -2,6 +2,8 @@ export type SkillKind = 'bomb' | 'hammer' | 'swap'
 
 export type SkillCounts = Record<SkillKind, number>
 
+export type SkillAdRewardState = 'unclaimed' | 'ready' | 'used'
+
 // 技能库存只关心次数，不关心技能动画或棋盘结算，方便玩法控制器保持轻量。
 export class SkillStock {
   private counts: SkillCounts

@@ -1,4 +1,4 @@
-import type { SkillKind } from '../economy/SkillStock'
+import type { SkillAdRewardState, SkillKind } from '../economy/SkillStock'
 import {
   areBoardConfigsEqual,
   cloneBoardConfig,
@@ -21,6 +21,8 @@ export type OngoingGameSnapshot = {
   bonusScore: number
   highestPieceValue: number
   usedSkillsThisGame: Record<SkillKind, boolean>
+  // 可选字段兼容旧续局；奖励仍属于原对局，不能因回首页再次领取。
+  skillAdRewards?: Record<SkillKind, SkillAdRewardState>
 }
 
 function cloneBoardValues(boardValues: Array<Array<number | null>>) {
@@ -32,7 +34,8 @@ function cloneSnapshot(snapshot: OngoingGameSnapshot, boardConfig: BoardConfig):
     ...snapshot,
     boardConfig: cloneBoardConfig(boardConfig),
     boardValues: cloneBoardValues(snapshot.boardValues),
-    usedSkillsThisGame: { ...snapshot.usedSkillsThisGame }
+    usedSkillsThisGame: { ...snapshot.usedSkillsThisGame },
+    skillAdRewards: snapshot.skillAdRewards ? { ...snapshot.skillAdRewards } : undefined
   }
 }
 

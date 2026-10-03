@@ -470,9 +470,10 @@ export class HomeSceneController extends Component {
     this.skillShopController.show()
   }
 
-  // 购买结果由经济仓库生成，弹窗只渲染最新余额并展示反馈。
+  // 购买后立即刷新首页和弹窗，避免顶部金币等待下一次定时刷新。
   private purchaseSkill(skill: SkillKind) {
     const result = this.economy.purchaseSkill(skill)
+    this.refreshPlayerResources()
     const skillName = skill === 'bomb' ? '炸弹' : skill === 'hammer' ? '木槌' : '交换'
     this.skillShopController?.renderState(this.economy.getSnapshot())
     this.skillShopController?.showMessage(
