@@ -94,7 +94,7 @@ node tools/wechat-startup-page/install.js --background /你的图片.jpg
 5. 清理 Cocos 默认品牌图、重复插屏数据、旧文字图片和与当前模式冲突的背景文件
 6. 使用 SHA-256 校验全部复制与写入结果
 7. 按 `game.json` 声明的分包目录统计真实主包体积，超过 4MB 时让命令失败
-8. 将 `assets/resources` 逐文件迁移到 `subpackages/resources`，让已打开的微信开发者工具完整索引 `config.json` 与资源文件；随后生成分包 `game.js`，并同步 `game.json` 与运行时配置
+8. 将 `assets/resources` 逐文件迁移到 `subpackages/resources`，保留 Creator 的 `index.js`，生成引用它的分包 `game.js`，并同步 `game.json` 与运行时配置。旧版仅有 `game.js` 的构建会先恢复 `index.js`。两个入口共用同一模块，避免入口改名导致开发者工具编译报 `ENOENT`
 9. 保留 Cocos 生成的 `game.js` 和游戏代码不变
 
 ## 为什么要在每次构建后重新执行

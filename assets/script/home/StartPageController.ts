@@ -417,6 +417,10 @@ export class StartPageController extends Component {
     this.leaderboardController?.setData(data)
   }
 
+  isRankModalVisible() {
+    return this.rankMaskNode?.activeInHierarchy ?? false
+  }
+
   prepareRankModal(): Promise<void> {
     if (this.leaderboardController?.isValid) {
       return Promise.resolve()

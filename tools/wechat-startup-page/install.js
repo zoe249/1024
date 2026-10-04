@@ -29,6 +29,9 @@ const BACKGROUND_CONFIG_FILE = 'startup-background-config.js';
 const RESOURCES_BUNDLE_NAME = 'resources';
 const RESOURCES_BUNDLE_SOURCE = 'assets/resources';
 const RESOURCES_SUBPACKAGE_ROOT = 'subpackages/resources/';
+const RESOURCES_SUBPACKAGE_ENTRY_SOURCE = `/** 微信分包入口，复用 Creator 原始 Bundle 入口。 */
+require('./index.js');
+`;
 // 微信构建已经由 first-screen.js 全程接管首屏，Cocos 的后续插屏只保留 2×2 占位图。
 const TINY_COCOS_SPLASH_JPEG_BASE64 =
     '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAsICAoIBwsKCQoNDAsNERwSEQ8PESIZGhQcKSQrKigkJyctMkA3LTA9MCcnOEw5PUNFSElIKzZPVU5GVEBHSEX/2wBDAQwNDREPESESEiFFLicuRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUX/wAARCAACAAIDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAABAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwChAJpL/9k=';
@@ -367,7 +370,7 @@ function moveDirectoryFiles(sourceDirectory, targetDirectory) {
  * 将 Creator 默认输出在主包中的 resources Bundle 转为微信分包。
  *
  * 逐文件移动完整 Bundle 并同步两份运行时配置，不改 Bundle 名称和资源路径；
- * 重复执行时会识别已经迁移的目录，不覆盖任何已有文件。
+ * 重复执行时保留已迁移的资源，并兼容旧版仅有 game.js 的入口。
  */
 function ensureResourcesSubpackage(buildDirectory) {
     const sourceDirectory = path.join(buildDirectory, ...RESOURCES_BUNDLE_SOURCE.split('/'));
@@ -397,17 +400,28 @@ function ensureResourcesSubpackage(buildDirectory) {
 
     const bundleIndexFile = path.join(targetDirectory, 'index.js');
     const subpackageGameFile = path.join(targetDirectory, 'game.js');
-    const bundleIndexExists = fs.existsSync(bundleIndexFile);
-    const subpackageGameExists = fs.existsSync(subpackageGameFile);
-    if (bundleIndexExists && subpackageGameExists) {
-        fail(`resources 分包同时存在 index.js 和 game.js，拒绝覆盖：${targetDirectory}`);
+    const gameSource = fs.existsSync(subpackageGameFile)
+        ? fs.readFileSync(subpackageGameFile, 'utf8')
+        : null;
+    if (!fs.existsSync(bundleIndexFile)) {
+        assertFile(subpackageGameFile, 'resources 旧版分包入口');
+        if (gameSource.trim() === RESOURCES_SUBPACKAGE_ENTRY_SOURCE.trim()) {
+            fail(`resources 分包缺少被 game.js 引用的 index.js：${targetDirectory}`);
+        }
+        // 兼容旧版已将 index.js 改名为 game.js 的构建，先恢复原入口再写包装入口。
+        copyAndVerify(subpackageGameFile, bundleIndexFile, 'resources 原始 Bundle 入口');
     }
-    if (bundleIndexExists) {
-        // 微信会校验每个分包根目录下的 game.js；其内容就是 Creator 生成的 Bundle 入口。
-        fs.renameSync(bundleIndexFile, subpackageGameFile);
+    const bundleSource = fs.readFileSync(bundleIndexFile, 'utf8');
+    if (gameSource !== null && gameSource !== RESOURCES_SUBPACKAGE_ENTRY_SOURCE && gameSource !== bundleSource) {
+        fail(`resources 分包 game.js 含有未识别内容，拒绝覆盖：${subpackageGameFile}`);
+    }
+    if (gameSource !== RESOURCES_SUBPACKAGE_ENTRY_SOURCE) {
+        // 保留 index.js，避免开发者工具在排队编译时因入口被改名而报 ENOENT。
+        writeAndVerify(subpackageGameFile, RESOURCES_SUBPACKAGE_ENTRY_SOURCE, 'resources 微信分包入口');
     }
 
     assertFile(path.join(targetDirectory, 'config.json'), 'resources Bundle 配置');
+    assertFile(bundleIndexFile, 'resources Bundle 原始入口 index.js');
     assertFile(subpackageGameFile, 'resources 微信分包入口 game.js');
 
     const gameConfigFile = path.join(buildDirectory, 'game.json');

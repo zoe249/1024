@@ -3,6 +3,7 @@ import { StartPageController } from './StartPageController'
 import { GameAudioManager } from '../platform/GameAudioManager'
 import { GameFeedbackAdapter } from '../platform/GameFeedbackAdapter'
 import { GameShareAdapter } from '../platform/GameShareAdapter'
+import { WechatUpdateAdapter } from '../platform/WechatUpdateAdapter'
 import {
   WechatPrivacyAdapter,
   WechatPrivacyAuthorizationError
@@ -27,6 +28,7 @@ import {
 
 const { ccclass, property } = _decorator
 const HOME_RESOURCE_REFRESH_INTERVAL_SECONDS = 30
+const UPDATE_PROMPT_CHECK_INTERVAL_SECONDS = 1
 // 切场景前给按钮 one-shot 留出起声时间，避免当前场景销毁时把点击反馈截断。
 const BUTTON_CLICK_SCENE_DELAY_SECONDS = 0.18
 const PROFILE_PREFAB_PATH = 'Profile/ProfilePopup'
@@ -112,6 +114,8 @@ export class HomeSceneController extends Component {
   private readonly shareAdapter = new GameShareAdapter()
   private readonly feedbackAdapter = new GameFeedbackAdapter()
   private readonly privacyAdapter = new WechatPrivacyAdapter()
+  private readonly updateAdapter = WechatUpdateAdapter.getInstance()
+  private releaseUpdatePrompt: (() => void) | null = null
   private readonly economy = PlayerEconomyStore.getInstance()
   private readonly playerSession = PlayerSessionStore.getInstance()
   private readonly playerProfile = PlayerProfileStore.getInstance()
@@ -127,8 +131,10 @@ export class HomeSceneController extends Component {
   private isLoadingGameScene = false
   private dailyRewardStateKey = ''
   private readonly refreshResourceTick = () => this.refreshPlayerResources()
+  private readonly updatePromptTick = () => this.updateAdapter.promptIfReady()
 
   onLoad() {
+    this.updateAdapter.initialize()
     this.shareAdapter.enableWechatShareMenu()
     this.audioManager = new GameAudioManager(this.node)
     this.audioManager.setup()
@@ -157,6 +163,28 @@ export class HomeSceneController extends Component {
     })
   }
 
+  onEnable() {
+    this.releaseUpdatePrompt = this.updateAdapter.enterHome(() => this.canPromptForUpdate())
+    this.schedule(this.updatePromptTick, UPDATE_PROMPT_CHECK_INTERVAL_SECONDS)
+  }
+
+  onDisable() {
+    this.unschedule(this.updatePromptTick)
+    this.releaseUpdatePrompt?.()
+    this.releaseUpdatePrompt = null
+  }
+
+  private canPromptForUpdate() {
+    // 续局快照只在内存中，返回首页也不代表可以安全重启。
+    return this.isValid && this.node.isValid && this.node.activeInHierarchy
+      && !this.isLoadingGameScene && !OngoingGameSession.hasActiveGame()
+      && !this.isOpeningLeaderboard && !this.isOpeningProfile
+      && !this.startPageController?.isRankModalVisible()
+      && !this.skillShopNode?.active && !this.dailyRewardNode?.active
+      && !this.homeSettingsNode?.active && !this.profileNode?.active
+      && !this.loginStatusNode?.active
+  }
+
   start() {
     // 首帧后再同步一次布局，兼容微信安全区和 Creator 预览尺寸变化。
     this.startPageController?.syncLayout()
@@ -171,6 +199,7 @@ export class HomeSceneController extends Component {
   }
 
   onDestroy() {
+    this.onDisable()
     this.shareAdapter.disableWechatShareMenu()
     this.unschedule(this.refreshResourceTick)
     this.skillShopController = null
@@ -449,7 +478,7 @@ export class HomeSceneController extends Component {
    * 有未结束对局时直接续局；新开一局只做体力校验和扣除，不再强制展示技能购买弹窗。
    */
   private startGameFromHome() {
-    if (this.isLoadingGameScene) {
+    if (this.isLoadingGameScene || this.updateAdapter.isBlockingNavigation()) {
       return
     }
 
