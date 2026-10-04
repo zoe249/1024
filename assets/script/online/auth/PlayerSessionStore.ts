@@ -1,5 +1,6 @@
 import { sys } from 'cc'
 import { ApiError, GameApiClient } from '../api/GameApiClient'
+import { getOnlineStorageKey } from '../api/OnlineServiceConfig'
 import { WechatLoginAdapter } from './WechatLoginAdapter'
 
 export type AuthStatus =
@@ -21,6 +22,7 @@ const STORAGE_KEY = 'number-garden-player-session-v1'
 /** 只持久化业务凭证，不保存 openid、session_key 或微信用户资料。 */
 export class PlayerSessionStore {
   private static instance: PlayerSessionStore | null = null
+  private readonly storageKey = getOnlineStorageKey(STORAGE_KEY)
   private readonly api = new GameApiClient(() => this.snapshot.token, () => this.markUnauthorized())
   private readonly wechat = new WechatLoginAdapter()
   private snapshot: PlayerSessionSnapshot
@@ -156,7 +158,7 @@ export class PlayerSessionStore {
 
   private loadSnapshot(): PlayerSessionSnapshot {
     try {
-      const raw = sys.localStorage.getItem(STORAGE_KEY)
+      const raw = sys.localStorage.getItem(this.storageKey)
       if (!raw) {
         return { status: 'guest', token: null, expiresAtMs: null, playerId: null }
       }
@@ -186,7 +188,7 @@ export class PlayerSessionStore {
 
   private saveSnapshot() {
     try {
-      sys.localStorage.setItem(STORAGE_KEY, JSON.stringify(this.snapshot))
+      sys.localStorage.setItem(this.storageKey, JSON.stringify(this.snapshot))
     } catch (error) {
       console.warn('业务登录状态保存失败', error)
     }

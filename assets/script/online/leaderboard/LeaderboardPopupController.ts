@@ -14,6 +14,9 @@ import {
   Vec3
 } from 'cc'
 
+import { type PlayerAvatar } from '../../profile/AvatarCatalog'
+import { PlayerAvatarRenderer } from '../../profile/PlayerAvatarRenderer'
+
 const { ccclass } = _decorator
 
 type LeaderboardTabId = 'score' | 'highestNumber'
@@ -22,7 +25,7 @@ export type LeaderboardViewEntry = {
   rank: number | null
   name: string
   score: string
-  avatar: string
+  avatar: PlayerAvatar
 }
 
 export type LeaderboardViewTab = {
@@ -47,6 +50,7 @@ type RowView = {
   rank: Label
   showRank: boolean
   avatar: Sprite
+  avatarRenderer: PlayerAvatarRenderer
   name: Label
   score: Label
 }
@@ -70,7 +74,7 @@ const DEFAULT_TABS: LeaderboardViewTab[] = [
     id: 'score',
     label: '最高分榜',
     entries: [],
-    self: { rank: null, name: '我', score: '暂无成绩', avatar: 'raccoon' }
+    self: { rank: null, name: '我', score: '暂无成绩', avatar: { avatarIndex: 11 } }
   }
 ]
 
@@ -161,6 +165,7 @@ export class LeaderboardPopupController extends Component {
     this.wantsVisible = true
     this.cancelRevealSchedule()
     if (this.isContentReady) {
+      this.renderScoreBoard()
       this.beginTextureWarmup()
     } else if (this.contentOpacity) {
       this.contentOpacity.opacity = 0
@@ -190,13 +195,22 @@ export class LeaderboardPopupController extends Component {
 
   // 外层退场动画完成后再真正隐藏内容，避免下一次激活时闪出上一帧。
   hideContent() {
+    this.rowViews.forEach(row => row.avatarRenderer.clear())
+    this.selfRowView?.avatarRenderer.clear()
     this.prepareForHide()
     if (this.contentOpacity) {
       this.contentOpacity.opacity = 0
     }
   }
 
+  onDisable() {
+    this.rowViews.forEach(row => row.avatarRenderer.clear())
+    this.selfRowView?.avatarRenderer.clear()
+  }
+
   onDestroy() {
+    this.rowViews.forEach(row => row.avatarRenderer.dispose())
+    this.selfRowView?.avatarRenderer.dispose()
     this.isDisposed = true
     this.wantsVisible = false
     this.cancelRevealSchedule()
@@ -409,7 +423,7 @@ export class LeaderboardPopupController extends Component {
     )
     scoreLabel.isBold = true
 
-    return { node: row, rank: rankLabel, showRank: !hasCrown, avatar, name: nameLabel, score: scoreLabel }
+    return { node: row, rank: rankLabel, showRank: !hasCrown, avatar, avatarRenderer: new PlayerAvatarRenderer(avatar), name: nameLabel, score: scoreLabel }
   }
 
   private createInviteButton() {
@@ -460,6 +474,7 @@ export class LeaderboardPopupController extends Component {
         this.renderRow(row, entry)
       } else {
         row.node.active = false
+        row.avatarRenderer.clear()
       }
     })
     if (this.selfRowView) {
@@ -471,10 +486,7 @@ export class LeaderboardPopupController extends Component {
     view.rank.string = view.showRank ? entry.rank === null ? '—' : `${entry.rank}` : ''
     view.name.string = entry.name
     view.score.string = entry.score
-    this.applySpriteFrame(
-      view.avatar,
-      `Leaderboard/Avatars/avatar-${entry.avatar}/spriteFrame`
-    )
+    void view.avatarRenderer.render(entry.avatar)
   }
 
   private createSpriteNode(

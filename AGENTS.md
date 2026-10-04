@@ -52,3 +52,19 @@ description: Cocos Creator 3.8.8 下落式数字合成项目
 - 当前电脑已验证可用的身份文件为 `C:\Users\zoe\.ssh\tencent_1024_codex`；连接命令为 `ssh -i C:\Users\zoe\.ssh\tencent_1024_codex ubuntu@43.142.81.188`。
 - 服务器操作默认由本机 Codex 通过普通 SSH 执行，不依赖服务器端运行 Codex。
 - 不在项目中保存密码、私钥内容、令牌或其他密钥；更换电脑时应生成新密钥并将新公钥加入服务器。
+
+## 后端开发环境
+
+- 日常后端修改、依赖安装、构建、测试和数据库迁移默认在 `/home/ubuntu/projects/1024_service_dev` 执行，服务名为 `1024-service-dev.service`，接口为 `https://leyian.online/dev/v1`。
+- 开发后端监听 `127.0.0.1:3001`，使用独立账号 `1024_dev` 和数据库 `game_1024_dev`；与正式库共用 MySQL 的 3306 端口。使用 `npm run migrate:dev` 执行开发库迁移。
+- `/home/ubuntu/projects/1024_service` 是正式目录，不在其中开发、安装依赖或构建；正式数据库 `game_1024` 不用于测试，不复制真实用户数据到开发库。
+- 用户明确要求上线后，才更新正式发布版本或执行正式库迁移；开发环境搭建或验收不包含功能上线。
+- 客户端按微信运行版本自动分流：开发版、体验版和 Web 预览连接开发接口，正式版连接正式接口；凭证、同步队列和经济存档按接口地址隔离。
+- 当前环境位置、启动方式和验证范围见 `开发环境使用说明.md`。
+
+## GitHub 自动发布
+
+- 后端仓库为 `https://github.com/zoe249/1024_service`；本机工作目录为 `/Users/maolixiaowulang/Project/Games/1024_service`，与 Cocos 客户端仓库分开。
+- 后端 `dev` 推送自动部署开发环境，`main` 推送自动部署正式环境；默认只提交和推送 `dev`。用户明确要求上线或推送／合并 `main` 才允许更新 `main`。
+- 提交信息包含 `[skip deploy]` 时只验证发布准备；初次流水线配置使用该标记，不上线头像新功能。
+- GitHub Actions 负责检查与触发，服务器按指定提交在独立版本目录构建、迁移和切换服务；不覆盖运行中版本或复制开发数据库到正式环境。

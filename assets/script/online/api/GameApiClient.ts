@@ -36,6 +36,8 @@ export type LeaderboardEntryDto = {
   displayName: string
   value: number
   avatarIndex: number
+  avatarType?: 'builtin' | 'wechat'
+  wechatAvatarUrl?: string
   isSelf: boolean
 }
 
@@ -53,12 +55,16 @@ export type PlayerProfileResponse = {
   playerId: string
   displayName: string
   avatarIndex: number
+  avatarType?: 'builtin' | 'wechat'
+  wechatAvatarUrl?: string
   highestScore: number
 }
 
 export type UpdatePlayerProfileRequest = {
   displayName?: string
   avatarIndex?: number
+  avatarType?: 'builtin' | 'wechat'
+  wechatAvatarUrl?: string
 }
 
 export type SyncResponse<TSnapshot> = {

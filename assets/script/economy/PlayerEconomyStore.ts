@@ -1,6 +1,7 @@
 import { sys } from 'cc'
 import type { SkillCounts, SkillKind } from './SkillStock'
 import { PlayerSyncOutbox } from '../online/sync/PlayerSyncOutbox'
+import { getOnlineStorageKey } from '../online/api/OnlineServiceConfig'
 
 export type ShareRewardKind = 'coins' | 'energy'
 
@@ -83,6 +84,7 @@ const STORAGE_KEY = 'number-garden-player-economy-v1'
  */
 export class PlayerEconomyStore {
   private static instance: PlayerEconomyStore | null = null
+  private readonly storageKey = getOnlineStorageKey(STORAGE_KEY)
   private state: PersistedEconomyState
   private readonly syncOutbox = PlayerSyncOutbox.getInstance()
 
@@ -330,7 +332,7 @@ export class PlayerEconomyStore {
   private loadState(): PersistedEconomyState {
     const fallback = this.createDefaultState()
     try {
-      const raw = sys.localStorage.getItem(STORAGE_KEY)
+      const raw = sys.localStorage.getItem(this.storageKey)
       if (!raw) {
         return fallback
       }
@@ -363,7 +365,7 @@ export class PlayerEconomyStore {
 
   private saveState() {
     try {
-      sys.localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state))
+      sys.localStorage.setItem(this.storageKey, JSON.stringify(this.state))
       return true
     } catch (error) {
       console.warn('玩家经济存档写入失败', error)

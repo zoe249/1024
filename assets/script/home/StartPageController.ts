@@ -25,7 +25,9 @@ import {
   LeaderboardPopupController,
   type LeaderboardViewData
 } from '../online/leaderboard/LeaderboardPopupController'
-import { getAvatarSpritePath, normalizeAvatarIndex } from '../profile/AvatarCatalog'
+import { normalizePlayerAvatar, type PlayerAvatar } from '../profile/AvatarCatalog'
+
+import { PlayerAvatarRenderer } from '../profile/PlayerAvatarRenderer'
 
 const { ccclass, property } = _decorator
 
@@ -48,6 +50,7 @@ type StartPageOptions = {
   onShopTap?: () => void
   onProfileTap?: () => void
   avatarIndex?: number
+  avatar?: PlayerAvatar
 }
 
 // 只读取首页胶囊避让所需字段，避免项目依赖额外的微信类型声明。
@@ -184,7 +187,8 @@ export class StartPageController extends Component {
   private dailyRewardHandler: (() => void) | null = null
   private shopHandler: (() => void) | null = null
   private profileHandler: (() => void) | null = null
-  private currentAvatarIndex = 0
+  private currentAvatar: PlayerAvatar = { avatarIndex: 0 }
+  private avatarRenderer: PlayerAvatarRenderer | null = null
   private currentCoins = 0
   private currentEnergy = 0
   private currentMaxEnergy = DEFAULT_MAX_ENERGY
@@ -245,7 +249,7 @@ export class StartPageController extends Component {
     this.dailyRewardHandler = options.onDailyRewardTap ?? null
     this.shopHandler = options.onShopTap ?? null
     this.profileHandler = options.onProfileTap ?? null
-    this.currentAvatarIndex = normalizeAvatarIndex(options.avatarIndex ?? 0)
+    this.currentAvatar = normalizePlayerAvatar(options.avatar ?? { avatarIndex: options.avatarIndex ?? 0 })
     this.currentCoins = Math.max(0, Math.floor(options.coins ?? 0))
     this.currentEnergy = Math.max(0, Math.floor(options.energy ?? 0))
     this.currentMaxEnergy = Math.max(1, Math.floor(options.maxEnergy ?? DEFAULT_MAX_ENERGY))
@@ -254,7 +258,7 @@ export class StartPageController extends Component {
       this.ensureEnergyBar(options.energyBarPrefab ?? null)
     }
     this.renderPlayerResources(options.energy ?? 0, options.maxEnergy ?? DEFAULT_MAX_ENERGY)
-    this.renderProfileAvatar(this.currentAvatarIndex)
+    this.renderProfileAvatar(this.currentAvatar)
     this.syncLayout()
     this.show()
   }
@@ -313,19 +317,12 @@ export class StartPageController extends Component {
     }
   }
 
-  /** 首页头像只保存编号，实际 SpriteFrame 始终通过统一头像目录映射加载。 */
-  public renderProfileAvatar(avatarIndex: number) {
-    this.currentAvatarIndex = normalizeAvatarIndex(avatarIndex)
-    const expectedIndex = this.currentAvatarIndex
-    resources.load(getAvatarSpritePath(expectedIndex), SpriteFrame, (error, spriteFrame) => {
-      if (
-        error || !spriteFrame || !this.profileAvatarSprite?.isValid ||
-        this.currentAvatarIndex !== expectedIndex
-      ) {
-        return
-      }
-      this.profileAvatarSprite.spriteFrame = spriteFrame
-    })
+  /** 首页和弹窗使用相同的头像来源及加载兜底规则。 */
+  public renderProfileAvatar(avatar: PlayerAvatar | number) {
+    this.currentAvatar = normalizePlayerAvatar(typeof avatar === 'number' ? { avatarIndex: avatar } : avatar)
+    if (!this.profileAvatarSprite?.isValid) return
+    this.avatarRenderer ??= new PlayerAvatarRenderer(this.profileAvatarSprite)
+    void this.avatarRenderer.render(this.currentAvatar)
   }
 
   // 首页逻辑层统一通过这个入口展示领取、分享和体力不足提示。
@@ -340,6 +337,7 @@ export class StartPageController extends Component {
 
     const opacity = this.rootNode.getComponent(UIOpacity) ?? this.rootNode.addComponent(UIOpacity)
     this.rootNode.active = true
+    this.renderProfileAvatar(this.currentAvatar)
     this.bringNodeToTop(this.rootNode)
     // 返回首页时要恢复上次隐藏动画压缩过的卡片比例，避免首页越显示越小。
     this.pageCardNode?.setScale(Vec3.ONE)
@@ -362,6 +360,7 @@ export class StartPageController extends Component {
       .call(() => {
         if (this.rootNode) {
           this.rootNode.active = false
+          this.avatarRenderer?.clear()
         }
         onHidden?.()
       })
@@ -459,6 +458,7 @@ export class StartPageController extends Component {
   }
 
   onDestroy() {
+    this.avatarRenderer?.dispose()
     this.unscheduleAllCallbacks()
     // 场景销毁时 Node 会自动释放事件。此阶段子节点可能已经进入销毁流程，
     // 再逐个调用 off 会让微信运行时访问已释放的事件处理器。
@@ -477,6 +477,7 @@ export class StartPageController extends Component {
   }
 
   onDisable() {
+    this.avatarRenderer?.clear()
     // onDisable 早于节点销毁，此时停止动画仍能安全访问完整层级。
     this.unscheduleAllCallbacks()
     this.stopPageTweens()
@@ -752,7 +753,7 @@ export class StartPageController extends Component {
     this.profileAvatarSprite.type = Sprite.Type.SIMPLE
     this.profileAvatarSprite.sizeMode = Sprite.SizeMode.CUSTOM
     this.profileAvatarSprite.trim = false
-    this.renderProfileAvatar(this.currentAvatarIndex)
+    this.renderProfileAvatar(this.currentAvatar)
     return button
   }
 

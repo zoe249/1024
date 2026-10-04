@@ -17,14 +17,17 @@ import {
 } from 'cc'
 import {
   getAvatarSpritePath,
-  normalizeAvatarIndex,
-  PLAYER_AVATAR_COUNT
+  PLAYER_AVATAR_COUNT,
+  AVATAR_OPTIONS,
+  normalizePlayerAvatar,
+  type PlayerAvatar
 } from './AvatarCatalog'
-import { WechatNicknameAdapter } from '../platform/WechatNicknameAdapter'
+import { PlayerAvatarRenderer } from './PlayerAvatarRenderer'
+import { WechatNicknameAdapter, type WechatProfileReadState, type WechatUserProfile } from '../platform/WechatNicknameAdapter'
 
 const { ccclass } = _decorator
 
-export type ProfileViewState = {
+export type ProfileViewState = PlayerAvatar & {
   displayName: string
   avatarIndex: number
   highestScore: number
@@ -34,6 +37,8 @@ type ProfilePopupOptions = {
   hostNode: Node
   onClose: () => void
   onAvatarSelect: (avatarIndex: number) => Promise<void> | void
+  onWechatAvatarSelect: (url: string) => Promise<void> | void
+  onWechatAuthorizationChange?: (authorized: boolean) => void
   onDisplayNameSubmit: (displayName: string) => Promise<void> | void
   onButtonClick?: () => void
 }
@@ -59,6 +64,19 @@ export class ProfilePopupController extends Component {
   private hostNode: Node | null = null
   private closeHandler: (() => void) | null = null
   private avatarSelectHandler: ((avatarIndex: number) => Promise<void> | void) | null = null
+  private wechatAvatarSelectHandler: ((url: string) => Promise<void> | void) | null = null
+  private authorizationChangeHandler: ((authorized: boolean) => void) | null = null
+  private currentAvatarRenderer: PlayerAvatarRenderer | null = null
+  private wechatAvatarRenderer: PlayerAvatarRenderer | null = null
+  private wechatItem: Node | null = null
+  private wechatPlaceholder: Node | null = null
+  private wechatLabel: Label | null = null
+  private wechatBadge: Node | null = null
+  private wechatState: WechatProfileReadState = 'unauthorized'
+  private previewReady = false
+  private previewRevision = 0
+  private nativeRegions = ''
+  private readonly avatarAdapter = new WechatNicknameAdapter()
   private displayNameSubmitHandler: ((displayName: string) => Promise<void> | void) | null = null
   private buttonClickHandler: (() => void) | null = null
   private maskNode: Node | null = null
@@ -87,6 +105,8 @@ export class ProfilePopupController extends Component {
     this.hostNode = options.hostNode
     this.closeHandler = options.onClose
     this.avatarSelectHandler = options.onAvatarSelect
+    this.wechatAvatarSelectHandler = options.onWechatAvatarSelect
+    this.authorizationChangeHandler = options.onWechatAuthorizationChange ?? null
     this.displayNameSubmitHandler = options.onDisplayNameSubmit
     this.buttonClickHandler = options.onButtonClick ?? null
     this.ensureBuilt()
@@ -96,7 +116,7 @@ export class ProfilePopupController extends Component {
   renderState(state: ProfileViewState) {
     this.state = {
       displayName: state.displayName.trim() || '花园玩家',
-      avatarIndex: normalizeAvatarIndex(state.avatarIndex),
+      ...normalizePlayerAvatar(state),
       highestScore: Math.max(0, Math.floor(state.highestScore))
     }
     if (this.displayNameLabel) {
@@ -112,6 +132,9 @@ export class ProfilePopupController extends Component {
     this.ensureBuilt()
     this.syncLayout()
     this.wantsVisible = true
+    this.previewReady = false
+    this.wechatState = this.avatarAdapter.isSupported() ? 'loading' : 'unauthorized'
+    this.renderWechatStatus(this.wechatState === 'loading' ? '读取中…' : '暂未授权')
     const revision = ++this.visibilityRevision
     void this.revealWhenArtworkReady(revision)
   }
@@ -121,6 +144,8 @@ export class ProfilePopupController extends Component {
     this.visibilityRevision += 1
     this.unschedule(this.refreshWechatNicknameButton)
     this.nicknameAdapter.detach()
+    this.avatarAdapter.detach()
+    this.nativeRegions = ''
     if (!this.panelNode || !this.node.active) {
       this.node.active = false
       return
@@ -165,11 +190,13 @@ export class ProfilePopupController extends Component {
       )
       .start()
     this.unschedule(this.refreshWechatNicknameButton)
+    this.refreshAvatarSelection()
     this.scheduleOnce(this.refreshWechatNicknameButton, 0.22)
+    this.schedule(this.refreshWechatNicknameButton, 0.25)
   }
 
   showMessage(message: string, success = false) {
-    if (!this.messageLabel) {
+    if (!this.messageLabel?.isValid || !this.node.isValid) {
       return
     }
     this.messageLabel.string = message
@@ -207,9 +234,23 @@ export class ProfilePopupController extends Component {
     this.panelNode?.setScale(this.panelLayoutScale, this.panelLayoutScale, 1)
   }
 
+  onDisable() {
+    this.unschedule(this.refreshWechatNicknameButton)
+    this.nicknameAdapter.detach()
+    this.avatarAdapter.detach()
+    this.nativeRegions = ''
+    this.previewRevision += 1
+    this.currentAvatarRenderer?.clear()
+    this.wechatAvatarRenderer?.clear()
+  }
+
   onDestroy() {
+    this.currentAvatarRenderer?.dispose()
+    this.wechatAvatarRenderer?.dispose()
     // 节点销毁时引擎会自动释放事件，避免再次访问已进入销毁流程的子节点。
     this.nicknameAdapter.detach()
+    this.avatarAdapter.detach()
+    this.nativeRegions = ''
     if (this.panelNode) {
       Tween.stopAllByTarget(this.panelNode)
     }
@@ -247,6 +288,7 @@ export class ProfilePopupController extends Component {
     this.drawCircle(currentAvatarRoot, 72, PALE_HONEY)
     this.currentAvatarSprite = this.createSpriteNode(currentAvatarRoot, 'Avatar', 122, 122, 0, 0)
       .getComponent(Sprite)
+    if (this.currentAvatarSprite) this.currentAvatarRenderer = new PlayerAvatarRenderer(this.currentAvatarSprite)
     const currentSelection = this.createSpriteNode(currentAvatarRoot, 'SelectedOverlay', 154, 154, 0, 0)
     this.selectedOverlays.push(currentSelection)
 
@@ -325,7 +367,7 @@ export class ProfilePopupController extends Component {
       return
     }
     const xPositions = [-210, -70, 70, 210]
-    for (let index = 0; index < PLAYER_AVATAR_COUNT; index += 1) {
+    for (let index = 0; index < AVATAR_OPTIONS.length; index += 1) {
       const row = Math.floor(index / 4)
       const column = index % 4
       const item = this.createNode(
@@ -341,11 +383,37 @@ export class ProfilePopupController extends Component {
       if (sprite) {
         this.avatarSprites.push(sprite)
       }
+      if (index === 0 && sprite) {
+        this.wechatItem = item
+        this.wechatAvatarRenderer = new PlayerAvatarRenderer(sprite)
+        this.wechatPlaceholder = this.createNode(item, 'UnauthorizedPlaceholder', 100, 90, 0, 10)
+        const silhouette = this.wechatPlaceholder.addComponent(Graphics)
+        silhouette.fillColor = new Color(194, 157, 108, 255)
+        silhouette.circle(0, 14, 16)
+        silhouette.fill()
+        silhouette.ellipse(0, -18, 30, 19)
+        silhouette.fill()
+        this.wechatLabel = this.createLabel(item, 'WechatStatus', '暂未授权', 20, MUTED_TEXT_COLOR, 0, -30, 108, 30)
+        this.wechatBadge = this.createNode(item, 'WechatBadge', 32, 32, 35, 30)
+        const badge = this.wechatBadge.addComponent(Graphics)
+        badge.fillColor = GREEN
+        badge.circle(0, 0, 17)
+        badge.fill()
+        badge.fillColor = Color.WHITE
+        badge.ellipse(-4, 3, 10, 8)
+        badge.ellipse(5, -4, 8, 6)
+        badge.fill()
+      }
       const overlay = this.createSpriteNode(item, 'SelectedOverlay', 114, 114, 0, 0)
       this.selectedOverlays.push(overlay)
       const handler = (event: EventTouch) => {
         event.propagationStopped = true
-        void this.selectAvatar(index)
+        if (index === 0) {
+          if (!this.avatarAdapter.isSupported()) this.showMessage('请在微信小游戏中使用微信头像')
+        } else {
+          const option = AVATAR_OPTIONS[index]
+          if (option.kind === 'builtin') void this.selectAvatar(option.avatarIndex)
+        }
       }
       this.avatarTouchHandlers.push(handler)
       item.on(Node.EventType.TOUCH_END, handler, this)
@@ -378,7 +446,8 @@ export class ProfilePopupController extends Component {
     this.selectedOverlayFrame = selectedFrame
     this.avatarFrames = avatarFrames
     this.avatarSprites.forEach((sprite, index) => {
-      sprite.spriteFrame = avatarFrames[index] ?? null
+      const option = AVATAR_OPTIONS[index]
+      if (option.kind === 'builtin') sprite.spriteFrame = avatarFrames[option.avatarIndex] ?? null
     })
     this.selectedOverlays.forEach(node => {
       node.getComponent(Sprite)!.spriteFrame = selectedFrame
@@ -400,38 +469,78 @@ export class ProfilePopupController extends Component {
   }
 
   private refreshAvatarSelection() {
-    const selected = normalizeAvatarIndex(this.state.avatarIndex)
-    if (this.currentAvatarSprite) {
-      this.currentAvatarSprite.spriteFrame = this.avatarFrames[selected] ?? null
-    }
+    const avatar = this.wechatState === 'unauthorized'
+      ? { ...this.state, avatarType: 'builtin' as const } : this.state
+    void this.currentAvatarRenderer?.render(avatar)
     this.selectedOverlays.forEach((overlay, index) => {
-      overlay.active = index === 0 || index - 1 === selected
-      const sprite = overlay.getComponent(Sprite)
-      if (sprite) {
-        sprite.spriteFrame = this.selectedOverlayFrame
-      }
+      const option = AVATAR_OPTIONS[index - 1]
+      overlay.active = index === 0 || !!option && (
+        option.kind === 'wechat' ? this.state.avatarType === 'wechat'
+          : this.state.avatarType !== 'wechat' && option.avatarIndex === this.state.avatarIndex
+      )
+      overlay.getComponent(Sprite)!.spriteFrame = this.selectedOverlayFrame
     })
   }
 
+  private setBusy(busy: boolean) {
+    this.isBusy = busy
+    this.nicknameAdapter.setEnabled(!busy)
+    this.avatarAdapter.setEnabled(!busy)
+  }
+
   private async selectAvatar(index: number) {
-    if (this.isBusy || index === this.state.avatarIndex) {
+    if (this.isBusy || !this.wantsVisible || this.state.avatarType !== 'wechat' && index === this.state.avatarIndex) return
+    const revision = this.visibilityRevision
+    this.setBusy(true)
+    this.buttonClickHandler?.()
+    try {
+      await this.avatarSelectHandler?.(index)
+      if (revision === this.visibilityRevision) this.showMessage('头像已保存', true)
+    } catch (error) {
+      if (revision === this.visibilityRevision) this.showMessage(error instanceof Error ? error.message : '头像保存失败')
+    } finally { this.setBusy(false) }
+  }
+
+  private async readWechatAvatar(profile: WechatUserProfile, interactive: boolean) {
+    if (!this.wantsVisible || this.isBusy && interactive) return
+    const revision = ++this.previewRevision
+    const visibility = this.visibilityRevision
+    this.wechatState = 'authorized'
+    this.authorizationChangeHandler?.(true)
+    this.previewReady = false
+    if (!profile.avatarUrl) {
+      this.wechatAvatarRenderer?.clear()
+      this.renderWechatStatus('点击重试')
+      if (interactive) this.showMessage('未获取到微信头像，请重试')
       return
     }
-    const previous = this.state.avatarIndex
-    this.isBusy = true
-    this.buttonClickHandler?.()
-    this.state.avatarIndex = normalizeAvatarIndex(index)
-    this.refreshAvatarSelection()
+    if (interactive) { this.setBusy(true); this.buttonClickHandler?.() }
+    this.renderWechatStatus('加载中…')
     try {
-      await this.avatarSelectHandler?.(this.state.avatarIndex)
-      this.showMessage('头像已保存', true)
+      const loaded = await this.wechatAvatarRenderer?.render({ ...this.state, avatarType: 'wechat', wechatAvatarUrl: profile.avatarUrl })
+      if (revision !== this.previewRevision || visibility !== this.visibilityRevision) return
+      this.previewReady = !!loaded
+      this.renderWechatStatus(loaded ? '微信' : '点击重试')
+      if (!loaded) { if (interactive) this.showMessage('头像加载失败，请重试'); return }
+      if (interactive) {
+        await this.wechatAvatarSelectHandler?.(profile.avatarUrl)
+        if (visibility === this.visibilityRevision) this.showMessage('头像已保存', true)
+      }
     } catch (error) {
-      this.state.avatarIndex = previous
-      this.refreshAvatarSelection()
-      this.showMessage(error instanceof Error ? error.message : '头像保存失败')
-    } finally {
-      this.isBusy = false
+      if (visibility === this.visibilityRevision) this.showMessage(error instanceof Error ? error.message : '头像保存失败，请重试')
+    } finally { if (interactive) this.setBusy(false) }
+  }
+
+  private renderWechatStatus(text: string) {
+    if (this.wechatLabel) {
+      this.wechatLabel.string = this.previewReady ? '' : text
     }
+    if (this.wechatPlaceholder) this.wechatPlaceholder.active = !this.previewReady
+    if (this.wechatBadge) this.wechatBadge.active = true
+    if (!this.previewReady) {
+      const sprite = this.avatarSprites[0]
+      if (sprite?.isValid) sprite.enabled = false
+    } else if (this.avatarSprites[0]?.isValid) this.avatarSprites[0].enabled = true
   }
 
   private handleNameValueTap(event: EventTouch) {
@@ -442,6 +551,7 @@ export class ProfilePopupController extends Component {
   }
 
   private readonly refreshWechatNicknameButton = () => {
+    if (this.isBusy) return
     const hostTransform = this.hostNode?.getComponent(UITransform)
       ?? this.node.parent?.getComponent(UITransform)
     const valueTransform = this.displayNameValueNode?.getComponent(UITransform)
@@ -449,38 +559,51 @@ export class ProfilePopupController extends Component {
       return
     }
 
-    let centerX = 0
-    let centerY = 0
-    let current: Node | null = this.displayNameValueNode
-    while (current && current !== this.panelNode) {
-      centerX += current.position.x
-      centerY += current.position.y
-      current = current.parent
+    const regionFor = (target: Node) => {
+      let centerX = 0, centerY = 0
+      let current: Node | null = target
+      while (current && current !== this.panelNode) {
+        centerX += current.position.x
+        centerY += current.position.y
+        current = current.parent
+      }
+      const transform = target.getComponent(UITransform)!
+      const scale = this.panelNode!.scale.x
+      return {
+        canvasWidth: hostTransform.width, canvasHeight: hostTransform.height,
+        centerX: this.panelNode!.position.x + centerX * scale,
+        centerY: this.panelNode!.position.y + centerY * scale,
+        width: transform.width * scale, height: transform.height * scale
+      }
     }
-    if (current !== this.panelNode) {
-      return
-    }
-
-    const panelScale = this.panelNode.scale.x
-    centerX = this.panelNode.position.x + centerX * panelScale
-    centerY = this.panelNode.position.y + centerY * panelScale
-    this.nicknameAdapter.attach(
-      {
-        canvasWidth: hostTransform.width,
-        canvasHeight: hostTransform.height,
-        centerX,
-        centerY,
-        width: valueTransform.width * panelScale,
-        height: valueTransform.height * panelScale
-      },
-      nickname => void this.applyWechatNickname(nickname),
-      message => this.showMessage(message)
-    )
+    if (!this.wantsVisible || !this.wechatItem) return
+    const nameRegion = regionFor(this.displayNameValueNode)
+    const avatarRegion = regionFor(this.wechatItem)
+    const signature = JSON.stringify([nameRegion, avatarRegion])
+    if (signature === this.nativeRegions) return
+    this.nativeRegions = signature
+    this.nicknameAdapter.attach(nameRegion,
+      (profile, interactive) => { if (interactive) void this.applyWechatNickname(profile.nickname) },
+      message => this.showMessage(message))
+    this.avatarAdapter.attach(avatarRegion,
+      (profile, interactive) => void this.readWechatAvatar(profile, interactive),
+      message => this.showMessage(message),
+      state => {
+        this.wechatState = state
+        if (state === 'unauthorized' || state === 'unavailable' || state === 'loading') {
+          this.previewReady = false
+          this.renderWechatStatus(state === 'unauthorized' ? '暂未授权' : state === 'loading' ? '读取中…' : '点击获取')
+          if (state === 'unauthorized') this.authorizationChangeHandler?.(false)
+        }
+        this.refreshAvatarSelection()
+      })
+    this.nicknameAdapter.setEnabled(!this.isBusy)
+    this.avatarAdapter.setEnabled(!this.isBusy)
   }
 
   private async applyWechatNickname(nickname: string) {
     const nextName = nickname.trim()
-    if (this.isBusy || nextName === this.state.displayName) {
+    if (this.isBusy || !this.wantsVisible || nextName === this.state.displayName) {
       return
     }
     if (!nextName || Array.from(nextName).length > 16) {
@@ -488,22 +611,15 @@ export class ProfilePopupController extends Component {
       return
     }
 
-    const previous = this.state.displayName
-    this.isBusy = true
+    const visibility = this.visibilityRevision
+    this.setBusy(true)
     this.buttonClickHandler?.()
     try {
       await this.displayNameSubmitHandler?.(nextName)
-      this.state.displayName = nextName
-      if (this.displayNameLabel) {
-        this.displayNameLabel.string = nextName
-      }
-      this.showMessage('微信昵称已保存', true)
+      if (visibility === this.visibilityRevision) this.showMessage('微信昵称已保存', true)
     } catch (error) {
-      this.state.displayName = previous
-      this.showMessage(error instanceof Error ? error.message : '微信昵称保存失败')
-    } finally {
-      this.isBusy = false
-    }
+      if (visibility === this.visibilityRevision) this.showMessage(error instanceof Error ? error.message : '微信昵称保存失败')
+    } finally { this.setBusy(false) }
   }
 
   private handleCloseTap(event: EventTouch) {

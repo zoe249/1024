@@ -1,6 +1,7 @@
 import { sys } from 'cc'
 import type { ShareRewardKind } from '../../economy/PlayerEconomyStore'
 import type { SkillKind } from '../../economy/SkillStock'
+import { getOnlineStorageKey } from '../api/OnlineServiceConfig'
 
 export type SyncOperation = {
   operationId: string
@@ -34,6 +35,7 @@ function createIdentifier(prefix: string) {
 /** 玩法与经济仓库只写纯数据操作；网络同步由首页流程统一调度。 */
 export class PlayerSyncOutbox {
   private static instance: PlayerSyncOutbox | null = null
+  private readonly storageKey = getOnlineStorageKey(STORAGE_KEY)
   private state: PersistedSyncState
 
   static getInstance() {
@@ -153,7 +155,7 @@ export class PlayerSyncOutbox {
   private loadState(): PersistedSyncState {
     const fallback = this.createDefaultState()
     try {
-      const parsed = JSON.parse(sys.localStorage.getItem(STORAGE_KEY) ?? '') as Partial<PersistedSyncState>
+      const parsed = JSON.parse(sys.localStorage.getItem(this.storageKey) ?? '') as Partial<PersistedSyncState>
       return {
         version: 1,
         installationId: typeof parsed.installationId === 'string' && parsed.installationId
@@ -175,7 +177,7 @@ export class PlayerSyncOutbox {
 
   private saveState() {
     try {
-      sys.localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state))
+      sys.localStorage.setItem(this.storageKey, JSON.stringify(this.state))
     } catch (error) {
       console.warn('云同步队列保存失败', error)
     }

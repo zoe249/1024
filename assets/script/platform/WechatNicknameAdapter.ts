@@ -1,3 +1,5 @@
+import { normalizeWechatAvatarUrl } from '../profile/AvatarCatalog'
+
 export type NicknameButtonRegion = {
   canvasWidth: number
   canvasHeight: number
@@ -7,11 +9,15 @@ export type NicknameButtonRegion = {
   height: number
 }
 
+export type WechatProfileReadState = 'loading' | 'unauthorized' | 'authorized' | 'unavailable'
+export type WechatUserProfile = { nickname: string; avatarUrl: string }
+
 type WechatUserInfoTapResult = {
   errMsg?: string
   rawData?: string
   userInfo?: {
     nickName?: string
+    avatarUrl?: string
   }
 }
 
@@ -69,11 +75,12 @@ type WechatNicknameApi = {
   }
 }
 
-/** 使用微信小游戏原生授权按钮读取用户主动授权的昵称。 */
+/** 只读取平台资料；主动点击与静默读取分开，业务保存由调用方决定。 */
 export class WechatNicknameAdapter {
   private button: WechatUserInfoButton | null = null
   private tapHandler: ((result: WechatUserInfoTapResult) => void) | null = null
   private generation = 0
+  private readRevision = 0
 
   isSupported() {
     return typeof this.getApi()?.createUserInfoButton === 'function'
@@ -81,8 +88,9 @@ export class WechatNicknameAdapter {
 
   attach(
     region: NicknameButtonRegion,
-    onNickname: (nickname: string) => void,
-    onFailure: (message: string) => void
+    onProfile: (profile: WechatUserProfile, interactive: boolean) => void,
+    onFailure: (message: string) => void,
+    onState?: (state: WechatProfileReadState) => void
   ) {
     this.detach()
     const generation = ++this.generation
@@ -122,31 +130,37 @@ export class WechatNicknameAdapter {
         }
       })
 
-
       const handler = (result: WechatUserInfoTapResult) => {
-        console.log('用户信息', result)
-        if (generation !== this.generation) {
+        if (generation !== this.generation) return
+        if (result.errMsg && !result.errMsg.endsWith(':ok')) {
+          onFailure(this.describeFailure(result.errMsg, systemInfo.platform))
           return
         }
-        const nickname = this.readNickname(result)
-        if (nickname) {
-          onNickname(nickname)
-          return
+        this.readRevision += 1
+        const profile = this.readProfile(result)
+        if (profile.nickname || profile.avatarUrl) {
+          onState?.('authorized')
+          onProfile(profile, true)
+        } else {
+          onFailure(this.describeFailure(result.errMsg, systemInfo.platform))
         }
-        console.warn('[个人中心] 微信昵称授权未返回昵称', result)
-        onFailure(this.describeFailure(result.errMsg, systemInfo.platform))
       }
       button.onTap(handler)
       button.show?.()
       this.button = button
       this.tapHandler = handler
-      this.readAuthorizedNickname(wxApi, generation, onNickname)
+      if (onState) this.readAuthorizedProfile(wxApi, generation, onProfile, onState)
       return true
     } catch {
       this.detach()
-      onFailure('微信昵称能力调用失败')
+      onFailure('微信资料能力调用失败')
       return false
     }
+  }
+
+  setEnabled(enabled: boolean) {
+    if (enabled) this.button?.show?.()
+    else this.button?.hide?.()
   }
 
   detach() {
@@ -164,64 +178,56 @@ export class WechatNicknameAdapter {
     return (globalThis as { wx?: WechatNicknameApi }).wx
   }
 
-  /** 已授权时直接同步昵称，避免每次进入个人中心都再次要求用户确认。 */
-  private readAuthorizedNickname(
+  /** 打开面板只查询和读取，interactive=false 不代表用户提交资料。 */
+  private readAuthorizedProfile(
     wxApi: WechatNicknameApi,
     generation: number,
-    onNickname: (nickname: string) => void
+    onProfile: (profile: WechatUserProfile, interactive: boolean) => void,
+    onState: (state: WechatProfileReadState) => void
   ) {
-    if (typeof wxApi.getSetting !== 'function' || typeof wxApi.getUserInfo !== 'function') {
-      return
-    }
+    const readRevision = ++this.readRevision
+    const isCurrent = () => generation === this.generation && readRevision === this.readRevision
+    onState('loading')
+    if (!wxApi.getSetting || !wxApi.getUserInfo) { onState('unavailable'); return }
     wxApi.getSetting({
       success: setting => {
-        if (generation !== this.generation || !setting.authSetting?.['scope.userInfo']) {
-          return
-        }
+        if (!isCurrent()) return
+        if (!setting.authSetting?.['scope.userInfo']) { onState('unauthorized'); return }
         wxApi.getUserInfo?.({
-          lang: 'zh_CN',
-          withCredentials: true,
+          lang: 'zh_CN', withCredentials: true,
           success: result => {
-            if (generation !== this.generation) {
-              return
-            }
-            const nickname = this.readNickname(result)
-            if (nickname) {
-              onNickname(nickname)
-            }
-          }
+            if (!isCurrent()) return
+            onState('authorized')
+            onProfile(this.readProfile(result), false)
+          },
+          fail: () => { if (isCurrent()) onState('unavailable') }
         })
-      }
+      },
+      fail: () => { if (isCurrent()) onState('unavailable') }
     })
   }
 
-  private readNickname(result: WechatUserInfoTapResult) {
-    const directName = result.userInfo?.nickName?.trim() ?? ''
-    if (directName) {
-      return directName
-    }
-    if (!result.rawData) {
-      return ''
-    }
-    try {
-      const rawData = JSON.parse(result.rawData) as { nickName?: string }
-      return rawData.nickName?.trim() ?? ''
-    } catch {
-      return ''
+  private readProfile(result: WechatUserInfoTapResult): WechatUserProfile {
+    let raw: { nickName?: string; avatarUrl?: string } = {}
+    try { raw = JSON.parse(result.rawData ?? '{}') ?? {} } catch { /* 结构化资料仍可使用。 */ }
+    const name = result.userInfo?.nickName ?? raw.nickName
+    return {
+      nickname: typeof name === 'string' ? name.trim() : '',
+      avatarUrl: normalizeWechatAvatarUrl(result.userInfo?.avatarUrl ?? raw.avatarUrl)
     }
   }
 
   private describeFailure(errMsg = '', platform = '') {
     const reason = errMsg.toLowerCase()
     if (reason.includes('cancel') || reason.includes('deny')) {
-      return '已取消微信昵称授权'
+      return '已取消授权'
     }
     if (reason.includes('privacy')) {
       return '请先同意微信隐私保护指引'
     }
     if (platform === 'devtools') {
-      return '开发者工具未提供模拟昵称，请使用真机调试'
+      return '请使用微信真机获取用户资料'
     }
-    return '微信未返回昵称，请使用真机重试'
+    return '微信未返回用户资料，请使用真机重试'
   }
 }

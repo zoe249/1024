@@ -19,7 +19,6 @@ import { PlayerSessionStore } from '../online/auth/PlayerSessionStore'
 import { PlayerCloudSyncStore } from '../online/sync/PlayerCloudSyncStore'
 import { PlayerSyncOutbox } from '../online/sync/PlayerSyncOutbox'
 import { LoginStatusController } from '../online/auth/LoginStatusController'
-import { getAvatarKey } from '../profile/AvatarCatalog'
 import { PlayerProfileStore } from '../profile/PlayerProfileStore'
 import {
   ProfilePopupController,
@@ -153,7 +152,7 @@ export class HomeSceneController extends Component {
       onDailyRewardTap: () => this.openDailyReward(),
       onShopTap: () => this.openSkillShop(),
       onProfileTap: () => void this.openProfile(),
-      avatarIndex: this.playerProfile.getSnapshot()?.avatarIndex ?? 0
+      avatar: this.playerProfile.getSnapshot() ?? { avatarIndex: 0 }
     })
   }
 
@@ -203,7 +202,7 @@ export class HomeSceneController extends Component {
     try {
       const profile = await this.playerProfile.load(true)
       if (this.isValid && this.node.isValid) {
-        this.startPageController?.renderProfileAvatar(profile.avatarIndex)
+        this.startPageController?.renderProfileAvatar(profile)
       }
     } catch (error) {
       console.info('个人资料后台恢复暂未完成，将在打开个人中心时重试', this.describeOnlineError(error))
@@ -275,7 +274,7 @@ export class HomeSceneController extends Component {
       }
       this.refreshPlayerResources()
       controller.renderState(this.buildProfileViewState(profile))
-      this.startPageController?.renderProfileAvatar(profile.avatarIndex)
+      this.startPageController?.renderProfileAvatar(profile)
       this.loginStatusController?.hide()
       controller.show()
     } catch (error) {
@@ -321,6 +320,11 @@ export class HomeSceneController extends Component {
         controller.setup({
           hostNode: this.node,
           onClose: () => this.closeProfile(),
+          onWechatAvatarSelect: url => this.saveWechatAvatar(url),
+          onWechatAuthorizationChange: authorized => {
+            const profile = this.playerProfile.getSnapshot()
+            if (profile) this.startPageController?.renderProfileAvatar(authorized ? profile : { ...profile, avatarType: 'builtin' })
+          },
           onAvatarSelect: avatarIndex => this.saveProfileAvatar(avatarIndex),
           onDisplayNameSubmit: displayName => this.saveProfileDisplayName(displayName),
           onButtonClick: () => this.playButtonClickFeedback()
@@ -335,17 +339,28 @@ export class HomeSceneController extends Component {
 
   private async saveProfileAvatar(avatarIndex: number) {
     try {
-      const profile = await this.playerProfile.update({ avatarIndex })
+      const profile = await this.playerProfile.update({ avatarType: 'builtin', avatarIndex })
+      if (!this.isValid) return
       this.profileController?.renderState(this.buildProfileViewState(profile))
-      this.startPageController?.renderProfileAvatar(profile.avatarIndex)
+      this.startPageController?.renderProfileAvatar(profile)
     } catch (error) {
       throw new Error(this.describeOnlineError(error))
     }
   }
 
+  private async saveWechatAvatar(wechatAvatarUrl: string) {
+    try {
+      const profile = await this.playerProfile.update({ avatarType: 'wechat', wechatAvatarUrl })
+      if (!this.isValid) return
+      this.profileController?.renderState(this.buildProfileViewState(profile))
+      this.startPageController?.renderProfileAvatar(profile)
+    } catch (error) { throw new Error(this.describeOnlineError(error)) }
+  }
+
   private async saveProfileDisplayName(displayName: string) {
     try {
       const profile = await this.playerProfile.update({ displayName })
+      if (!this.isValid) return
       this.profileController?.renderState(this.buildProfileViewState(profile))
     } catch (error) {
       throw new Error(this.describeOnlineError(error))
@@ -356,6 +371,8 @@ export class HomeSceneController extends Component {
     return {
       displayName: profile.displayName,
       avatarIndex: profile.avatarIndex,
+      avatarType: profile.avatarType,
+      wechatAvatarUrl: profile.wechatAvatarUrl,
       highestScore: profile.highestScore
     }
   }
@@ -397,7 +414,7 @@ export class HomeSceneController extends Component {
       score: entry.value > 0
         ? isScore ? `${entry.value}分` : `合成 ${entry.value}`
         : '暂无成绩',
-      avatar: getAvatarKey(entry.avatarIndex)
+      avatar: { avatarIndex: entry.avatarIndex, avatarType: entry.avatarType, wechatAvatarUrl: entry.wechatAvatarUrl }
     }
   }
 
