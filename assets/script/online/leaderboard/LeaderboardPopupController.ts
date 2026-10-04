@@ -5,8 +5,10 @@ import {
   EventTouch,
   Graphics,
   Label,
+  Mask,
   Node,
   resources,
+  ScrollView,
   Sprite,
   SpriteFrame,
   UIOpacity,
@@ -31,6 +33,8 @@ export type LeaderboardViewEntry = {
 export type LeaderboardViewTab = {
   id: LeaderboardTabId
   label: string
+  page: number
+  hasMore: boolean
   entries: LeaderboardViewEntry[]
   self: LeaderboardViewEntry
 }
@@ -42,13 +46,17 @@ export type LeaderboardViewData = {
 type LeaderboardPopupOptions = {
   onClose: () => void
   onInvite: () => void
+  onLoadNextPage?: (page: number) => Promise<LeaderboardViewTab>
   onButtonClick?: () => void
 }
 
 type RowView = {
   node: Node
   rank: Label
-  showRank: boolean
+  background: Sprite
+  medal: Sprite
+  isSelf: boolean
+  entry: LeaderboardViewEntry | null
   avatar: Sprite
   avatarRenderer: PlayerAvatarRenderer
   name: Label
@@ -59,8 +67,11 @@ const PANEL_WIDTH = 720
 const PANEL_HEIGHT = 1240
 const ROW_WIDTH = 610
 const ROW_HEIGHT = 76
-const ROW_START_Y = 165
 const ROW_STEP_Y = 78
+const LIST_HEIGHT = ROW_STEP_Y * 7
+const LIST_TOP_Y = 203
+const FOOTER_HEIGHT = 44
+const ROW_POOL_SIZE = Math.ceil(LIST_HEIGHT / ROW_STEP_Y) + 2
 const TEXTURE_WARMUP_DRAW_COUNT = 2
 
 const BROWN = new Color(79, 46, 27, 255)
@@ -73,6 +84,8 @@ const DEFAULT_TABS: LeaderboardViewTab[] = [
   {
     id: 'score',
     label: '最高分榜',
+    page: 1,
+    hasMore: false,
     entries: [],
     self: { rank: null, name: '我', score: '暂无成绩', avatar: { avatarIndex: 11 } }
   }
@@ -117,6 +130,13 @@ export class LeaderboardPopupController extends Component {
   private closeHandler: (() => void) | null = null
   private inviteHandler: (() => void) | null = null
   private buttonClickHandler: (() => void) | null = null
+  private loadNextPageHandler: ((page: number) => Promise<LeaderboardViewTab>) | null = null
+  private scrollView: ScrollView | null = null
+  private listContent: Node | null = null
+  private footerLabel: Label | null = null
+  private pageRevision = 0
+  private isLoadingPage = false
+  private pageLoadFailed = false
   private closeButtonNode: Node | null = null
   private inviteButtonNode: Node | null = null
   private inviteButtonSprite: Sprite | null = null
@@ -138,6 +158,7 @@ export class LeaderboardPopupController extends Component {
     this.closeHandler = options.onClose
     this.inviteHandler = options.onInvite
     this.buttonClickHandler = options.onButtonClick ?? null
+    this.loadNextPageHandler = options.onLoadNextPage ?? null
     this.contentOpacity = this.node.getComponent(UIOpacity) ?? this.node.addComponent(UIOpacity)
     this.contentOpacity.opacity = 0
     void this.prepareContent()
@@ -148,6 +169,8 @@ export class LeaderboardPopupController extends Component {
     if (!scoreTab) {
       return
     }
+    this.cancelPageLoad()
+    this.pageLoadFailed = false
     this.tabs = [
       {
         ...scoreTab,
@@ -157,6 +180,8 @@ export class LeaderboardPopupController extends Component {
     ]
     if (this.isContentReady) {
       this.renderScoreBoard()
+      this.scrollView?.scrollToTop(0)
+      this.renderVisibleRows()
     }
   }
 
@@ -175,6 +200,8 @@ export class LeaderboardPopupController extends Component {
   // 退场动画期间停止尚未完成的显现调度，但保留当前画面供外层平滑缩小和淡出。
   prepareForHide() {
     this.wantsVisible = false
+    this.cancelPageLoad()
+    this.scrollView?.stopAutoScroll()
     this.cancelRevealSchedule()
   }
 
@@ -195,8 +222,7 @@ export class LeaderboardPopupController extends Component {
 
   // 外层退场动画完成后再真正隐藏内容，避免下一次激活时闪出上一帧。
   hideContent() {
-    this.rowViews.forEach(row => row.avatarRenderer.clear())
-    this.selfRowView?.avatarRenderer.clear()
+    this.clearRowAvatars()
     this.prepareForHide()
     if (this.contentOpacity) {
       this.contentOpacity.opacity = 0
@@ -204,14 +230,16 @@ export class LeaderboardPopupController extends Component {
   }
 
   onDisable() {
-    this.rowViews.forEach(row => row.avatarRenderer.clear())
-    this.selfRowView?.avatarRenderer.clear()
+    this.prepareForHide()
+    this.clearRowAvatars()
   }
 
   onDestroy() {
     this.rowViews.forEach(row => row.avatarRenderer.dispose())
     this.selfRowView?.avatarRenderer.dispose()
     this.isDisposed = true
+    this.cancelPageLoad()
+    this.loadNextPageHandler = null
     this.wantsVisible = false
     this.cancelRevealSchedule()
     // 节点销毁时引擎会自动清理事件。这里不再访问已经进入销毁流程的子节点，
@@ -225,6 +253,23 @@ export class LeaderboardPopupController extends Component {
     this.inviteButtonSprite = null
     this.selfRowView = null
     this.contentOpacity = null
+    this.scrollView = null
+    this.listContent = null
+    this.footerLabel = null
+  }
+
+  private clearRowAvatars() {
+    const rows = this.selfRowView ? [...this.rowViews, this.selfRowView] : this.rowViews
+    rows.forEach(row => {
+      row.avatarRenderer.clear()
+      row.entry = null
+    })
+  }
+
+  private cancelPageLoad() {
+    // 关闭或重新取榜后，旧请求不能追加到新一轮列表。
+    this.pageRevision += 1
+    this.isLoadingPage = false
   }
 
   /** 等待所有公共素材和榜单头像载入，再一次性创建并显示弹窗内容。 */
@@ -316,61 +361,64 @@ export class LeaderboardPopupController extends Component {
   }
 
   private createRows() {
-    for (let index = 0; index < 7; index++) {
-      const rank = index + 1
-      const row = this.createRankRow(`RankRow${rank}`, rank, ROW_START_Y - index * ROW_STEP_Y)
-      this.rowViews.push(row)
+    const viewport = new Node('RankScrollView')
+    viewport.active = false
+    viewport.setParent(this.node)
+    viewport.setPosition(0, LIST_TOP_Y, 0)
+    const viewTransform = viewport.addComponent(UITransform)
+    viewTransform.setAnchorPoint(0.5, 1)
+    viewTransform.setContentSize(ROW_WIDTH + 10, LIST_HEIGHT)
+    viewport.addComponent(Mask).type = Mask.Type.GRAPHICS_RECT
+
+    const content = new Node('Content')
+    content.setParent(viewport)
+    const contentTransform = content.addComponent(UITransform)
+    contentTransform.setAnchorPoint(0.5, 1)
+    contentTransform.setContentSize(ROW_WIDTH + 10, LIST_HEIGHT)
+    this.listContent = content
+    this.scrollView = viewport.addComponent(ScrollView)
+    this.scrollView.content = content
+    this.scrollView.horizontal = false
+    this.scrollView.vertical = true
+    this.scrollView.cancelInnerEvents = true
+    viewport.on(ScrollView.EventType.SCROLLING, this.handleScroll, this)
+    viewport.on(ScrollView.EventType.SCROLL_TO_BOTTOM, this.handleScroll, this)
+
+    // 只保留视口附近的行，翻页不会同时创建和加载整张榜单的头像。
+    for (let index = 0; index < ROW_POOL_SIZE; index++) {
+      this.rowViews.push(this.createRankRow(content, `RankRow${index + 1}`, 0))
     }
-    this.selfRowView = this.createRankRow('SelfRow', 0, -405, true)
+    this.footerLabel = this.createLabel(content, 'PageStatus', '', 19, MUTED, 0, 0, ROW_WIDTH, FOOTER_HEIGHT)
+    this.footerLabel.node.on(Node.EventType.TOUCH_END, this.handlePageRetry, this)
+    this.selfRowView = this.createRankRow(this.node, 'SelfRow', -405, true)
+    viewport.active = true
   }
 
-  private createRankRow(name: string, rank: number, y: number, isSelf = false): RowView {
+  private createRankRow(parent: Node, name: string, y: number, isSelf = false): RowView {
     const row = new Node(name)
-    row.setParent(this.node)
+    row.setParent(parent)
     row.setPosition(0, y, 0)
     row.addComponent(UITransform).setContentSize(ROW_WIDTH, ROW_HEIGHT)
-    const hasCrown = rank > 0 && rank <= 3
-
-    const rowAsset = isSelf
-      ? 'row-self'
-      : rank === 1
-        ? 'row-gold'
-        : rank === 2
-          ? 'row-silver'
-          : rank === 3
-            ? 'row-bronze'
-            : 'row-default'
-    this.createSpriteNode(
+    const background = this.createSpriteNode(
       row,
       'Background',
-      `Leaderboard/${rowAsset}/spriteFrame`,
+      `Leaderboard/${isSelf ? 'row-self' : 'row-default'}/spriteFrame`,
       ROW_WIDTH,
       ROW_HEIGHT,
       0,
       0
-    )
-
-    if (hasCrown) {
-      const medal = rank === 1 ? 'gold' : rank === 2 ? 'silver' : 'bronze'
-      this.createSpriteNode(
-        row,
-        'Medal',
-        `Leaderboard/medal-${medal}/spriteFrame`,
-        55,
-        60,
-        -268,
-        1
-      )
-    }
+    ).sprite
+    const medal = this.createSpriteNode(row, 'Medal', 'Leaderboard/medal-gold/spriteFrame', 55, 60, -268, 1).sprite
+    medal.node.active = false
 
     const rankLabel = this.createLabel(
       row,
       'Rank',
-      hasCrown ? '' : isSelf ? '—' : `${rank}`,
+      '—',
       21,
       isSelf ? CORAL : BROWN,
       -268,
-      rank <= 3 && !isSelf ? 4 : 0,
+      0,
       50,
       44
     )
@@ -423,7 +471,7 @@ export class LeaderboardPopupController extends Component {
     )
     scoreLabel.isBold = true
 
-    return { node: row, rank: rankLabel, showRank: !hasCrown, avatar, avatarRenderer: new PlayerAvatarRenderer(avatar), name: nameLabel, score: scoreLabel }
+    return { node: row, rank: rankLabel, background, medal, isSelf, entry: null, avatar, avatarRenderer: new PlayerAvatarRenderer(avatar), name: nameLabel, score: scoreLabel }
   }
 
   private createInviteButton() {
@@ -467,26 +515,117 @@ export class LeaderboardPopupController extends Component {
       return
     }
 
-    this.rowViews.forEach((row, rowIndex) => {
-      const entry = tab.entries[rowIndex]
-      if (entry) {
-        row.node.active = true
-        this.renderRow(row, entry)
-      } else {
-        row.node.active = false
-        row.avatarRenderer.clear()
-      }
-    })
+    this.listContent?.getComponent(UITransform)?.setContentSize(
+      ROW_WIDTH + 10,
+      Math.max(LIST_HEIGHT, tab.entries.length * ROW_STEP_Y + FOOTER_HEIGHT)
+    )
+    this.footerLabel?.node.setPosition(0, -tab.entries.length * ROW_STEP_Y - FOOTER_HEIGHT / 2, 0)
+    this.renderPageStatus()
+    this.renderVisibleRows()
     if (this.selfRowView) {
       this.renderRow(this.selfRowView, tab.self)
     }
   }
 
+  private renderVisibleRows() {
+    const entries = this.tabs[0]?.entries ?? []
+    const offset = Math.max(0, this.scrollView?.getScrollOffset().y ?? 0)
+    const firstIndex = Math.min(Math.max(0, Math.floor(offset / ROW_STEP_Y) - 1), Math.max(0, entries.length - ROW_POOL_SIZE))
+    this.rowViews.forEach((row, poolIndex) => {
+      // 按数据下标循环复用，让每滚过一行只替换一行，保留仍在视口内的头像。
+      const entryIndex = firstIndex + (poolIndex - firstIndex % ROW_POOL_SIZE + ROW_POOL_SIZE) % ROW_POOL_SIZE
+      const entry = entries[entryIndex]
+      if (entry) {
+        row.node.active = true
+        row.node.setPosition(0, -ROW_HEIGHT / 2 - entryIndex * ROW_STEP_Y, 0)
+        this.renderRow(row, entry)
+      } else {
+        row.node.active = false
+        if (row.entry) {
+          row.avatarRenderer.clear()
+          row.entry = null
+        }
+      }
+    })
+  }
+
   private renderRow(view: RowView, entry: LeaderboardViewEntry) {
-    view.rank.string = view.showRank ? entry.rank === null ? '—' : `${entry.rank}` : ''
+    if (view.entry === entry) {
+      return
+    }
+    view.entry = entry
+    const medalColor = entry.rank === 1 ? 'gold' : entry.rank === 2 ? 'silver' : entry.rank === 3 ? 'bronze' : ''
+    const showMedal = !view.isSelf && !!medalColor
+    this.applySpriteFrame(view.background, `Leaderboard/row-${view.isSelf ? 'self' : medalColor || 'default'}/spriteFrame`)
+    view.medal.node.active = showMedal
+    if (showMedal) {
+      this.applySpriteFrame(view.medal, `Leaderboard/medal-${medalColor}/spriteFrame`)
+    }
+    view.rank.string = showMedal ? '' : entry.rank === null ? '—' : `${entry.rank}`
     view.name.string = entry.name
     view.score.string = entry.score
     void view.avatarRenderer.render(entry.avatar)
+  }
+
+  private handleScroll() {
+    this.renderVisibleRows()
+    if (this.scrollView && this.scrollView.getMaxScrollOffset().y - this.scrollView.getScrollOffset().y <= ROW_STEP_Y) {
+      void this.loadNextPage()
+    }
+  }
+
+  private handlePageRetry(event: EventTouch) {
+    event.propagationStopped = true
+    if (this.pageLoadFailed) {
+      this.pageLoadFailed = false
+      void this.loadNextPage()
+    }
+  }
+
+  private renderPageStatus() {
+    if (!this.footerLabel) {
+      return
+    }
+    this.footerLabel.string = this.isLoadingPage ? '加载中…'
+      : this.pageLoadFailed ? '加载失败，点击重试'
+        : this.tabs[0].hasMore ? '继续上滑加载更多'
+          : this.tabs[0].entries.length ? '已显示全部排名' : '暂无上榜玩家'
+  }
+
+  private async loadNextPage() {
+    const tab = this.tabs[0]
+    if (!this.wantsVisible || this.isDisposed || this.isLoadingPage || this.pageLoadFailed || !tab.hasMore || !this.loadNextPageHandler) {
+      return
+    }
+    const revision = this.pageRevision
+    const page = tab.page + 1
+    this.isLoadingPage = true
+    this.renderPageStatus()
+    try {
+      const next = await this.loadNextPageHandler(page)
+      if (this.isDisposed || !this.wantsVisible || revision !== this.pageRevision) {
+        return
+      }
+      if (next.id !== tab.id || next.page !== page) {
+        throw new Error('排行榜分页响应异常')
+      }
+      this.tabs[0] = {
+        ...next,
+        entries: [...tab.entries, ...next.entries],
+        hasMore: next.hasMore && next.entries.length > 0
+      }
+      this.renderScoreBoard()
+    } catch (error) {
+      if (revision === this.pageRevision && !this.isDisposed) {
+        this.pageLoadFailed = true
+        console.warn('[排行榜] 分页加载失败', error)
+      }
+    } finally {
+      if (revision === this.pageRevision && !this.isDisposed) {
+        this.isLoadingPage = false
+        this.renderPageStatus()
+      }
+    }
   }
 
   private createSpriteNode(

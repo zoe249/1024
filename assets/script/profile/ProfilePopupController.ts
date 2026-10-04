@@ -71,9 +71,9 @@ export class ProfilePopupController extends Component {
   private wechatItem: Node | null = null
   private wechatPlaceholder: Node | null = null
   private wechatLabel: Label | null = null
-  private wechatBadge: Node | null = null
   private wechatState: WechatProfileReadState = 'unauthorized'
   private previewReady = false
+  private previewUrl = ''
   private previewRevision = 0
   private nativeRegions = ''
   private readonly avatarAdapter = new WechatNicknameAdapter()
@@ -132,9 +132,8 @@ export class ProfilePopupController extends Component {
     this.ensureBuilt()
     this.syncLayout()
     this.wantsVisible = true
-    this.previewReady = false
     this.wechatState = this.avatarAdapter.isSupported() ? 'loading' : 'unauthorized'
-    this.renderWechatStatus(this.wechatState === 'loading' ? '读取中…' : '暂未授权')
+    this.renderWechatStatus(this.wechatState === 'loading' ? '' : '暂未授权')
     const revision = ++this.visibilityRevision
     void this.revealWhenArtworkReady(revision)
   }
@@ -241,7 +240,8 @@ export class ProfilePopupController extends Component {
     this.nativeRegions = ''
     this.previewRevision += 1
     this.currentAvatarRenderer?.clear()
-    this.wechatAvatarRenderer?.clear()
+    // 保留已确认的头像，重新打开时后台核查授权；未完成的加载仍需取消。
+    if (!this.previewReady) this.wechatAvatarRenderer?.clear()
   }
 
   onDestroy() {
@@ -394,15 +394,6 @@ export class ProfilePopupController extends Component {
         silhouette.ellipse(0, -18, 30, 19)
         silhouette.fill()
         this.wechatLabel = this.createLabel(item, 'WechatStatus', '暂未授权', 20, MUTED_TEXT_COLOR, 0, -30, 108, 30)
-        this.wechatBadge = this.createNode(item, 'WechatBadge', 32, 32, 35, 30)
-        const badge = this.wechatBadge.addComponent(Graphics)
-        badge.fillColor = GREEN
-        badge.circle(0, 0, 17)
-        badge.fill()
-        badge.fillColor = Color.WHITE
-        badge.ellipse(-4, 3, 10, 8)
-        badge.ellipse(5, -4, 8, 6)
-        badge.fill()
       }
       const overlay = this.createSpriteNode(item, 'SelectedOverlay', 114, 114, 0, 0)
       this.selectedOverlays.push(overlay)
@@ -507,19 +498,25 @@ export class ProfilePopupController extends Component {
     const visibility = this.visibilityRevision
     this.wechatState = 'authorized'
     this.authorizationChangeHandler?.(true)
-    this.previewReady = false
     if (!profile.avatarUrl) {
+      this.previewReady = false
+      this.previewUrl = ''
       this.wechatAvatarRenderer?.clear()
       this.renderWechatStatus('点击重试')
       if (interactive) this.showMessage('未获取到微信头像，请重试')
       return
     }
     if (interactive) { this.setBusy(true); this.buttonClickHandler?.() }
-    this.renderWechatStatus('加载中…')
     try {
-      const loaded = await this.wechatAvatarRenderer?.render({ ...this.state, avatarType: 'wechat', wechatAvatarUrl: profile.avatarUrl })
+      let loaded = this.previewReady && this.previewUrl === profile.avatarUrl
+      if (!loaded) {
+        this.previewReady = false
+        this.renderWechatStatus('')
+        loaded = !!await this.wechatAvatarRenderer?.render({ ...this.state, avatarType: 'wechat', wechatAvatarUrl: profile.avatarUrl })
+      }
       if (revision !== this.previewRevision || visibility !== this.visibilityRevision) return
-      this.previewReady = !!loaded
+      this.previewReady = loaded
+      this.previewUrl = loaded ? profile.avatarUrl : ''
       this.renderWechatStatus(loaded ? '微信' : '点击重试')
       if (!loaded) { if (interactive) this.showMessage('头像加载失败，请重试'); return }
       if (interactive) {
@@ -536,7 +533,6 @@ export class ProfilePopupController extends Component {
       this.wechatLabel.string = this.previewReady ? '' : text
     }
     if (this.wechatPlaceholder) this.wechatPlaceholder.active = !this.previewReady
-    if (this.wechatBadge) this.wechatBadge.active = true
     if (!this.previewReady) {
       const sprite = this.avatarSprites[0]
       if (sprite?.isValid) sprite.enabled = false
@@ -590,10 +586,19 @@ export class ProfilePopupController extends Component {
       message => this.showMessage(message),
       state => {
         this.wechatState = state
-        if (state === 'unauthorized' || state === 'unavailable' || state === 'loading') {
+        if (state === 'loading') {
+          this.renderWechatStatus('')
+          return
+        }
+        if (state === 'unauthorized') {
+          this.previewRevision += 1
           this.previewReady = false
-          this.renderWechatStatus(state === 'unauthorized' ? '暂未授权' : state === 'loading' ? '读取中…' : '点击获取')
-          if (state === 'unauthorized') this.authorizationChangeHandler?.(false)
+          this.previewUrl = ''
+          this.wechatAvatarRenderer?.clear()
+          this.renderWechatStatus('暂未授权')
+          this.authorizationChangeHandler?.(false)
+        } else if (state === 'unavailable') {
+          this.renderWechatStatus('点击获取')
         }
         this.refreshAvatarSelection()
       })

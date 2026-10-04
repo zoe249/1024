@@ -23,7 +23,8 @@ import {
 import { HomeSwingAnimator } from './HomeSwingAnimator'
 import {
   LeaderboardPopupController,
-  type LeaderboardViewData
+  type LeaderboardViewData,
+  type LeaderboardViewTab
 } from '../online/leaderboard/LeaderboardPopupController'
 import { normalizePlayerAvatar, type PlayerAvatar } from '../profile/AvatarCatalog'
 
@@ -34,6 +35,7 @@ const { ccclass, property } = _decorator
 type StartPageOptions = {
   onStartTap: () => void
   onRankTap?: () => void
+  onLeaderboardPageLoad?: (page: number) => Promise<LeaderboardViewTab>
   onShareTap?: () => void
   onButtonClick?: () => void
   backgroundSpriteFrame?: SpriteFrame | null
@@ -180,6 +182,7 @@ export class StartPageController extends Component {
 
   private startHandler: (() => void) | null = null
   private rankHandler: (() => void) | null = null
+  private leaderboardPageHandler: ((page: number) => Promise<LeaderboardViewTab>) | null = null
   private shareHandler: (() => void) | null = null
   private buttonClickHandler: (() => void) | null = null
   private energyMoreHandler: (() => void) | null = null
@@ -238,6 +241,7 @@ export class StartPageController extends Component {
   setup(options: StartPageOptions) {
     this.startHandler = options.onStartTap
     this.rankHandler = options.onRankTap ?? null
+    this.leaderboardPageHandler = options.onLeaderboardPageLoad ?? null
     this.shareHandler = options.onShareTap ?? null
     this.buttonClickHandler = options.onButtonClick ?? null
     this.backgroundSpriteFrame = options.backgroundSpriteFrame ?? null
@@ -442,6 +446,8 @@ export class StartPageController extends Component {
         controller.setup({
           onClose: () => this.hideRankModal(),
           onInvite: () => this.shareHandler?.(),
+          onLoadNextPage: (page) => this.leaderboardPageHandler?.(page)
+            ?? Promise.reject(new Error('排行榜分页未初始化')),
           onButtonClick: () => this.playButtonClickFeedback()
         })
         if (this.pendingLeaderboardData) {
@@ -464,6 +470,7 @@ export class StartPageController extends Component {
     // 再逐个调用 off 会让微信运行时访问已释放的事件处理器。
     this.startHandler = null
     this.rankHandler = null
+    this.leaderboardPageHandler = null
     this.shareHandler = null
     this.buttonClickHandler = null
     this.energyMoreHandler = null

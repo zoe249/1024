@@ -43,6 +43,9 @@ export type LeaderboardEntryDto = {
 
 export type LeaderboardBoardDto = {
   metric: LeaderboardMetric
+  page?: number
+  pageSize?: number
+  hasMore?: boolean
   entries: LeaderboardEntryDto[]
   self: LeaderboardEntryDto
 }
@@ -111,9 +114,12 @@ export class GameApiClient {
     return this.request<SyncResponse<TSnapshot>>('POST', '/sync', body, true)
   }
 
-  getLeaderboard(limit = 7) {
+  getLeaderboard(limit = 10, page = 1) {
     const safeLimit = Math.min(20, Math.max(1, Math.floor(limit)))
-    return this.request<LeaderboardResponse>('GET', `/leaderboard?limit=${safeLimit}`, undefined, true)
+    const safePage = Math.min(1000000, Math.max(1, Math.floor(page)))
+    // 第一页沿用旧请求格式，使客户端可先于分页后端发布。
+    const pageQuery = safePage > 1 ? `&page=${safePage}` : ''
+    return this.request<LeaderboardResponse>('GET', `/leaderboard?limit=${safeLimit}${pageQuery}`, undefined, true)
   }
 
   getProfile() {

@@ -137,6 +137,7 @@ export class HomeSceneController extends Component {
     this.startPageController.setup({
       onStartTap: () => this.startGameFromHome(),
       onRankTap: () => void this.openLeaderboard(),
+      onLeaderboardPageLoad: (page) => this.loadLeaderboardPage(page),
       onShareTap: () => this.shareGameFromStartPage(),
       onButtonClick: () => this.playButtonClickFeedback(),
       backgroundSpriteFrame: this.startPageBackgroundSpriteFrame,
@@ -252,6 +253,15 @@ export class HomeSceneController extends Component {
   private retryLeaderboard() {
     this.loginStatusController?.hide()
     void this.openLeaderboard()
+  }
+
+  private async loadLeaderboardPage(page: number) {
+    const response = await this.playerSession.getApiClient().getLeaderboard(10, page)
+    const board = response.boards.find(board => board.metric === 'score')
+    if (!board || board.page !== page) {
+      throw new Error('排行榜分页响应异常，请重试')
+    }
+    return this.buildLeaderboardTab(board)
   }
 
   private async openProfile() {
@@ -402,6 +412,8 @@ export class HomeSceneController extends Component {
     return {
       id: board.metric,
       label: isScore ? '最高分榜' : '最高合成',
+      page: board.page ?? 1,
+      hasMore: board.hasMore ?? false,
       entries: board.entries.map(entry => this.buildLeaderboardEntry(entry, isScore)),
       self: this.buildLeaderboardEntry(board.self, isScore, true)
     }
