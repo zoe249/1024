@@ -9,7 +9,11 @@ build/
 profiles/
 native
 docs
-design
+design/*
+!design/startup/
+design/startup/*
+!design/startup/first-entry-background-v2-source.png
+!design/startup/first-entry-night-v2-source.png
 #//////////////////////////
 # NPM
 #//////////////////////////

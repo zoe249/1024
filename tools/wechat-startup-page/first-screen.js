@@ -116,8 +116,8 @@ const DEFAULT_BACKGROUND_CONFIG = {
 };
 const LEGACY_BACKGROUND_FILE = 'startup-background.jpg';
 const LOGO_FILE = 'startup-logo.png';
-// Logo 放在晨光天空的安全区，全面屏上也不会贴近刘海或圆角。
-const LOGO_CENTER_Y = 0.64;
+// Logo 中心距顶部 20.5%，避开夜间月亮，同时兼顾全面屏的刘海与圆角。
+const LOGO_CENTER_Y = 0.59;
 const LOGO_WIDTH_RATIO = 0.62;
 const MAX_LOGO_HEIGHT_RATIO = 0.215;
 const BAR_CENTER_Y = -0.58;

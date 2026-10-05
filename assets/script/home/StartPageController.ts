@@ -644,7 +644,7 @@ export class StartPageController extends Component {
     this.ensureHomepageSwing(background)
 
     const logo = this.getOrCreatePageNode(this.homepageLayerNode, 'HomepageLogo')
-    this.applyHomepageArtwork(logo, HomepageArtwork.logo, 560, 318)
+    this.applyHomepageArtwork(logo, HomepageArtwork.logo, 560, 322)
 
     this.settingsButtonNode = this.getOrCreatePageNode(this.homepageLayerNode, 'SettingsButton')
     this.applyHomepageArtwork(this.settingsButtonNode, HomepageArtwork.settings, 76, 79)

@@ -6,6 +6,7 @@
 从而彻底避开默认 Cocos Logo，并保证两层首屏使用同一套视觉素材。
 """
 
+from io import BytesIO
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -14,18 +15,12 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIRECTORY.parent.parent
 DESIGN_DIRECTORY = PROJECT_ROOT / "design/startup"
-VARIANT_DIRECTORY = DESIGN_DIRECTORY / "background-variants-v1"
 SOURCE_BACKGROUND = DESIGN_DIRECTORY / "first-entry-background-v2-source.png"
 SOURCE_LOGO = (
     PROJECT_ROOT / "assets/resources/Homepage/logo-1024-number-garden.png"
 )
-STARTUP_BACKGROUND = SCRIPT_DIRECTORY / "startup-background.jpg"
-DAY_BACKGROUND_SOURCE = (
-    VARIANT_DIRECTORY / "b-layered-paper-garden-background.jpg"
-)
-NIGHT_BACKGROUND_SOURCE = (
-    VARIANT_DIRECTORY / "c-luminous-watercolor-night-background.jpg"
-)
+DAY_BACKGROUND_SOURCE = SOURCE_BACKGROUND
+NIGHT_BACKGROUND_SOURCE = DESIGN_DIRECTORY / "first-entry-night-v2-source.png"
 STARTUP_DAY_BACKGROUND = SCRIPT_DIRECTORY / "startup-background-day.jpg"
 STARTUP_NIGHT_BACKGROUND = SCRIPT_DIRECTORY / "startup-background-night.jpg"
 STARTUP_LOGO = SCRIPT_DIRECTORY / "startup-logo.png"
@@ -35,10 +30,14 @@ PREVIEW_FONT_CANDIDATES = (
     Path("C:/Windows/Fonts/msyh.ttc"),
     Path("C:/Windows/Fonts/simhei.ttf"),
     Path("/System/Library/Fonts/PingFang.ttc"),
+    Path("/System/Library/Fonts/STHeiti Medium.ttc"),
     Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
 )
 
 CANVAS_SIZE = (750, 1334)
+LOGO_WIDTH_RATIO = 0.62
+LOGO_CENTER_Y_RATIO = 0.205
+BACKGROUND_MAX_BYTES = 100 * 1024
 
 
 def resolve_preview_font() -> Path:
@@ -48,16 +47,6 @@ def resolve_preview_font() -> Path:
         if font_path.is_file():
             return font_path
     raise FileNotFoundError("未找到可用于生成启动页预览的中文系统字体。")
-
-
-def quantize_transparent_image(image: Image.Image, colors: int = 256) -> Image.Image:
-    """将透明图片转为调色板 PNG，在保留透明边缘的同时显著缩小体积。"""
-
-    return image.convert("RGBA").quantize(
-        colors=colors,
-        method=Image.Quantize.FASTOCTREE,
-        dither=Image.Dither.FLOYDSTEINBERG,
-    )
 
 
 def prepare_background() -> Image.Image:
@@ -72,27 +61,24 @@ def prepare_background() -> Image.Image:
     )
 
 
-def prepare_logo(target_width: int = 720) -> Image.Image:
-    """裁掉 Logo 透明留白，并按目标宽度生成清晰的透明图。"""
+def prepare_logo() -> Image.Image:
+    """复用已压缩的首页 Logo，保留透明边缘与两行文字的相对位置。"""
 
     image = Image.open(SOURCE_LOGO).convert("RGBA")
     alpha_bounds = image.getchannel("A").getbbox()
     if alpha_bounds is None:
         raise ValueError("数字花园 Logo 没有可见像素。")
 
-    padding = 20
-    left, top, right, bottom = alpha_bounds
-    image = image.crop(
-        (
-            max(0, left - padding),
-            max(0, top - padding),
-            min(image.width, right + padding),
-            min(image.height, bottom + padding),
-        )
-    )
-    target_height = round(image.height * target_width / image.width)
-    return image.resize(
-        (target_width, target_height),
+    image.thumbnail((720, 384), Image.Resampling.LANCZOS)
+    return image
+
+
+def prepare_splash_logo(logo: Image.Image) -> Image.Image:
+    """插屏沿用微信首屏的 Logo 宽度，避免切换引擎时字号跳变。"""
+
+    width = round(CANVAS_SIZE[0] * LOGO_WIDTH_RATIO)
+    return logo.resize(
+        (width, round(logo.height * width / logo.width)),
         Image.Resampling.LANCZOS,
     )
 
@@ -105,21 +91,33 @@ def paste_centered(base: Image.Image, overlay: Image.Image, center_y: int) -> No
     base.paste(overlay, (left, top), overlay)
 
 
-def create_runtime_assets(background: Image.Image, logo: Image.Image) -> None:
-    """输出微信主包使用的轻量背景和透明 Logo。"""
+def create_runtime_logo(logo: Image.Image) -> None:
+    """输出微信主包使用的透明 Logo。"""
 
-    background.save(
-        STARTUP_BACKGROUND,
-        quality=78,
-        optimize=True,
-        progressive=False,
-        subsampling=2,
-    )
-    quantize_transparent_image(logo).save(STARTUP_LOGO, optimize=True)
+    logo.save(STARTUP_LOGO, optimize=True)
+
+
+def encode_startup_background(image: Image.Image, name: str) -> tuple[bytes, int]:
+    """按主包预算选择最高 JPEG 质量，避免换母版后发布图体积反而上升。"""
+
+    for quality in range(82, 44, -1):
+        buffer = BytesIO()
+        image.save(
+            buffer,
+            format="JPEG",
+            quality=quality,
+            optimize=True,
+            progressive=False,
+            subsampling=2,
+        )
+        payload = buffer.getvalue()
+        if len(payload) <= BACKGROUND_MAX_BYTES:
+            return payload, quality
+    raise ValueError(f"{name} 在最低质量 45 下仍超过 100 KB，请简化母版纹理。")
 
 
 def create_dynamic_background_assets() -> None:
-    """由高清候选图生成微信主包专用版本，保留尺寸并降低短暂首屏的码率。"""
+    """由选定的昼夜母版生成轻量 JPG，兼顾蜡笔纹理与棋子数字清晰度。"""
 
     for source, target in (
         (DAY_BACKGROUND_SOURCE, STARTUP_DAY_BACKGROUND),
@@ -131,28 +129,17 @@ def create_dynamic_background_assets() -> None:
             method=Image.Resampling.LANCZOS,
             centering=(0.5, 0.5),
         )
-        image.save(
-            target,
-            quality=55,
-            optimize=True,
-            progressive=False,
-            subsampling=2,
-        )
+        payload, quality = encode_startup_background(image, target.name)
+        target.write_bytes(payload)
+        print(f"{target.name}: {len(payload) / 1024:.1f} KB，JPEG 质量 {quality}")
 
 
 def create_cocos_splash(background: Image.Image, logo: Image.Image) -> None:
     """生成 Cocos 插屏背景；Logo 直接烘焙，避免引擎回退到默认品牌图。"""
 
     splash = background.copy()
-    splash_logo_width = 500
-    splash_logo = logo.resize(
-        (
-            splash_logo_width,
-            round(logo.height * splash_logo_width / logo.width),
-        ),
-        Image.Resampling.LANCZOS,
-    )
-    paste_centered(splash, splash_logo, center_y=244)
+    splash_logo = prepare_splash_logo(logo)
+    paste_centered(splash, splash_logo, center_y=round(CANVAS_SIZE[1] * LOGO_CENTER_Y_RATIO))
     splash.save(
         COCOS_SPLASH,
         quality=82,
@@ -195,15 +182,8 @@ def create_design_preview(background: Image.Image, logo: Image.Image) -> None:
     """生成带典型加载进度的静态预览，便于不启动微信工具也能检查排版。"""
 
     preview = background.copy()
-    preview_logo_width = 500
-    preview_logo = logo.resize(
-        (
-            preview_logo_width,
-            round(logo.height * preview_logo_width / logo.width),
-        ),
-        Image.Resampling.LANCZOS,
-    )
-    paste_centered(preview, preview_logo, center_y=244)
+    preview_logo = prepare_splash_logo(logo)
+    paste_centered(preview, preview_logo, center_y=round(CANVAS_SIZE[1] * LOGO_CENTER_Y_RATIO))
 
     draw = ImageDraw.Draw(preview, "RGBA")
     preview_font = resolve_preview_font()
@@ -263,13 +243,12 @@ def main() -> None:
     DESIGN_DIRECTORY.mkdir(parents=True, exist_ok=True)
     background = prepare_background()
     logo = prepare_logo()
-    create_runtime_assets(background, logo)
+    create_runtime_logo(logo)
     create_dynamic_background_assets()
     create_cocos_splash(background, logo)
     create_design_preview(background, logo)
     print("首次进入页资源已生成：")
     for path in (
-        STARTUP_BACKGROUND,
         STARTUP_DAY_BACKGROUND,
         STARTUP_NIGHT_BACKGROUND,
         STARTUP_LOGO,

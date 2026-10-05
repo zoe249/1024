@@ -4,9 +4,9 @@
 
 页面内容：
 
-- 06:00–17:59 使用第二套“手工剪纸”轻量 JPG 全屏背景
-- 18:00–05:59 使用第三套“夜光水彩”轻量 JPG 全屏背景
-- 由首页 Logo 裁边、缩放后生成的轻量透明 PNG
+- 06:00–17:59 使用“奶油蜡笔白天”轻量 JPG 全屏背景，狐狸、兔子和方形棋子为主体
+- 18:00–05:59 使用“奶油蜡笔月夜”轻量 JPG 全屏背景，保留月光、萤火虫和更大数值棋子，无小鸟
+- 复用首页透明 Logo：大号 `1024`，小号“数字花园”位于右下并右对齐
 - 深棕色胶囊进度底槽与春芽绿进度
 - “加载中”状态文案
 - 带半透明底板的标准健康游戏忠告
@@ -28,14 +28,20 @@
 
 ## 重新生成视觉资源
 
-正式晨光母版位于 `design/startup/first-entry-background-v2-source.png`，当前白天、夜间母版分别为
-`b-layered-paper-garden-background.jpg` 与 `c-luminous-watercolor-night-background.jpg`。更新母版或首页 Logo 后执行：
+白天、夜间母版分别为 `design/startup/first-entry-background-v2-source.png` 与
+`design/startup/first-entry-night-v2-source.png`。Logo 位于
+`assets/resources/Homepage/logo-1024-number-garden.png`。更新母版或首页 Logo 后执行：
 
 ```bash
 python tools/wechat-startup-page/generate-startup-assets.py
 ```
 
 脚本会同步生成微信轻量背景、透明 Logo、Cocos 自定义插屏图片和静态排版预览。
+背景输出为 750×1334，每张不超过 100 KB，脚本在质量 82–45 中选择满足预算的最高值；
+高清母版保留原画质。Logo 保持原有透明画布，限制在 720×384 内，
+避免重复量化损伤透明边缘。首屏 Logo 宽度为屏宽的 62%，中心距顶部 20.5%，为月亮留出空间。
+设计目录保留昼夜母版与当前静态预览。固定白天方案复用 `startup-background-day.jpg`，
+仅在固定模式的构建目录中使用 `startup-background.jpg` 文件名。
 
 ## 构建后安装
 
@@ -51,8 +57,8 @@ npm run postbuild:wechat
 如果要临时关闭动态切换并强制固定当前白天或夜间背景：
 
 ```bash
-npm run postbuild:wechat -- --style b  # 手工剪纸
-npm run postbuild:wechat -- --style c  # 夜光水彩
+npm run postbuild:wechat -- --style b  # 奶油蜡笔白天
+npm run postbuild:wechat -- --style c  # 奶油蜡笔月夜
 ```
 
 也可以不经过 npm，直接执行同一个脚本：

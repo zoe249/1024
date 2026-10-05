@@ -38,15 +38,15 @@ const TINY_COCOS_SPLASH_JPEG_BASE64 =
 
 const BACKGROUND_STYLES = {
     current: {
-        label: '当前默认 · 数字花园晨光',
-        file: path.join(__dirname, 'startup-background.jpg')
+        label: '当前默认 · 奶油蜡笔白天',
+        file: path.join(__dirname, DAY_BACKGROUND_FILE)
     },
     b: {
-        label: 'B · 手工剪纸',
+        label: 'B · 奶油蜡笔白天',
         file: path.join(__dirname, 'startup-background-day.jpg')
     },
     c: {
-        label: 'C · 夜光水彩',
+        label: 'C · 奶油蜡笔月夜',
         file: path.join(__dirname, 'startup-background-night.jpg')
     }
 };
@@ -98,8 +98,8 @@ function printHelp() {
   -h, --help                 查看帮助
 
 默认规则：
-  06:00–17:59 使用 B · 手工剪纸
-  18:00–05:59 使用 C · 夜光水彩
+  06:00–17:59 使用 B · 奶油蜡笔白天
+  18:00–05:59 使用 C · 奶油蜡笔月夜
   时间取自玩家设备本地时间
 
 示例：
