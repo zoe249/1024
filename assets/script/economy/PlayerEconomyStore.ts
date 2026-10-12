@@ -1,7 +1,9 @@
 import { sys } from 'cc'
 import type { SkillCounts, SkillKind } from './SkillStock'
 import { PlayerSyncOutbox } from '../online/sync/PlayerSyncOutbox'
-import { getOnlineStorageKey } from '../online/api/OnlineServiceConfig'
+import { PlayerSessionStore } from '../online/auth/PlayerSessionStore'
+import { getPlayerAccountStorageKey, isLaterPlayerAccount } from '../online/auth/PlayerAccountStorage'
+import type { SyncOperation } from '../online/sync/PlayerSyncOutbox'
 
 export type ShareRewardKind = 'coins' | 'energy'
 
@@ -10,6 +12,20 @@ export type EconomySnapshot = {
   maxEnergy: number
   coins: number
   skills: SkillCounts
+}
+
+export type EnergyBarState = {
+  energy: number
+  maxEnergy: number
+  status: 'recovering' | 'full' | 'syncing'
+  remainingSeconds: number | null
+  isConfirmed: boolean
+}
+
+export function monotonicNow(): number | null {
+  const runtime = globalThis as { performance?: { now?: () => number }; wx?: { getPerformance?: () => { now: () => number } } }
+  const clock = runtime.performance ?? runtime.wx?.getPerformance?.()
+  return typeof clock?.now === 'function' ? clock.now() : null
 }
 
 export type DailyRewardState = {
@@ -40,6 +56,8 @@ export type CloudEconomySnapshot = {
   coins: number
   skills: SkillCounts
   lastEnergyRecoveryAt: string
+  energyRecoverySeconds?: number
+  nextEnergyRecoveryAt?: string | null
 }
 
 export type CloudCheckInSnapshot = {
@@ -72,6 +90,10 @@ type PersistedEconomyState = EconomySnapshot & {
   lastDailyLoginDate: string
   dailyLoginStreak: number
   lastEnergyRecoveryAtMs: number
+  confirmedEconomy?: CloudEconomySnapshot
+  confirmedCheckIn?: CloudCheckInSnapshot
+  cloudRevision?: number
+  serverTimeMs?: number
 }
 
 const STORAGE_KEY = 'number-garden-player-economy-v1'
@@ -84,8 +106,20 @@ const STORAGE_KEY = 'number-garden-player-economy-v1'
  */
 export class PlayerEconomyStore {
   private static instance: PlayerEconomyStore | null = null
-  private readonly storageKey = getOnlineStorageKey(STORAGE_KEY)
-  private state: PersistedEconomyState
+  private storageKey = ''
+  private accountState: PersistedEconomyState
+  private serverAnchor: { serverMs: number; monotonicMs: number } | null = null
+  lastEnergyOperationId: string | null = null
+  private get state(): PersistedEconomyState {
+    const key = getPlayerAccountStorageKey(STORAGE_KEY, PlayerSessionStore.getInstance().getSnapshot().playerId)
+    if (key !== this.storageKey) {
+      this.storageKey = key
+      this.serverAnchor = null
+      this.accountState = this.loadState()
+    }
+    return this.accountState
+  }
+  private set state(value: PersistedEconomyState) { this.accountState = value }
   private readonly syncOutbox = PlayerSyncOutbox.getInstance()
 
   static getInstance() {
@@ -96,7 +130,7 @@ export class PlayerEconomyStore {
   }
 
   private constructor() {
-    this.state = this.loadState()
+    void this.state
   }
 
   getSnapshot(): EconomySnapshot {
@@ -129,12 +163,22 @@ export class PlayerEconomyStore {
   }
 
   /** 云端响应成功后落入权威余额；调用过程不再生成新的同步操作。 */
-  applyCloudSnapshot(economy: CloudEconomySnapshot, checkIn: CloudCheckInSnapshot) {
+  applyCloudSnapshot(economy: CloudEconomySnapshot, checkIn: CloudCheckInSnapshot, serverTime: string, revision: number) {
+    const state = this.state
+    const serverMs = Date.parse(serverTime)
+    if (!Number.isFinite(serverMs)) throw new Error('服务端时间无效，请重新同步')
+    if (revision < (state.cloudRevision ?? -1) ||
+      revision === state.cloudRevision && serverMs < (state.serverTimeMs ?? 0)) {
+      this.rebuildPendingView()
+      return false
+    }
+    const tick = monotonicNow()
+    this.serverAnchor = tick === null ? null : { serverMs, monotonicMs: tick }
     const recoveryTime = new Date(economy.lastEnergyRecoveryAt).getTime()
     this.state = {
       version: 2,
-      energy: Math.min(ECONOMY_CONFIG.maxEnergy, Math.max(0, Math.floor(economy.energy))),
-      maxEnergy: ECONOMY_CONFIG.maxEnergy,
+      energy: Math.min(economy.maxEnergy, Math.max(0, Math.floor(economy.energy))),
+      maxEnergy: Math.max(1, Math.floor(economy.maxEnergy)),
       coins: Math.max(0, Math.floor(economy.coins)),
       skills: {
         bomb: this.clampSkillCount(economy.skills.bomb),
@@ -143,9 +187,99 @@ export class PlayerEconomyStore {
       },
       lastDailyLoginDate: checkIn.lastCheckInDate ?? '',
       dailyLoginStreak: this.clampDailyLoginStreak(checkIn.consecutiveDays),
-      lastEnergyRecoveryAtMs: this.normalizeRecoveryTime(recoveryTime)
+      lastEnergyRecoveryAtMs: this.normalizeRecoveryTime(recoveryTime, serverMs),
+      confirmedEconomy: { ...economy, skills: { ...economy.skills } },
+      confirmedCheckIn: { ...checkIn, claimedDates: [...checkIn.claimedDates] },
+      cloudRevision: revision,
+      serverTimeMs: serverMs
     }
+    this.rebuildPendingView()
     this.saveState()
+    return true
+  }
+
+  hasConfirmedEnergy() { return !!this.state.confirmedEconomy }
+
+  invalidateServerClock() { this.serverAnchor = null }
+
+  getEstimatedServerNow() {
+    void this.state
+    const tick = monotonicNow()
+    return this.serverAnchor && tick !== null
+      ? this.serverAnchor.serverMs + Math.max(0, tick - this.serverAnchor.monotonicMs)
+      : null
+  }
+
+  /** 登录账号只估算显示时间，恢复入账必须来自服务端快照。 */
+  getEnergyBarState(): EnergyBarState {
+    this.syncEnergyRecovery()
+    const loggedIn = !!PlayerSessionStore.getInstance().getSnapshot().playerId
+    const confirmed = !loggedIn || this.hasConfirmedEnergy()
+    const pending = loggedIn && this.syncOutbox.getOperations().some(op => op.type === 'energy_consumed' || op.type === 'share_reward' && op.payload.kind === 'energy')
+    const energy = this.state.energy
+    const maxEnergy = this.state.maxEnergy
+    if (energy >= maxEnergy && confirmed) return { energy, maxEnergy, status: 'full', remainingSeconds: null, isConfirmed: !pending }
+    const cloud = this.state.confirmedEconomy
+    const interval = cloud?.energyRecoverySeconds ?? ECONOMY_CONFIG.energyRecoverySeconds
+    const target = loggedIn
+      ? cloud && cloud.energy < cloud.maxEnergy
+        ? Date.parse(cloud.nextEnergyRecoveryAt ?? cloud.lastEnergyRecoveryAt) + (cloud.nextEnergyRecoveryAt ? 0 : interval * 1000)
+        : null
+      : this.state.lastEnergyRecoveryAtMs + interval * 1000
+    const now = loggedIn ? this.getEstimatedServerNow() : Date.now()
+    const remainingSeconds = target !== null && now !== null && Number.isFinite(target)
+      ? Math.ceil(Math.max(0, target - now) / 1000) : null
+    return { energy, maxEnergy, status: remainingSeconds === null ? 'syncing' : 'recovering', remainingSeconds, isConfirmed: confirmed && !pending }
+  }
+
+  /** 先应用权威快照，再按原顺序重建尚未确认的操作；重建不产生新队列。 */
+  private rebuildPendingView() {
+    const base = this.state.confirmedEconomy
+    const checkIn = this.state.confirmedCheckIn
+    if (!base || !checkIn) return
+    Object.assign(this.state, {
+      energy: base.energy, maxEnergy: base.maxEnergy, coins: base.coins, skills: { ...base.skills },
+      lastEnergyRecoveryAtMs: Date.parse(base.lastEnergyRecoveryAt),
+      lastDailyLoginDate: checkIn.lastCheckInDate ?? '', dailyLoginStreak: checkIn.consecutiveDays
+    })
+    for (const operation of this.syncOutbox.getOperations()) this.replayPendingOperation(operation)
+  }
+
+  /** 按原操作重建暂存余额，奖励只在确认后入账，避免在途响应覆盖新操作。 */
+  private replayPendingOperation(operation: SyncOperation) {
+    const payload = operation.payload
+    switch (operation.type) {
+      case 'energy_consumed': this.state.energy = Math.max(0, this.state.energy - Number(payload.amount)); break
+      case 'share_reward':
+        // 网络奖励在被接受前不进入可消费余额。
+        break
+      case 'skill_consumed': {
+        const skill = payload.skill as SkillKind
+        this.state.skills[skill] = Math.max(0, this.state.skills[skill] - 1)
+        break
+      }
+      case 'skill_purchased': {
+        const skill = payload.skill as SkillKind
+        this.state.coins = Math.max(0, this.state.coins - ECONOMY_CONFIG.skillPrices[skill])
+        this.state.skills[skill] = this.clampSkillCount(this.state.skills[skill] + 1)
+        break
+      }
+      case 'daily_check_in': {
+        const date = String(payload.date)
+        if (date <= this.state.lastDailyLoginDate) break
+        const gap = (this.getDateKeyOrdinal(date) ?? 0) - (this.getDateKeyOrdinal(this.state.lastDailyLoginDate) ?? 0)
+        const day = gap === 1 ? this.state.dailyLoginStreak % 7 + 1 : 1
+        this.state.coins += ECONOMY_CONFIG.dailyLoginRewards[day - 1]
+        this.state.lastDailyLoginDate = date
+        this.state.dailyLoginStreak = day
+        break
+      }
+      case 'game_finished': {
+        const score = Number(payload.score), highest = Number(payload.highestNumber)
+        this.state.coins += Math.min(300, Math.max(5, Math.floor(score / 120) + Math.max(0, Math.floor(Math.log2(Math.max(1, highest))) - 7) * 8 + (highest >= 2048 ? 90 : highest >= 1024 ? 40 : highest >= 512 ? 18 : 0)))
+        break
+      }
+    }
   }
 
   /**
@@ -217,6 +351,9 @@ export class PlayerEconomyStore {
     }
 
     const amount = kind === 'coins' ? ECONOMY_CONFIG.shareCoins : ECONOMY_CONFIG.shareEnergy
+    if (PlayerSessionStore.getInstance().getSnapshot().playerId) {
+      return { claimed: false, amount: 0, reason: 'storage-failed' }
+    }
     if (kind === 'coins') {
       this.state.coins += amount
     } else {
@@ -256,12 +393,15 @@ export class PlayerEconomyStore {
       return false
     }
 
+    const occurredAtMs = PlayerSessionStore.getInstance().getSnapshot().playerId
+      ? this.getEstimatedServerNow() ?? this.state.serverTimeMs ?? Date.now() : Date.now()
+    this.lastEnergyOperationId = this.syncOutbox.recordEnergyConsumed(cost, occurredAtMs)
+    const wasFull = this.state.energy >= this.state.maxEnergy
     this.state.energy -= cost
-    if (this.state.energy < this.state.maxEnergy) {
+    if (wasFull) {
       this.state.lastEnergyRecoveryAtMs = Date.now()
     }
     this.saveState()
-    this.syncOutbox.recordEnergyConsumed(cost)
     return true
   }
 
@@ -315,7 +455,7 @@ export class PlayerEconomyStore {
   private createDefaultState(): PersistedEconomyState {
     return {
       version: 2,
-      energy: ECONOMY_CONFIG.initialEnergy,
+      energy: isLaterPlayerAccount(STORAGE_KEY, PlayerSessionStore.getInstance().getSnapshot().playerId) ? 0 : ECONOMY_CONFIG.initialEnergy,
       maxEnergy: ECONOMY_CONFIG.maxEnergy,
       coins: ECONOMY_CONFIG.initialCoins,
       skills: {
@@ -342,8 +482,8 @@ export class PlayerEconomyStore {
       const lastDailyLoginDate = parsed.lastDailyLoginDate ?? ''
       return {
         version: 2,
-        energy: Math.min(maxEnergy, Math.max(0, Math.floor(parsed.energy ?? fallback.energy))),
-        maxEnergy,
+        energy: Math.min(parsed.confirmedEconomy?.maxEnergy ?? maxEnergy, Math.max(0, Math.floor(parsed.energy ?? fallback.energy))),
+        maxEnergy: parsed.confirmedEconomy?.maxEnergy ?? maxEnergy,
         coins: Math.max(0, Math.floor(parsed.coins ?? fallback.coins)),
         skills: {
           bomb: this.clampSkillCount(parsed.skills?.bomb ?? fallback.skills.bomb),
@@ -355,7 +495,11 @@ export class PlayerEconomyStore {
         dailyLoginStreak: this.clampDailyLoginStreak(
           parsed.dailyLoginStreak ?? (lastDailyLoginDate ? 1 : 0)
         ),
-        lastEnergyRecoveryAtMs: this.normalizeRecoveryTime(parsed.lastEnergyRecoveryAtMs)
+        lastEnergyRecoveryAtMs: parsed.confirmedEconomy ? Date.parse(parsed.confirmedEconomy.lastEnergyRecoveryAt) : this.normalizeRecoveryTime(parsed.lastEnergyRecoveryAtMs),
+        confirmedEconomy: parsed.confirmedEconomy,
+        confirmedCheckIn: parsed.confirmedCheckIn,
+        cloudRevision: parsed.cloudRevision,
+        serverTimeMs: parsed.serverTimeMs
       }
     } catch (error) {
       console.warn('玩家经济存档读取失败，已使用默认值', error)
@@ -391,6 +535,7 @@ export class PlayerEconomyStore {
    * 保证切场景或重新打开游戏后也能得到正确体力。
    */
   private syncEnergyRecovery(nowMs = Date.now()) {
+    if (PlayerSessionStore.getInstance().getSnapshot().playerId) { void this.state; return }
     const intervalMs = ECONOMY_CONFIG.energyRecoverySeconds * 1000
     const maxEnergy = ECONOMY_CONFIG.maxEnergy
     const previousEnergy = this.state.energy
@@ -425,7 +570,7 @@ export class PlayerEconomyStore {
 
   private normalizeRecoveryTime(value: unknown, fallback = Date.now()) {
     const time = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : fallback
-    return Math.max(0, time)
+    return Math.max(0, Math.min(time, fallback))
   }
 
   // 使用本地日期而非 UTC，保证“每日”切换符合玩家所在时区的自然日。

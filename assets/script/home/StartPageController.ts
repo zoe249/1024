@@ -29,6 +29,8 @@ import {
 import { normalizePlayerAvatar, type PlayerAvatar } from '../profile/AvatarCatalog'
 
 import { PlayerAvatarRenderer } from '../profile/PlayerAvatarRenderer'
+import { EnergyBarController } from '../economy/EnergyBarController'
+import type { EnergyBarState } from '../economy/PlayerEconomyStore'
 
 const { ccclass, property } = _decorator
 
@@ -86,12 +88,9 @@ const ACTION_ICON_WIDTH = 80
 const ACTION_ICON_HEIGHT = 82
 const ACTION_ICON_PAIR_OFFSET = 62
 // 资源条保持已经确认的小尺寸，以下常量统一用于胶囊避让和标题间距计算。
-const AMOUNT_BAR_SCALE = 0.36
+const AMOUNT_BAR_SCALE = 1
 const DEFAULT_MAX_ENERGY = 10
-const ENERGY_HEART_LEFT_X = -132
-const ENERGY_HEART_RIGHT_X = 132
-const ENERGY_HEART_Y = 2
-const AMOUNT_BAR_SOURCE_HEIGHT = 155
+const AMOUNT_BAR_SOURCE_HEIGHT = 56
 const AMOUNT_BAR_DEFAULT_TOP_INSET = 92
 const AMOUNT_BAR_TITLE_GAP = 20
 // 顶部交互控件与刘海/灵动岛安全区之间保留少量呼吸空间。
@@ -120,7 +119,6 @@ const HomepageArtwork = {
   shop: 'feature-shop',
   logo: 'logo-1024-number-garden',
   coin: 'resource-coin',
-  stamina: 'resource-stamina',
   settings: 'ui-settings'
 } as const
 
@@ -141,6 +139,9 @@ export class StartPageController extends Component {
   // 首页内容容器优先从层级管理器读取，脚本只负责绑定事件和必要动画。
   @property({ type: Node, tooltip: '首页内容容器，可选，默认查找 PageCard' })
   private pageCardNodeRef: Node | null = null
+
+  @property({ type: Node, tooltip: '首页体力条，在 home.scene 层级中维护布局和字体' })
+  private energyBarNodeRef: Node | null = null
 
   // 首页背景节点可在层级管理器里摆好，脚本只在绑定背景图时做 cover 适配。
   @property({ type: Node, tooltip: '首页背景节点，可选，默认查找 Background' })
@@ -212,10 +213,9 @@ export class StartPageController extends Component {
   private rankButtonNode: Node | null = null
   private settingsButtonNode: Node | null = null
   private shareButtonNode: Node | null = null
-  // 首页只展示体力 Prefab；金币 Prefab 移到玩法场景，避免顶部信息重复。
+  // 体力条优先绑定场景中的预制件实例，内部布局由层级管理器维护。
   private energyBarNode: Node | null = null
-  private energyMoreButtonNode: Node | null = null
-  private energyHeartNodes: Node[] = []
+  private energyBarController: EnergyBarController | null = null
   private tipLabel: Label | null = null
   private tipOpacity: UIOpacity | null = null
   private currentTipIndex = -1
@@ -232,11 +232,9 @@ export class StartPageController extends Component {
   private dailyRewardButtonNode: Node | null = null
   private shopButtonNode: Node | null = null
   private coinResourceButtonNode: Node | null = null
-  private staminaResourceButtonNode: Node | null = null
   private profileButtonNode: Node | null = null
   private profileAvatarSprite: Sprite | null = null
   private coinValueLabel: Label | null = null
-  private staminaValueLabel: Label | null = null
 
   setup(options: StartPageOptions) {
     this.startHandler = options.onStartTap
@@ -258,9 +256,7 @@ export class StartPageController extends Component {
     this.currentEnergy = Math.max(0, Math.floor(options.energy ?? 0))
     this.currentMaxEnergy = Math.max(1, Math.floor(options.maxEnergy ?? DEFAULT_MAX_ENERGY))
     this.ensurePage()
-    if (!this.usesHierarchyNodes) {
-      this.ensureEnergyBar(options.energyBarPrefab ?? null)
-    }
+    this.ensureEnergyBar(options.energyBarPrefab ?? null)
     this.renderPlayerResources(options.energy ?? 0, options.maxEnergy ?? DEFAULT_MAX_ENERGY)
     this.renderProfileAvatar(this.currentAvatar)
     this.syncLayout()
@@ -303,23 +299,13 @@ export class StartPageController extends Component {
     this.currentEnergy = Math.max(0, Math.floor(energy))
     this.currentMaxEnergy = Math.max(1, Math.floor(maxEnergy))
     this.currentCoins = Math.max(0, Math.floor(coins))
-    this.ensureEnergyHeartCapacity(this.currentMaxEnergy)
-    this.layoutEnergyHearts(this.currentMaxEnergy)
-    const visibleEnergy = Math.min(
-      this.energyHeartNodes.length,
-      Math.max(0, Math.floor(maxEnergy)),
-      Math.max(0, Math.floor(energy))
-    )
-    this.energyHeartNodes.forEach((heartNode, index) => {
-      heartNode.active = index < visibleEnergy && index < this.currentMaxEnergy
-    })
     if (this.coinValueLabel) {
       this.coinValueLabel.string = `${this.currentCoins}`
     }
-    if (this.staminaValueLabel) {
-      this.staminaValueLabel.string = `${this.currentEnergy}/${this.currentMaxEnergy}`
-    }
   }
+
+  public renderEnergyState(state: EnergyBarState) { this.energyBarController?.renderState(state) }
+  public playEnergyGain(amount: number) { this.energyBarController?.playGainFeedback(amount) }
 
   /** 首页和弹窗使用相同的头像来源及加载兜底规则。 */
   public renderProfileAvatar(avatar: PlayerAvatar | number) {
@@ -536,8 +522,9 @@ export class StartPageController extends Component {
     this.rootNode = root
     this.rootNode.getComponent(UITransform) ?? this.rootNode.addComponent(UITransform)
     this.rootNode.getComponent(UIOpacity) ?? this.rootNode.addComponent(UIOpacity)
-    this.backgroundNode = this.backgroundNodeRef ?? this.findChildDeep(root, 'Background')
-    this.backgroundImageNode = this.backgroundImageNodeRef ?? this.findChildDeep(root, 'BackgroundImage')
+    // 背景只绑定首页根下的专用容器，避免误选体力条等预制件内部的同名底图。
+    this.backgroundNode = this.backgroundNodeRef ?? root.getChildByName('Background')
+    this.backgroundImageNode = this.backgroundImageNodeRef ?? this.backgroundNode?.getChildByName('BackgroundImage') ?? null
     this.pageCardNode = this.pageCardNodeRef ?? this.findChildDeep(root, 'PageCard')
     this.startButtonNode = this.startButtonNodeRef ?? this.findChildDeep(root, 'StartButton')
     this.rankButtonNode = this.rankButtonNodeRef ?? this.findChildDeep(root, 'RankButton')
@@ -654,12 +641,8 @@ export class StartPageController extends Component {
       HomepageArtwork.coin,
       false
     )
-    this.staminaResourceButtonNode = this.ensureResourceBar(
-      this.homepageLayerNode,
-      'StaminaResource',
-      HomepageArtwork.stamina,
-      true
-    )
+    const legacyStamina = this.homepageLayerNode.getChildByName('StaminaResource')
+    if (legacyStamina) legacyStamina.active = false
     this.profileButtonNode = this.ensureProfileButton(this.homepageLayerNode)
 
     this.dailyRewardButtonNode = this.ensureHomepageButton(
@@ -735,11 +718,7 @@ export class StartPageController extends Component {
     const value = this.ensureHomepageValueLabel(bar, 'DynamicValue', stamina ? `0/${DEFAULT_MAX_ENERGY}` : '0')
     value.node.setPosition(0, stamina ? 0 : 1, 0)
     value.node.getComponent(UITransform)?.setContentSize(76, 42)
-    if (stamina) {
-      this.staminaValueLabel = value
-    } else {
-      this.coinValueLabel = value
-    }
+    this.coinValueLabel = value
     return bar
   }
 
@@ -888,11 +867,14 @@ export class StartPageController extends Component {
     background?.setPosition(0, 0, 0)
     background?.setScale(coverScale, coverScale, 1)
 
-    this.homepageLayerNode.getChildByName('HomepageLogo')?.setPosition(0, 455 * verticalScale, 0)
     const topControlsY = this.getHomepageTopControlsY(cardHeight, foregroundScale, verticalScale)
+    this.homepageLayerNode.getChildByName('HomepageLogo')?.setPosition(0, Math.min(455 * verticalScale, topControlsY - 72 - 18 - 161), 0)
     this.settingsButtonNode?.setPosition(-318, topControlsY, 0)
     this.coinResourceButtonNode?.setPosition(-164, topControlsY, 0)
-    this.staminaResourceButtonNode?.setPosition(90, topControlsY, 0)
+    if (this.energyBarNode) {
+      const energyPosition = this.energyBarNode.position
+      this.energyBarNode.setPosition(energyPosition.x, topControlsY, energyPosition.z)
+    }
     this.profileButtonNode?.setPosition(304, topControlsY - 104, 0)
     this.dailyRewardButtonNode?.setPosition(-294, -292 * verticalScale, 0)
     this.rankButtonNode?.setPosition(-294, -455 * verticalScale, 0)
@@ -941,88 +923,32 @@ export class StartPageController extends Component {
   }
 
   /**
-   * 把体力 Prefab 挂到首页 PageCard 顶部。
+   * 优先绑定层级管理器中的体力条，只为没有静态首页层级的旧入口保留兜底。
    *
-   * Prefab 负责内部美术结构，首页控制器只负责整体布局、数值刷新和按钮回调；
-   * 重复 setup 时优先复用已有节点，避免热重载产生重复资源条。
+   * Prefab 负责内部美术结构，首页控制器只负责安全区适配、状态刷新和按钮回调；
+   * 静态首页不生成或迁移体力节点，保证编辑器中的层级与运行效果一致。
    */
   private ensureEnergyBar(energyBarPrefab: Prefab | null) {
-    if (!this.pageCardNode) {
-      return
-    }
-
-    this.energyBarNode = this.pageCardNode.getChildByName('EnergyBar')
-    if (!this.energyBarNode && energyBarPrefab) {
+    const parent = this.homepageLayerNode ?? this.pageCardNode
+    if (!parent) return
+    const legacy = this.pageCardNode?.getChildByName('EnergyBar') ?? null
+    this.energyBarNode = this.energyBarNodeRef ?? parent.getChildByName('EnergyBar') ?? legacy
+    if (!this.energyBarNode && !this.usesHierarchyNodes && energyBarPrefab) {
       this.energyBarNode = instantiate(energyBarPrefab)
-      this.energyBarNode.setParent(this.pageCardNode)
+      this.energyBarNode.setParent(parent)
+      this.energyBarNode.setPosition(90, 0, 0)
     }
-    this.energyHeartNodes = this.energyBarNode
-      ? this.collectEnergyHeartNodes()
-      : []
-    this.ensureEnergyHeartCapacity(this.currentMaxEnergy)
-    this.layoutEnergyHearts(this.currentMaxEnergy)
-    // 整个体力 Prefab 都是分享入口，加号只是视觉提示。
-    this.energyMoreButtonNode = this.energyBarNode
-
-    this.unbindAmountBar(this.energyMoreButtonNode, this.handleEnergyMoreTap)
-    this.bindAmountBar(this.energyMoreButtonNode, this.handleEnergyMoreTap)
-  }
-
-  private collectEnergyHeartNodes() {
-    if (!this.energyBarNode) {
-      return []
+    if (this.energyBarNode) {
+      this.energyBarNode.active = true
     }
-
-    return this.energyBarNode.children
-      .filter(child => /^Heart\d+$/.test(child.name))
-      .sort((a, b) => this.getHeartIndex(a) - this.getHeartIndex(b))
-  }
-
-  // 旧版体力条 Prefab 只有 4 颗心；体力上限调到 10 后运行时补齐，不改 Prefab 资源。
-  private ensureEnergyHeartCapacity(maxEnergy: number) {
-    if (!this.energyBarNode) {
-      return
-    }
-
-    const hearts = this.collectEnergyHeartNodes()
-    const template = hearts[hearts.length - 1]
-    if (!template) {
-      this.energyHeartNodes = []
-      return
-    }
-
-    for (let index = hearts.length + 1; index <= maxEnergy; index++) {
-      const heart = instantiate(template)
-      heart.name = `Heart${index}`
-      heart.setParent(this.energyBarNode)
-      hearts.push(heart)
-    }
-    this.energyHeartNodes = hearts
-  }
-
-  private layoutEnergyHearts(maxEnergy: number) {
-    if (this.energyHeartNodes.length <= 0) {
-      return
-    }
-
-    const count = Math.max(1, Math.min(maxEnergy, this.energyHeartNodes.length))
-    const step = count <= 1 ? 0 : (ENERGY_HEART_RIGHT_X - ENERGY_HEART_LEFT_X) / (count - 1)
-    const scale = count > 4 ? Math.max(0.58, Math.min(1, 4 / count + 0.25)) : 1
-    this.energyHeartNodes.forEach((heartNode, index) => {
-      if (index >= maxEnergy) {
-        heartNode.active = false
-        return
+    if (legacy && legacy !== this.energyBarNode) legacy.active = false
+    this.energyBarController = this.energyBarNode?.getComponent(EnergyBarController) ?? null
+    if (this.energyBarController) {
+      this.energyBarController.onAcquireTap = () => {
+        this.playButtonClickFeedback()
+        this.energyMoreHandler?.()
       }
-
-      const x = count <= 1 ? 0 : ENERGY_HEART_LEFT_X + step * index
-      heartNode.setPosition(x, ENERGY_HEART_Y, 0)
-      heartNode.setScale(scale, scale, 1)
-    })
-  }
-
-  private getHeartIndex(node: Node) {
-    const match = node.name.match(/^Heart(\d+)$/)
-    return match ? Number(match[1]) : 0
+    }
   }
 
   /**
@@ -1054,13 +980,13 @@ export class StartPageController extends Component {
 
     const y = cardHeight / 2 - centerTopInset
     const cardWidth = this.pageCardNode?.getComponent(UITransform)?.width ?? 750
-    const amountBarWidth = this.energyBarNode?.getComponent(UITransform)?.width ?? 466
+    const amountBarWidth = this.energyBarNode?.getComponent(UITransform)?.width ?? 188
     const x =
       -cardWidth * 0.5 +
       AMOUNT_BAR_LEFT_INSET +
       amountBarWidth * AMOUNT_BAR_SCALE * 0.5
     this.configureAmountBarNode(this.energyBarNode, x, y)
-    this.layoutTitleBelowAmountBars(cardHeight, y, amountBarHalfHeight, !!menuMetrics)
+    this.layoutTitleBelowAmountBars(cardHeight, y, 72, true)
   }
 
   private configureAmountBarNode(amountBarNode: Node | null, x: number, y: number) {
@@ -1288,7 +1214,6 @@ export class StartPageController extends Component {
     this.unbindPressableButton(this.shopButtonNode, this.handleShopTap)
     this.unbindPressableButton(this.profileButtonNode, this.handleProfileTap)
     this.unbindPressableButton(this.coinResourceButtonNode, this.handleCoinResourceTap)
-    this.unbindPressableButton(this.staminaResourceButtonNode, this.handleEnergyMoreTap)
     this.bindPressableButton(this.startButtonNode, this.handleStartTap)
     this.bindPressableButton(this.rankButtonNode, this.handleRankTap)
     this.bindPressableButton(this.shareButtonNode, this.handleShareTap)
@@ -1297,7 +1222,6 @@ export class StartPageController extends Component {
     this.bindPressableButton(this.shopButtonNode, this.handleShopTap)
     this.bindPressableButton(this.profileButtonNode, this.handleProfileTap)
     this.bindPressableButton(this.coinResourceButtonNode, this.handleCoinResourceTap)
-    this.bindPressableButton(this.staminaResourceButtonNode, this.handleEnergyMoreTap)
 
     this.safeOff(this.rankCloseButtonNode, Node.EventType.TOUCH_END, this.handleRankCloseTap)
     this.safeOn(this.rankCloseButtonNode, Node.EventType.TOUCH_END, this.handleRankCloseTap)
@@ -1341,6 +1265,10 @@ export class StartPageController extends Component {
   }
 
   private redrawBackground() {
+    // 新版背景的 cover 适配由 layoutHomepageArtwork 负责，不走旧版全屏绘制。
+    if (this.homepageLayerNode) {
+      return
+    }
     const background = this.backgroundNode ?? this.rootNode?.getChildByName('Background')
     const backgroundTransform = background?.getComponent(UITransform) ?? null
     const graphics = background?.getComponent(Graphics) ?? null

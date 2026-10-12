@@ -9,7 +9,7 @@ import {
   WechatPrivacyAuthorizationError
 } from '../platform/WechatPrivacyAdapter'
 import { PauseOverlayController } from '../settings/PauseOverlayController'
-import { ECONOMY_CONFIG, PlayerEconomyStore } from '../economy/PlayerEconomyStore'
+import { ECONOMY_CONFIG, PlayerEconomyStore, type EnergyBarState } from '../economy/PlayerEconomyStore'
 import { SkillShopPopupController } from '../skill-shop/SkillShopPopupController'
 import { DailyRewardPopupController } from '../daily-reward/DailyRewardPopupController'
 import type { SkillKind } from '../economy/SkillStock'
@@ -27,7 +27,7 @@ import {
 } from '../profile/ProfilePopupController'
 
 const { ccclass, property } = _decorator
-const HOME_RESOURCE_REFRESH_INTERVAL_SECONDS = 30
+const HOME_RESOURCE_REFRESH_INTERVAL_SECONDS = 1
 const UPDATE_PROMPT_CHECK_INTERVAL_SECONDS = 1
 // 切场景前给按钮 one-shot 留出起声时间，避免当前场景销毁时把点击反馈截断。
 const BUTTON_CLICK_SCENE_DELAY_SECONDS = 0.18
@@ -129,7 +129,11 @@ export class HomeSceneController extends Component {
   private profileController: ProfilePopupController | null = null
   private profileLoadPromise: Promise<ProfilePopupController> | null = null
   private isLoadingGameScene = false
+  private isConsumingEnergy = false
+  private isAcquiringEnergy = false
+  private releaseEconomySync: (() => void) | null = null
   private dailyRewardStateKey = ''
+  private previousEnergyRender: { state: EnergyBarState; at: number } | null = null
   private readonly refreshResourceTick = () => this.refreshPlayerResources()
   private readonly updatePromptTick = () => this.updateAdapter.promptIfReady()
 
@@ -154,21 +158,33 @@ export class HomeSceneController extends Component {
       energy: resources.energy,
       maxEnergy: resources.maxEnergy,
       coins: resources.coins,
-      onEnergyMoreTap: () => void this.shareForEnergyReward(),
+      onEnergyMoreTap: () => void this.openEnergyAcquire(),
       onSettingsTap: () => this.openHomeSettings(),
       onDailyRewardTap: () => this.openDailyReward(),
       onShopTap: () => this.openSkillShop(),
       onProfileTap: () => void this.openProfile(),
       avatar: this.playerProfile.getSnapshot() ?? { avatarIndex: 0 }
     })
+    this.refreshPlayerResources()
   }
 
   onEnable() {
+    this.releaseEconomySync = this.cloudSync.activate(event => {
+      if (!this.isValid || !this.node.isValid) return
+      this.refreshPlayerResources()
+      if (event.kind === 'gain') this.startPageController?.playEnergyGain(event.amount ?? 1)
+      if (event.message) this.startPageController?.showMessage(event.message)
+    })
+    this.schedule(this.refreshResourceTick, HOME_RESOURCE_REFRESH_INTERVAL_SECONDS)
     this.releaseUpdatePrompt = this.updateAdapter.enterHome(() => this.canPromptForUpdate())
     this.schedule(this.updatePromptTick, UPDATE_PROMPT_CHECK_INTERVAL_SECONDS)
   }
 
   onDisable() {
+    this.previousEnergyRender = null
+    this.unschedule(this.refreshResourceTick)
+    this.releaseEconomySync?.()
+    this.releaseEconomySync = null
     this.unschedule(this.updatePromptTick)
     this.releaseUpdatePrompt?.()
     this.releaseUpdatePrompt = null
@@ -194,7 +210,6 @@ export class HomeSceneController extends Component {
     this.homeSettingsController?.syncLayout()
     this.profileController?.syncLayout()
     this.audioManager?.playStartPageBackgroundMusic(this.getHomeBgmClip())
-    this.schedule(this.refreshResourceTick, HOME_RESOURCE_REFRESH_INTERVAL_SECONDS)
     void this.restoreOnlineSession()
   }
 
@@ -550,13 +565,19 @@ export class HomeSceneController extends Component {
   }
 
   // 开始游戏前由经济层统一扣除体力，扣除失败时停留首页并给出补充入口提示。
-  private enterGameScene() {
-    if (this.isLoadingGameScene) {
+  private async enterGameScene() {
+    if (this.isLoadingGameScene || this.isConsumingEnergy) {
       return
     }
-    if (!this.economy.tryConsumeEnergy()) {
+    this.isConsumingEnergy = true
+    let result: { accepted: boolean; message?: string }
+    try { result = await this.cloudSync.consumeEnergy(this.economy) }
+    catch (error) { result = { accepted: false, message: this.describeOnlineError(error) } }
+    finally { this.isConsumingEnergy = false }
+    if (!this.isValid || !this.node.isValid) return
+    if (!result.accepted) {
       this.closeSkillShop()
-      this.startPageController?.showMessage('体力不足，请先点击体力条补充')
+      this.startPageController?.showMessage(result.message ?? '体力不足，请先点击体力条补充')
       this.refreshPlayerResources()
       return
     }
@@ -595,7 +616,7 @@ export class HomeSceneController extends Component {
 
   // 新开一局前先在首页拦截体力不足，避免玩家先看到技能购买弹窗再被拦住。
   private canStartNewGame() {
-    return this.economy.getSnapshot().energy >= ECONOMY_CONFIG.gameEnergyCost
+    return !!this.playerSession.getSnapshot().playerId || this.economy.getSnapshot().energy >= ECONOMY_CONFIG.gameEnergyCost
   }
 
   // Home 页优先使用新字段，旧字段只作为历史场景的兜底资源位。
@@ -607,6 +628,15 @@ export class HomeSceneController extends Component {
    * 点击顶部资源 Prefab 后完成分享并领取对应资源。
    * 分享不限制每日次数；经济层只负责体力上限校验和成功后的持久化。
    */
+  private async openEnergyAcquire() {
+    if (this.isAcquiringEnergy || this.isLoadingGameScene || this.isConsumingEnergy) return
+    this.isAcquiringEnergy = true
+    try { await this.shareForEnergyReward() }
+    catch (error) {
+      if (this.isValid && this.node.isValid) this.startPageController?.showMessage(this.describeOnlineError(error))
+    } finally { this.isAcquiringEnergy = false }
+  }
+
   private async shareForEnergyReward() {
     if (!this.economy.canClaimShareReward('energy')) {
       this.startPageController?.showMessage('体力已满，无需补充')
@@ -626,24 +656,34 @@ export class HomeSceneController extends Component {
       return
     }
 
-    const claim = this.economy.claimShareReward('energy')
-    if (!claim.claimed) {
-      this.startPageController?.showMessage('体力已满，无需补充')
+    const claim = await this.cloudSync.claimEnergyReward(this.economy)
+    if (!this.isValid || !this.node.isValid) return
+    if (!claim.accepted) {
+      this.startPageController?.showMessage(claim.message ?? '奖励待联网确认')
       return
     }
 
     this.refreshPlayerResources()
-    this.startPageController?.showMessage(`分享奖励：体力 +${claim.amount}`)
+    this.startPageController?.showMessage('分享奖励：体力 +1')
   }
 
   // 每次资源发生变化后，从仓库快照重新渲染，首页 UI 不缓存也不修改玩家数据。
   private refreshPlayerResources() {
+    if (!this.cloudSync.isForeground()) return
     const snapshot = this.economy.getSnapshot()
     this.startPageController?.renderPlayerResources(
       snapshot.energy,
       snapshot.maxEnergy,
       snapshot.coins
     )
+    const energyState = this.economy.getEnergyBarState()
+    const previous = this.previousEnergyRender
+    if (!this.playerSession.getSnapshot().playerId && previous && Date.now() - previous.at < 2500 &&
+      previous.state.remainingSeconds !== null && previous.state.remainingSeconds <= 1 && energyState.energy - previous.state.energy === 1) {
+      this.startPageController?.playEnergyGain(1)
+    }
+    this.previousEnergyRender = { state: energyState, at: Date.now() }
+    this.startPageController?.renderEnergyState(energyState)
     if (this.dailyRewardNode?.active) {
       this.refreshDailyRewardState()
     }

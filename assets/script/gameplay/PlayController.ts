@@ -7,7 +7,7 @@ import { GameShareAdapter } from '../platform/GameShareAdapter'
 import { GameFeedbackAdapter } from '../platform/GameFeedbackAdapter'
 import { GameRewardedAdAdapter, type RewardedAdResult } from '../platform/GameRewardedAdAdapter'
 import type { SkillAdRewardState, SkillKind } from '../economy/SkillStock'
-import { PlayerEconomyStore } from '../economy/PlayerEconomyStore'
+import { ECONOMY_CONFIG, PlayerEconomyStore } from '../economy/PlayerEconomyStore'
 import { BoardGeometry } from './BoardGeometry'
 import { ScoreManager, type ScoreRewardEvent } from './ScoreManager'
 import { BoardModel, type BoardCell } from './BoardModel'
@@ -21,6 +21,7 @@ import {
 } from './BoardConfig'
 import { OngoingGameSession, type OngoingGameSnapshot } from './OngoingGameSession'
 import { PlayerSyncOutbox } from '../online/sync/PlayerSyncOutbox'
+import { PlayerCloudSyncStore } from '../online/sync/PlayerCloudSyncStore'
 
 // 保留原有导入路径，避免首页和后续关卡入口因会话模块拆分而立即迁移。
 export { OngoingGameSession } from './OngoingGameSession'
@@ -271,6 +272,18 @@ export class PlayController extends Component {
   // 独立于暂停弹窗冻结玩法，避免点击广告时弹出设置界面。
   private skillAdLoading: SkillKind | null = null
   private skillAdRequestVersion = 0
+  private isConsumingRestartEnergy = false
+  private releaseEconomySync: (() => void) | null = null
+
+  onEnable() {
+    this.releaseEconomySync = PlayerCloudSyncStore.getInstance().activate(event => {
+      if (!this.isValid || !this.node.isValid) return
+      if (event.kind === 'state') this.refreshUiState()
+      if (event.message) this.uiController?.showTransientMessage(event.message)
+    })
+  }
+
+  onDisable() { this.releaseEconomySync?.(); this.releaseEconomySync = null }
   // 生命周期入口：先准备棋盘数据，再把界面初始化交给独立的 UI 组件。
   onLoad() {
     this.shareAdapter.enableWechatShareMenu()
@@ -357,6 +370,7 @@ export class PlayController extends Component {
   }
 
   onDestroy() {
+    this.onDisable()
     this.shareAdapter.disableWechatShareMenu()
     this.skillAdRequestVersion += 1
     this.rewardedAdAdapter.dispose()
@@ -2535,7 +2549,7 @@ export class PlayController extends Component {
       return
     }
 
-    if (this.isResolving || this.isGameOver || this.skillAdLoading) {
+    if (this.isResolving || this.isGameOver || this.skillAdLoading || this.isConsumingRestartEnergy) {
       return
     }
 
@@ -2555,7 +2569,7 @@ export class PlayController extends Component {
 
   // 暂停弹窗点击返回首页时先保存对局快照，再清理场景节点并加载首页。
   private returnToStartPageFromPause() {
-    if (!this.hasStartedSession || this.skillAdLoading) {
+    if (!this.hasStartedSession || this.skillAdLoading || this.isConsumingRestartEnergy) {
       return
     }
 
@@ -2580,7 +2594,7 @@ export class PlayController extends Component {
 
   // 结算弹窗点击回首页时，本局已经结束，因此不保存进行中快照，也不消耗体力。
   private returnToStartPageFromGameOver() {
-    if (!this.hasStartedSession || this.skillAdLoading) {
+    if (!this.hasStartedSession || this.skillAdLoading || this.isConsumingRestartEnergy) {
       return
     }
 
@@ -2668,14 +2682,17 @@ export class PlayController extends Component {
       return
     }
 
-    const claim = this.economy.claimShareReward('coins')
-    if (!claim.claimed) {
-      this.uiController?.showTransientMessage('金币奖励发放失败，请稍后重试')
+    let claim: { accepted: boolean; message?: string }
+    try { claim = await PlayerCloudSyncStore.getInstance().claimShareReward('coins', this.economy) }
+    catch (error) { claim = { accepted: false, message: error instanceof Error ? error.message : '金币奖励待联网确认' } }
+    if (!this.isValid || !this.node.isValid) return
+    if (!claim.accepted) {
+      this.uiController?.showTransientMessage(claim.message ?? '金币奖励发放失败，请稍后重试')
       return
     }
 
     this.refreshUiState()
-    this.uiController?.showTransientMessage(`分享奖励：金币 +${claim.amount}`)
+    this.uiController?.showTransientMessage(`分享奖励：金币 +${ECONOMY_CONFIG.shareCoins}`)
   }
 
   // UI 层第三技能按钮通过这个入口切换交换技能，技能态只冻结下落，不打开暂停弹窗。
@@ -2897,11 +2914,21 @@ export class PlayController extends Component {
   }
   // 重新开始游戏并清空棋盘
   private async restartGame() {
-    if (this.isResolving || this.skillAdLoading) {
+    if (this.isResolving || this.skillAdLoading || this.isConsumingRestartEnergy) {
       return
     }
-    if (!this.economy.tryConsumeEnergy()) {
-      this.uiController?.showTransientMessage('体力不足，请返回首页分享补充')
+    this.isConsumingRestartEnergy = true
+    const wasPaused = this.isPaused
+    this.isPaused = true
+    let result: { accepted: boolean; message?: string }
+    try { result = await PlayerCloudSyncStore.getInstance().consumeEnergy(this.economy) }
+    catch (error) { result = { accepted: false, message: error instanceof Error ? error.message : '体力同步失败，请重试' } }
+    finally { this.isConsumingRestartEnergy = false }
+    if (!this.isValid || !this.node.isValid) return
+    if (!result.accepted) {
+      this.isPaused = wasPaused
+      this.refreshUiState()
+      this.uiController?.showTransientMessage(result.message ?? '体力不足，请返回首页分享补充')
       return
     }
 

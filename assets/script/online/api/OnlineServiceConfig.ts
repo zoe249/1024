@@ -2,7 +2,7 @@
 export const ONLINE_SERVICE_CONFIG = {
   baseURL: 'https://leyian.online/dev/v1',
   productionBaseURL: 'https://leyian.online/v1',
-  requestTimeoutMs: 10_000
+  requestTimeoutMs: 30_000
 } as const
 
 let resolvedApiBaseUrl: string | null = null
