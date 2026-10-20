@@ -120,7 +120,7 @@ export class PlayerSyncOutbox {
     this.state.progress.highestScore = Math.max(this.state.progress.highestScore, safeScore)
     this.state.progress.highestNumber = Math.max(this.state.progress.highestNumber, safeHighest)
     this.state.progress.completedGames += 1
-    this.enqueue('game_finished', {
+    return this.enqueue('game_finished', {
       gameId: createIdentifier('game'),
       score: safeScore,
       highestNumber: safeHighest

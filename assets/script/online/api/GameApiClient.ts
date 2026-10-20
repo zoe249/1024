@@ -54,6 +54,14 @@ export type LeaderboardResponse = {
   boards: LeaderboardBoardDto[]
 }
 
+export type LeaderboardTargetResponse = {
+  entries: LeaderboardEntryDto[]
+  self: LeaderboardEntryDto
+  isTop: boolean
+}
+
+export type SettlementRank = { current: number | null; previous: number | null }
+
 export type PlayerProfileResponse = {
   playerId: string
   displayName: string
@@ -71,6 +79,7 @@ export type UpdatePlayerProfileRequest = {
 }
 
 export type SyncResponse<TSnapshot> = {
+  rank?: SettlementRank
   serverTime: string
   cloudRevision: number
   snapshot: TSnapshot
@@ -124,6 +133,12 @@ export class GameApiClient {
 
   getProfile() {
     return this.request<PlayerProfileResponse>('GET', '/profile', undefined, true)
+  }
+
+  getLeaderboardTarget(metric: LeaderboardMetric, value: number, limit = 5) {
+    const baseline = Math.min(1_073_741_824, Math.max(0, Math.floor(value)))
+    const count = Math.min(20, Math.max(1, Math.floor(limit)))
+    return this.request<LeaderboardTargetResponse>('GET', `/leaderboard/target?metric=${metric}&value=${baseline}&limit=${count}`, undefined, true)
   }
 
   updateProfile(body: UpdatePlayerProfileRequest) {

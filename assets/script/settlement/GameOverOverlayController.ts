@@ -16,6 +16,7 @@ import {
   UITransform,
   Vec3
 } from 'cc'
+import type { SettlementRank } from '../online/api/GameApiClient'
 
 const { ccclass } = _decorator
 
@@ -60,6 +61,13 @@ export class GameOverOverlayController extends Component {
   private maskNode: Node | null = null
   private contentNode: Node | null = null
   private statisticsLabel: Label | null = null
+  private rankNode: Node | null = null
+  private rankLabel: Label | null = null
+  private rankDeltaLabel: Label | null = null
+  private rankKey = ''
+  private latestRank: SettlementRank | null = null
+  private latestRankPending = false
+  private readonly rankCounter = { value: 0 }
   private rewardValueLabel: Label | null = null
   private rewardNode: Node | null = null
   private actionsNode: Node | null = null
@@ -136,6 +144,7 @@ export class GameOverOverlayController extends Component {
   }
 
   onDestroy() {
+    this.stopRankAnimation()
     this.showWhenArtworkReady = false
     this.unbindSwallowNode(this.maskNode)
     this.unbindSwallowNode(this.contentNode)
@@ -174,6 +183,7 @@ export class GameOverOverlayController extends Component {
 
     this.ensureHeader(this.contentNode)
     this.ensureStatistics(this.contentNode)
+    this.ensureRank(this.contentNode)
     this.ensureCelebration(this.contentNode)
     this.ensureReward(this.contentNode)
     this.ensureActions(this.contentNode)
@@ -214,6 +224,65 @@ export class GameOverOverlayController extends Component {
       70,
       true
     )
+  }
+
+  private ensureRank(parent: Node) {
+    this.rankNode = this.getOrCreateNode(parent, 'SettlementRank')
+    this.rankNode.setPosition(0, 207, 0)
+    this.rankLabel = this.ensureLabel(this.rankNode, 'Rank', '', 27, new Color(255, 249, 237, 255), Vec3.ZERO, 460, 38, true, new Color(98, 57, 31, 255), 2)
+    this.rankDeltaLabel = this.ensureLabel(this.rankNode, 'Delta', '', 29, new Color(129, 205, 77, 255), new Vec3(180, 0, 0), 150, 38, true, new Color(98, 57, 31, 255), 2)
+    this.rankNode.active = false
+  }
+
+  renderRank(rank: SettlementRank | null, pending: boolean) {
+    this.latestRank = rank
+    this.latestRankPending = pending
+    if (!this.rankNode || !this.rankLabel || !this.rankDeltaLabel) return
+    if (!this.isVisible) { this.rankKey = ''; return }
+    const key = pending ? 'pending' : rank?.current ? `${rank.previous}:${rank.current}` : 'hidden'
+    if (key === this.rankKey) return
+    this.rankKey = key
+    this.stopRankAnimation()
+    const opacity = this.rankNode.getComponent(UIOpacity) ?? this.rankNode.addComponent(UIOpacity)
+    if (key === 'hidden') {
+      if (this.rankNode.active) tween(opacity).to(0.12, { opacity: 0 }).call(() => { if (this.rankKey === 'hidden' && this.rankNode?.isValid) this.rankNode.active = false }).start()
+      return
+    }
+    this.rankNode.active = true
+    opacity.opacity = 255
+    this.rankDeltaLabel.node.active = false
+    this.rankLabel.node.setPosition(0, 0, 0)
+    if (pending) { this.rankLabel.string = '名次计算中'; return }
+    if (!rank?.current) return
+    const current = rank.current
+    const previous = rank.previous
+    this.rankLabel.string = previous === null ? `新上榜 第 ${current} 名` : `第 ${current} 名`
+    if (previous === null || previous <= current) return
+    this.rankLabel.node.setPosition(-45, 0, 0)
+    this.rankCounter.value = previous
+    tween(this.rankCounter).to(0.45, { value: current }, {
+      easing: 'quadOut', onUpdate: () => { if (this.rankLabel?.isValid) this.rankLabel.string = `第 ${Math.round(this.rankCounter.value)} 名` }
+    }).start()
+    const delta = this.rankDeltaLabel.node
+    const deltaOpacity = delta.getComponent(UIOpacity) ?? delta.addComponent(UIOpacity)
+    this.rankDeltaLabel.string = `↑${previous - current}`
+    delta.active = true
+    delta.setPosition(180, -24, 0)
+    deltaOpacity.opacity = 0
+    tween(delta).to(0.25, { position: new Vec3(180, 0, 0) }, { easing: 'backOut' }).start()
+    tween(deltaOpacity).to(0.25, { opacity: 255 }).start()
+    tween(this.rankNode).to(0.15, { scale: new Vec3(1.06, 1.06, 1) }).to(0.15, { scale: Vec3.ONE }).start()
+  }
+
+  private stopRankAnimation() {
+    Tween.stopAllByTarget(this.rankCounter)
+    for (const node of [this.rankNode, this.rankDeltaLabel?.node]) {
+      if (!node?.isValid) continue
+      Tween.stopAllByTarget(node)
+      const opacity = node.getComponent(UIOpacity)
+      if (opacity) Tween.stopAllByTarget(opacity)
+      node.setScale(Vec3.ONE)
+    }
   }
 
   /** 兔子保持静止，庆祝感只由背后的光芒和闪光粒子提供，避免低帧切图破坏实机观感。 */
@@ -724,9 +793,13 @@ export class GameOverOverlayController extends Component {
         .start()
     }
     this.playCelebrationAnimation()
+    this.renderRank(this.latestRank, this.latestRankPending)
   }
 
   private hide() {
+    this.stopRankAnimation()
+    this.rankKey = ''
+    if (this.rankNode) this.rankNode.active = false
     this.showWhenArtworkReady = false
     if (!this.overlayOpacity) {
       return

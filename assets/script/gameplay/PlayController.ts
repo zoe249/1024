@@ -22,6 +22,8 @@ import {
 import { OngoingGameSession, type OngoingGameSnapshot } from './OngoingGameSession'
 import { PlayerSyncOutbox } from '../online/sync/PlayerSyncOutbox'
 import { PlayerCloudSyncStore } from '../online/sync/PlayerCloudSyncStore'
+import { OvertakeRivalStore } from '../online/leaderboard/OvertakeRivalStore'
+import type { SettlementRank } from '../online/api/GameApiClient'
 
 // 保留原有导入路径，避免首页和后续关卡入口因会话模块拆分而立即迁移。
 export { OngoingGameSession } from './OngoingGameSession'
@@ -276,14 +278,40 @@ export class PlayController extends Component {
   private releaseEconomySync: (() => void) | null = null
 
   onEnable() {
+    this.beginOvertakeSession()
     this.releaseEconomySync = PlayerCloudSyncStore.getInstance().activate(event => {
       if (!this.isValid || !this.node.isValid) return
       if (event.kind === 'state') this.refreshUiState()
       if (event.message) this.uiController?.showTransientMessage(event.message)
     })
+    this.refreshUiState()
   }
 
-  onDisable() { this.releaseEconomySync?.(); this.releaseEconomySync = null }
+  onDisable() {
+    this.releaseEconomySync?.()
+    this.releaseEconomySync = null
+    OvertakeRivalStore.getInstance().end()
+    this.settlementGeneration += 1
+    this.unschedule(this.expireSettlementRank)
+    this.settlementRankPending = false
+    this.settlementRank = null
+  }
+
+  private settlementRank: SettlementRank | null = null
+  private settlementRankPending = false
+  private settlementGeneration = 0
+  private readonly expireSettlementRank = () => {
+    this.settlementGeneration += 1
+    this.settlementRankPending = false
+    this.settlementRank = null
+    this.refreshUiState()
+  }
+
+  private beginOvertakeSession() {
+    OvertakeRivalStore.getInstance().begin(this.scoreManager.getTotalScore(this.board), () => {
+      if (this.isValid && this.node.isValid && this.enabledInHierarchy) this.refreshUiState()
+    })
+  }
   // 生命周期入口：先准备棋盘数据，再把界面初始化交给独立的 UI 组件。
   onLoad() {
     this.shareAdapter.enableWechatShareMenu()
@@ -314,7 +342,8 @@ export class PlayController extends Component {
         boardwidth: this.boardwidth,
         boardheight: this.boardheight,
         pieceSize: this.pieceSize,
-        spacing: this.spacing
+        spacing: this.spacing,
+        spawnOffsetY: this.spawnOffsetY
       },
       actions: {
         pause: () => this.togglePauseFromUi(),
@@ -2495,6 +2524,7 @@ export class PlayController extends Component {
 
   // 把当前玩法状态统一推送给 UI 组件，避免逻辑层分别操作多个界面节点。
   private refreshUiState() {
+    OvertakeRivalStore.getInstance().updateScore(this.scoreManager.getTotalScore(this.board))
     this.uiController?.renderState(this.buildUiState())
   }
 
@@ -2507,6 +2537,9 @@ export class PlayController extends Component {
       nextValue: this.nextPieceValue,
       currentColumn: this.currentColumn,
       score: boardScore + this.scoreManager.getBonusScore(),
+      overtake: OvertakeRivalStore.getInstance().resolveOvertake(boardScore + this.scoreManager.getBonusScore()),
+      settlementRank: this.settlementRank,
+      settlementRankPending: this.settlementRankPending,
       highestValue: this.scoreManager.getHighestPieceValue(),
       gameOverCoinReward: this.gameOverCoinReward,
       isGameOver: this.isGameOver,
@@ -2876,7 +2909,18 @@ export class PlayController extends Component {
     const highestValue = this.scoreManager.getHighestPieceValue()
     this.gameOverCoinReward = this.calculateGameOverCoinReward(finalScore, highestValue)
     this.economy.addCoins(this.gameOverCoinReward)
-    this.syncOutbox.recordGameFinished(finalScore, highestValue)
+    const operationId = this.syncOutbox.recordGameFinished(finalScore, highestValue)
+    this.settlementRank = null
+    this.settlementRankPending = true
+    const generation = ++this.settlementGeneration
+    this.scheduleOnce(this.expireSettlementRank, 3)
+    void PlayerCloudSyncStore.getInstance().syncGameFinished(operationId).then(rank => {
+      if (!this.isValid || !this.node.isValid || generation !== this.settlementGeneration || !this.isGameOver) return
+      this.unschedule(this.expireSettlementRank)
+      this.settlementRank = rank
+      this.settlementRankPending = false
+      this.refreshUiState()
+    }).catch(() => {})
     this.isSwapSkillActive = false
     this.isHammerSkillActive = false
     this.isBombSkillActive = false
@@ -2937,6 +2981,10 @@ export class PlayController extends Component {
     this.clearBoardPieces()
     this.clearTransientEffects()
     this.isGameOver = false
+    this.settlementGeneration += 1
+    this.unschedule(this.expireSettlementRank)
+    this.settlementRank = null
+    this.settlementRankPending = false
     this.gameOverCoinReward = 0
     this.isFastDropping = false
     this.isResolving = false
@@ -2946,6 +2994,7 @@ export class PlayController extends Component {
     this.isBombSkillActive = false
     this.swapDragState = null
     this.resetBoard()
+    this.beginOvertakeSession()
     this.audioManager?.playGameplayBackgroundMusic(this.gameplayBgmClip)
     this.spawnPiece()
   }

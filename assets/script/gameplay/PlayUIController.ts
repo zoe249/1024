@@ -7,6 +7,7 @@
   EventTouch,
   Graphics,
   ImageAsset,
+  instantiate,
   Label,
   LabelOutline,
   Node,
@@ -28,6 +29,9 @@
 } from 'cc'
 import { PauseOverlayController } from '../settings/PauseOverlayController'
 import { GameOverOverlayController } from '../settlement/GameOverOverlayController'
+import { OvertakeTargetWidget } from './OvertakeTargetWidget'
+import type { OvertakeView } from '../online/leaderboard/OvertakeRivalStore'
+import type { SettlementRank } from '../online/api/GameApiClient'
 import {
   FirstEntryTutorialController,
   type FirstEntryTutorialUIState
@@ -36,7 +40,8 @@ import {
   getBoardCellCenterOffset,
   getBoardGridSize,
   getBoardGridStep,
-  getBoardSeparatorOffset
+  getBoardSeparatorOffset,
+  BoardGeometry
 } from './BoardGeometry'
 
 const { ccclass } = _decorator
@@ -49,6 +54,9 @@ export type PlayUIState = {
   nextValue: number | null
   currentColumn: number
   score: number
+  overtake: OvertakeView
+  settlementRank: SettlementRank | null
+  settlementRankPending: boolean
   highestValue: number
   gameOverCoinReward: number
   isGameOver: boolean
@@ -76,6 +84,7 @@ export type PlayUILayout = {
   boardheight: number
   pieceSize: number
   spacing: number
+  spawnOffsetY: number
 }
 
 // 所有 UI 操作统一通过回调回到玩法层，UI 组件不直接修改棋盘、经济或场景状态。
@@ -252,6 +261,9 @@ export class PlayUIController extends Component {
   private pieceSize = 120
   // 格子之间的间距，方便后续继续扩展 UI 布局时保持同一套棋盘参数。
   private spacing = 10
+  private spawnOffsetY = 0
+  private overtakeWidget: OvertakeTargetWidget | null = null
+  private overtakeLoadGeneration = 0
   // 由逻辑层注入的暂停切换回调，按钮点击后只通知逻辑，不直接改游戏状态。
   private pauseHandler: (() => void) | null = null
   // 暂停弹窗重玩按钮只转交给逻辑层处理，不直接清棋盘。
@@ -278,6 +290,9 @@ export class PlayUIController extends Component {
     nextValue: null,
     currentColumn: 2,
     score: 0,
+    overtake: null,
+    settlementRank: null,
+    settlementRankPending: false,
     highestValue: 0,
     gameOverCoinReward: 0,
     isGameOver: false,
@@ -381,6 +396,7 @@ export class PlayUIController extends Component {
     this.boardheight = layout.boardheight
     this.pieceSize = layout.pieceSize
     this.spacing = layout.spacing
+    this.spawnOffsetY = layout.spawnOffsetY
     this.pauseHandler = actions.pause
     this.pauseReplayHandler = actions.restart
     this.pauseHomeHandler = actions.homeFromPause
@@ -405,6 +421,7 @@ export class PlayUIController extends Component {
     this.hideCoinBar()
     this.ensureBoardDecorations()
     this.ensureScoreDisplay()
+    this.ensureOvertakeWidget()
     this.ensureSkillButtons()
     this.ensureFeedbackLayer()
     this.ensureSkillHint()
@@ -421,6 +438,7 @@ export class PlayUIController extends Component {
     this.ensureFirstEntryTutorial()
     this.configureControlBar()
     this.configureStatusBar()
+    this.layoutOvertakeWidget()
     this.updateSkillHintLayout()
     this.renderState(this.currentState)
   }
@@ -431,6 +449,7 @@ export class PlayUIController extends Component {
     this.ensureGamePageLayout()
     this.configureControlBar()
     this.configureStatusBar()
+    this.layoutOvertakeWidget()
     this.updateSkillHintLayout()
     this.pauseOverlayController?.syncLayout()
     this.gameOverOverlayController?.syncLayout()
@@ -440,7 +459,8 @@ export class PlayUIController extends Component {
   // 逻辑层每次状态变化后只需要把结果喂给 UI 层即可。
   renderState(state: PlayUIState) {
     this.currentState = state
-    this.refreshScoreDisplay()
+    if (this.overtakeWidget) this.overtakeWidget.render(state.overtake, state.score, state.isPaused || state.isGameOver)
+    else this.refreshScoreDisplay()
     this.refreshObjectiveDisplay()
     this.refreshNextPieceDisplay()
     this.refreshSkillButtonState()
@@ -453,6 +473,7 @@ export class PlayUIController extends Component {
       this.currentState.highestValue,
       this.currentState.gameOverCoinReward
     )
+    this.gameOverOverlayController?.renderRank(state.settlementRank, state.settlementRankPending)
     this.firstEntryTutorialController?.renderState(this.currentState.tutorial)
   }
   private skillVisualKeys: Record<PlaySkillKind, string> = {
@@ -496,6 +517,9 @@ export class PlayUIController extends Component {
   }
 
   onDestroy() {
+    this.overtakeLoadGeneration += 1
+    this.overtakeWidget?.dispose()
+    this.overtakeWidget = null
     this.isUiDestroyed = true
     // Cocos 先销毁子节点再调用本组件的 onDestroy，清理只能使用缓存引用，不能重新查找层级。
     this.safeOff(this.pauseButtonNode, Node.EventType.TOUCH_END, this.onPauseButtonTap)
@@ -1094,6 +1118,65 @@ export class PlayUIController extends Component {
       },
       onTap: (event) => this.tutorialTapHandler?.(event)
     })
+  }
+
+  // 新 HUD 首轮渲染成功后才关闭旧分数，资源缺失时沿用场景中的回退节点。
+  private ensureOvertakeWidget() {
+    const generation = ++this.overtakeLoadGeneration
+    resources.load('Gameplay/ScoreTargetHUD', Prefab, (error, prefab) => {
+      if (error || !prefab || this.isUiDestroyed || !this.isValid || !this.node.isValid || generation !== this.overtakeLoadGeneration) return
+      const content = this.node.getChildByName('Status')?.getChildByName('Content')
+      if (!content) return
+      const hud = instantiate(prefab)
+      hud.setParent(content)
+      const widget = hud.getComponent(OvertakeTargetWidget)
+      if (!widget?.initialize()) { hud.destroy(); return }
+      widget.render(this.currentState.overtake, this.currentState.score, this.currentState.isPaused || this.currentState.isGameOver)
+      this.overtakeWidget = widget
+      this.layoutOvertakeWidget()
+      Tween.stopAllByTarget(this.scoreTweenState)
+      const oldScore = content.getChildByName('Score')
+      if (oldScore) oldScore.active = false
+    })
+  }
+
+  /** 在既有 Content 安全区中求可用位置，出生点和棋盘始终由同一套几何参数提供。 */
+  private layoutOvertakeWidget() {
+    const hud = this.overtakeWidget
+    const content = hud?.node.parent?.getComponent(UITransform)
+    const owner = this.node.getComponent(UITransform)
+    if (!hud || !content || !owner) return
+    const geometry = new BoardGeometry(this.node, {
+      boardWidth: this.boardwidth, boardHeight: this.boardheight, pieceSize: this.pieceSize,
+      spacing: this.spacing, spawnOffsetY: this.spawnOffsetY
+    })
+    const project = (position: Vec3) => content.convertToNodeSpaceAR(owner.convertToWorldSpaceAR(position))
+    const x = content.width * (1 - content.anchorX) - 24 - 124
+    const safeTop = content.height * (1 - content.anchorY) - 12
+    let ceiling = safeTop
+    const capsule = this.getWechatMenuMetrics()
+    if (capsule && capsule.windowWidth > 0 && capsule.windowHeight > 0) {
+      const left = capsule.menuRect.left * owner.width / capsule.windowWidth - owner.width * owner.anchorX
+      const right = capsule.menuRect.right * owner.width / capsule.windowWidth - owner.width * owner.anchorX
+      const bottom = owner.height * (1 - owner.anchorY) - (capsule.menuRect.bottom - capsule.screenTop) * owner.height / capsule.windowHeight
+      const a = project(new Vec3(left, bottom, 0))
+      const b = project(new Vec3(right, bottom, 0))
+      if (x + 124 > a.x && x - 124 < b.x) ceiling = Math.min(ceiling, a.y - 12)
+    }
+    const topCell = project(geometry.getCellPosition(this.boardheight - 1, this.boardwidth - 1))
+    const boardTop = topCell.y + geometry.getStepSize() * 0.5 + 18
+    let y = Math.min(ceiling - 81, Math.max(boardTop + 81, safeTop - 160))
+    let fits = y - 81 >= boardTop
+    // 每列出生棋子也占用完整棋子范围；空间不足只收起目标，不挪动棋盘或出生点。
+    for (let column = 0; column < this.boardwidth; column += 1) {
+      const spawn = project(geometry.getSpawnPosition(column))
+      if (Math.abs(spawn.x - x) < 124 + this.pieceSize * 0.5 && y + 81 > spawn.y - this.pieceSize * 0.5 - 12 && y - 81 < spawn.y + this.pieceSize * 0.5 + 12) {
+        y = Math.min(y, spawn.y - this.pieceSize * 0.5 - 12 - 81)
+        fits = y - 81 >= boardTop
+      }
+    }
+    hud.node.setPosition(x, y, 0)
+    hud.setTargetFits(fits)
   }
 
   // 顶部 HUD 复用 scene 中的固定节点，脚本只统一视觉、触摸热区和动态分数。

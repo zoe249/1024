@@ -1,5 +1,5 @@
 import { game, Game } from 'cc'
-import { ApiError } from '../api/GameApiClient'
+import { ApiError, type SettlementRank } from '../api/GameApiClient'
 import { PlayerEconomyStore, monotonicNow, type CloudCheckInSnapshot, type CloudEconomySnapshot, type ShareRewardKind } from '../../economy/PlayerEconomyStore'
 import { PlayerSessionStore } from '../auth/PlayerSessionStore'
 import { PlayerSyncOutbox } from './PlayerSyncOutbox'
@@ -41,6 +41,7 @@ export class PlayerCloudSyncStore {
   private consumePromise: Promise<Receipt> | null = null
   private rewardPromise: Promise<Receipt> | null = null
   private readonly receipts = new Map<string, Receipt>()
+  private readonly gameRanks = new Map<string, SettlementRank | null>()
   private readonly listeners = new Set<(event: EconomySyncEvent) => void>()
   private timer: ReturnType<typeof setInterval> | null = null
   private foreground = true
@@ -106,11 +107,11 @@ export class PlayerCloudSyncStore {
     if (scheduleNow() < this.nextAttemptAt && (this.failures > 0 || state.remainingSeconds !== 0 && this.outbox.getOperations().length === 0)) return
     void this.sync(economy, state.remainingSeconds === 0 ? 'boundary' : 'calibration').catch(() => {})
   }
-  sync(economy = PlayerEconomyStore.getInstance(), reason: SyncReason = 'calibration'): Promise<PlayerCloudSnapshot> {
+  sync(economy = PlayerEconomyStore.getInstance(), reason: SyncReason = 'calibration', silent = false): Promise<PlayerCloudSnapshot> {
     const account = this.session.getSnapshot().playerId
     if (this.syncPromise) {
       return account === this.syncAccount ? this.syncPromise
-        : this.syncPromise.then(() => this.sync(economy, reason), () => this.sync(economy, reason))
+        : this.syncPromise.then(() => this.sync(economy, reason, silent), () => this.sync(economy, reason, silent))
     }
     this.syncAccount = account
     this.syncPromise = this.performSync(economy, reason).then(result => {
@@ -123,10 +124,24 @@ export class PlayerCloudSyncStore {
       this.syncPromise = null
       const backoff = [5000, 15000, 30000, 60000]
       this.nextAttemptAt = scheduleNow() + backoff[Math.min(this.failures++, backoff.length - 1)]
-      if (this.failures === 1) this.emit({ kind: 'error', message: '体力同步暂未完成，联网后自动校准' })
+      if (!silent && this.failures === 1) this.emit({ kind: 'error', message: '体力同步暂未完成，联网后自动校准' })
       throw error
     })
     return this.syncPromise
+  }
+
+  /** 等待本局操作自己的回执，避免复用较早的校准请求名次。 */
+  async syncGameFinished(operationId: string): Promise<SettlementRank | null> {
+    const account = this.session.getSnapshot().playerId
+    if (!account) return null
+    const key = `${account}:${operationId}`
+    do {
+      await this.sync(PlayerEconomyStore.getInstance(), 'operation', true)
+      if (account !== this.session.getSnapshot().playerId) return null
+    } while (this.outbox.getOperations().some(operation => operation.operationId === operationId))
+    const rank = this.gameRanks.get(key) ?? null
+    this.gameRanks.delete(key)
+    return rank
   }
 
   /** 在线消费等待单条回执，网络失败时只允许使用最近确认余额形成未确认消费。 */
@@ -230,6 +245,11 @@ export class PlayerCloudSyncStore {
       const result = await this.session.getApiClient().sync<PlayerCloudSnapshot>(body)
       if (account !== this.session.getSnapshot().playerId) throw new Error('账号已切换，忽略旧账号响应')
       const accepted = [...result.acceptedOperationIds, ...result.duplicateOperationIds]
+      for (const operation of operations) {
+        if (operation.type !== 'game_finished') continue
+        this.gameRanks.set(`${account}:${operation.operationId}`, accepted.indexOf(operation.operationId) >= 0 ? result.rank ?? null : null)
+      }
+      if (this.gameRanks.size > 200) this.gameRanks.delete(this.gameRanks.keys().next().value!)
       for (const id of accepted) {
         this.receipts.set(id, { accepted: true })
         this.outbox.setStartReceipt(id, { accepted: true })
@@ -237,7 +257,9 @@ export class PlayerCloudSyncStore {
       for (const rejection of result.rejectedOperations) {
         this.receipts.set(rejection.operationId, { accepted: false, message: rejection.message })
         this.outbox.setStartReceipt(rejection.operationId, { accepted: false, message: rejection.message })
-        this.emit({ kind: 'rejected', message: `待同步操作未通过：${rejection.message}` })
+        if (!operations.some(operation => operation.operationId === rejection.operationId && operation.type === 'game_finished')) {
+          this.emit({ kind: 'rejected', message: `待同步操作未通过：${rejection.message}` })
+        }
       }
       if (this.receipts.size > 1000) for (const id of [...this.receipts.keys()].slice(0, this.receipts.size - 1000)) this.receipts.delete(id)
       this.outbox.applySyncResult(result.cloudRevision, [...accepted, ...result.rejectedOperations.map(op => op.operationId), ...importedIds], {
