@@ -9,45 +9,9 @@ import {
   UITransform,
   Vec2
 } from 'cc'
+import { getPieceStyle, type PieceDecoration, type PieceStyle } from './PieceStyle'
 
 const { ccclass, property } = _decorator
-
-type PieceDecoration = 'none' | 'sparkle' | 'crown'
-
-type PieceStyle = {
-  bodyColor: string
-  textColor?: string
-  outlineColor?: string
-  decoration?: PieceDecoration
-  textScale?: number
-}
-
-const DEFAULT_STYLE: PieceStyle = {
-  bodyColor: '#cf586d'
-}
-
-// 色阶沿用设计稿的暖色低级块、冷色中级块和深青色皇冠终局块。
-const PIECE_STYLE: Record<number, PieceStyle> = {
-  2: { bodyColor: '#f8ecdc' },
-  4: { bodyColor: '#f7a536' },
-  8: { bodyColor: '#ffc22e' },
-  16: { bodyColor: '#9bc849' },
-  32: { bodyColor: '#50ae61' },
-  64: { bodyColor: '#35a1a5' },
-  128: { bodyColor: '#3f88c7' },
-  256: { bodyColor: '#5872c8' },
-  512: { bodyColor: '#6e55b8' },
-  1024: { bodyColor: '#8f54ad', textScale: 0.94 },
-  2048: { bodyColor: '#cf586d', textScale: 0.9 },
-  4096: { bodyColor: '#db5935', textScale: 0.9 },
-  8192: {
-    bodyColor: '#2f6c78',
-    textColor: '#ffe4a0',
-    outlineColor: '#e8ad2d',
-    decoration: 'crown',
-    textScale: 0.86
-  }
-}
 
 @ccclass('PieceController')
 export class PieceController extends Component {
@@ -187,7 +151,7 @@ export class PieceController extends Component {
   }
 
   private refreshView() {
-    const style = PIECE_STYLE[this.value] ?? DEFAULT_STYLE
+    const style = getPieceStyle(this.value)
     this.currentBgColor = this.fromHex(style.bodyColor)
     this.currentTextColor = this.fromHex(style.textColor ?? '#fff9ea')
 
@@ -239,7 +203,7 @@ export class PieceController extends Component {
     }
 
     const digits = `${this.value}`.length
-    const style = PIECE_STYLE[this.value] ?? DEFAULT_STYLE
+    const style = getPieceStyle(this.value)
     const scale = Math.min(width, height) / 120
     const baseFontSize = digits >= 5 ? 32 : digits === 4 ? 37 : digits === 3 ? 46 : 56
     const decorationOffset = style.decoration === 'crown' ? -height * 0.08 : 0

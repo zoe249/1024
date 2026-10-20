@@ -13,6 +13,7 @@ function load(file, dependencies, globals = {}) {
   return module.exports
 }
 const presentation = load('assets/script/settlement/SettlementPresentation.ts', {})
+const pieceStyles = load('assets/script/gameplay/PieceStyle.ts', {})
 for (const [value, expected] of [[0,'0'],[3560,'3,560'],[568888,'568,888'],[1258880,'1,258,880'],[999999999,'999,999,999'],[1000000000,'1,000,000,000']]) assert.equal(presentation.formatSettlementScore(value), expected)
 const entry = (rank, self = false, value = 600000 - rank * 1000) => ({ rank, displayName: self ? '自己' : '这是一个非常非常长的玩家昵称', value, avatarIndex: rank % 11, isSelf: self })
 const result = (previous, current, extra = {}) => ({ previous, current, operationId: 'finish', self: entry(current, true), entries: Array.from({ length: Math.max(previous || 0, current) + 5 }, (_, i) => i + 1).filter(rank => rank !== current).map(rank => entry(rank)), celebrate: previous === null || previous > current, ...extra })
@@ -90,8 +91,8 @@ const prefab=JSON.parse(fs.readFileSync(path.join(root,'assets/resources/Settlem
 const types={'cc.UITransform':UITransform,'cc.Label':Label,'cc.Sprite':Sprite,'cc.Graphics':Graphics,'cc.Mask':Mask,'cc.UIOpacity':UIOpacity}
 function deserialize(){const nodes=new Map();prefab.forEach((x,i)=>{if(x.__type__==='cc.Node'){const n=new Node(x._name);n.active=x._active;n.setPosition(x._lpos.x,x._lpos.y,x._lpos.z);nodes.set(i,n)}});for(const [id,n]of nodes){const x=prefab[id];if(x._parent)n.setParent(nodes.get(x._parent.__id__));for(const ref of x._components){const c=prefab[ref.__id__],Type=types[c.__type__];assert.ok(Type,c.__type__);const value=n.addComponent(Type);if(Type===UITransform)value.setContentSize(c._contentSize.width,c._contentSize.height);if(Type===Sprite)value.spriteFrame=c._spriteFrame?new SpriteFrame():null;if(Type===Label){value.string=c._string;value.fontSize=c._fontSize;value.overflow=c._overflow;value.enableWrapText=c._enableWrapText;value.isBold=c._isBold;value.fontFamily=c._fontFamily;value.outlineWidth=c._outlineWidth}}}for(const [id,n]of nodes)n.children=prefab[id]._children.map(ref=>nodes.get(ref.__id__));return nodes.get(prefab[0].data.__id__)}
 function clone(n){const copy=new Node(n.name);const t=n.getComponent(UITransform);if(t)copy.addComponent(UITransform).setContentSize(t.width,t.height);for(const c of n.components.filter(c=>!(c instanceof UITransform))){const nc=copy.addComponent(c.constructor);if(c instanceof Sprite)nc.spriteFrame=c.spriteFrame;if(c instanceof Label)Object.assign(nc,{string:c.string,fontSize:c.fontSize,overflow:c.overflow,enableWrapText:c.enableWrapText})}for(const child of n.children)clone(child).setParent(copy);return copy}
-const cc={_decorator:{ccclass:()=>Type=>Type},Color:class{constructor(r,g,b,a=255){Object.assign(this,{r,g,b,a})}},Component,EventTouch:class{},game,Game,Graphics,instantiate:p=>p instanceof Node?clone(p):deserialize(),Label,Node,Prefab,resources:{load(...args){resourceLoads.push(args.at(-1))}},Sprite,SpriteFrame,tween,Tween,UIOpacity,UITransform,Vec3}
-const {GameOverOverlayController}=load('assets/script/settlement/GameOverOverlayController.ts',{cc,'../profile/PlayerAvatarRenderer':{PlayerAvatarRenderer:Avatar},'./SettlementPresentation':presentation},{matchMedia:()=>({matches:reduced})})
+const cc={_decorator:{ccclass:()=>Type=>Type},Color:class{constructor(r,g,b,a=255){Object.assign(this,{r,g,b,a})}static fromHEX(out,hex){const n=Number.parseInt(hex.replace('#',''),16);Object.assign(out,{r:n>>>16&255,g:n>>>8&255,b:n&255,a:255});return out}},Component,EventTouch:class{},game,Game,Graphics,instantiate:p=>p instanceof Node?clone(p):deserialize(),Label,Node,Prefab,resources:{load(...args){resourceLoads.push(args.at(-1))}},Sprite,SpriteFrame,tween,Tween,UIOpacity,UITransform,Vec3}
+const {GameOverOverlayController}=load('assets/script/settlement/GameOverOverlayController.ts',{cc,'../profile/PlayerAvatarRenderer':{PlayerAvatarRenderer:Avatar},'../gameplay/PieceStyle':pieceStyles,'./SettlementPresentation':presentation},{matchMedia:()=>({matches:reduced})})
 function harness(width=750,height=1334,fallback=false){resourceLoads=[];const controller=new GameOverOverlayController();controller.node=new Node('Overlay');const parent=new Node('Root');controller.node.setParent(parent);const host=new Node('Content');host.addComponent(UITransform).setContentSize(width,height);const calls=[0,0,0];controller.setup({hostNode:host,homeHandler:()=>calls[0]++,replayHandler:()=>calls[1]++,shareHandler:()=>calls[2]++,homeButtonSpriteFrame:new SpriteFrame(),replayButtonSpriteFrame:new SpriteFrame(),shareButtonSpriteFrame:new SpriteFrame()});controller.onEnable();return{controller,calls,ready(){resourceLoads.shift()(fallback?Error('fixture'):null,fallback?null:{});return controller}}}
 for(const [width,height]of[[640,1136],[750,1334],[860,1864]])for(const data of scenarios){const h=harness(width,height),c=h.controller;c.renderState(true,52880,2048,128);c.renderRank(data,false);assert.equal(c.track,null);h.ready();assert.equal(c.scoreLabel.string,'52,880');assert.equal(c.rows.length,8);assert.ok(c.layoutScale*1360<=height-64+0.01);assert.ok(c.layoutScale*750<=width-40+0.01);for(let i=0;i<390;i++)c.update(0.016);assert.equal(c.playing,false);assert.equal(c.paper.length,0);assert.equal(c.rankLabel.string,`第 ${data.current} 名`);assert.equal(c.rankNumber.string,String(data.current));assert.equal(c.rankNumber.node.parent.active,true);assert.equal(c.rankLabel.node.active,false);if(data.current===1)assert.equal(c.statusLabel.string,'已登顶');assert.equal(c.selfRow.score.string,presentation.formatSettlementScore(data.self.value));assert.equal(c.selfRow.node.scale.x,1);assert.equal(c.selfRow.score.outlineWidth,0.5);assert.equal(c.statusLabel.isBold,false);assert.equal(c.statusLabel.fontFamily,'"Microsoft YaHei","PingFang SC",sans-serif');const border=c.selfRow.node.getComponent(Graphics).strokes[0];assert.equal(border.width,1.2);assert.equal(JSON.stringify(border.color),JSON.stringify({r:116,g:68,b:38,a:170}));for(const [index,frame]of [c.options.homeButtonSpriteFrame,c.options.replayButtonSpriteFrame,c.options.shareButtonSpriteFrame].entries()){const b=c.buttons[index];assert.equal(b.getChildByName('Artwork').getComponent(Sprite).spriteFrame,frame);assert.equal(b.getComponent(Graphics),null);assert.equal(b.getComponent(UITransform).width,index===2?316:126);assert.equal(b.getChildByName('Artwork').getComponent(UITransform).height,126)}assert.equal(c.selfRow.medal.node.active,data.current<=3);assert.equal(c.selfRow.rank.node.active,data.current>3);for(const row of c.rows.filter(r=>r.node.active)){assert.equal(row.score.overflow,2);assert.equal(row.score.enableWrapText,false);assert.ok(row.name.string.endsWith('…'))}c.onDestroy()}
 console.log('真实 Prefab/组件：18 种屏幕情景、历史最佳与本局分离、十位数 SHRINK、昵称省略、单次动画通过')
@@ -155,3 +156,36 @@ reduced=true;const still=harness();still.controller.renderState(true,1,2,5);stil
 assert.equal(still.controller.entering,false);assert.equal(still.controller.panelOpacity.opacity,255);assert.equal(still.controller.maskOpacity.opacity,255);still.controller.onDestroy();reduced=false;
 assert.equal([...eventBus.values()].flat().length,0);assert.equal(animations.length,0);
 console.log('弹窗入场：渐显、重排连续、冲榜等待、慢加载不闪遮罩、后台与关闭清理、减少动态通过');
+
+// 真机反馈：统计图标不能盖住标题，缩略图不能一直显示成绿色空块。
+const maximum=harness(), mc=maximum.controller;mc.renderState(true,4172,512,68);maximum.ready();
+const maximumGroup=mc.panel.getChildByPath('Statistics/Highest');
+const caption=maximumGroup.getChildByName('Caption');
+const icon=maximumGroup.getChildByName('Icon');
+const value=maximumGroup.getChildByName('Label');
+const size=n=>n.getComponent(UITransform);
+assert.ok(caption.position.x-size(caption).width/2-(icon.position.x+size(icon).width/2)>=6);
+assert.ok(value.position.x-size(value).width/2-(caption.position.x+size(caption).width/2)>=12);
+assert.equal(caption.position.y,icon.position.y);assert.equal(caption.position.y,value.position.y);
+assert.equal(mc.highestLabel.string,'512');assert.equal(mc.highestIconLabel.string,'512');
+assert.equal(JSON.stringify(mc.highestIcon.color),JSON.stringify({r:110,g:85,b:184,a:255}));
+mc.renderRank(result(1,1,{self:entry(1,true,13288),entries:[],celebrate:false}),false);
+assert.equal(mc.highestLabel.string,'512');assert.equal(mc.highestIconLabel.string,'512');
+for(const [value,hex]of [[2,'#f8ecdc'],[16,'#9bc849'],[512,'#6e55b8'],[1024,'#8f54ad'],[2048,'#cf586d'],[8192,'#2f6c78']]){
+  mc.renderState(true,4172,value,68);
+  assert.equal(mc.highestIconLabel.string,String(value));assert.equal(mc.highestLabel.string,String(value));
+  const expected=cc.Color.fromHEX(new cc.Color(),hex);assert.equal(JSON.stringify(mc.highestIcon.color),JSON.stringify(expected));
+}
+assert.equal(JSON.stringify(mc.highestIconOutline.color),JSON.stringify(cc.Color.fromHEX(new cc.Color(),'#e8ad2d')));
+mc.renderState(true,4172,0,68);assert.equal(mc.highestIcon.node.active,false);
+mc.renderState(true,4172,512,68);assert.equal(mc.highestIcon.node.active,true);mc.onDestroy();
+
+const pieceCc={...cc,_decorator:{...cc._decorator,property:()=>()=>{}},ParticleSystem2D:class{},Vec2:class{}};
+const {PieceController}=load('assets/script/gameplay/PieceController.ts',{cc:pieceCc,'./PieceStyle':pieceStyles});
+const piece=new PieceController();piece.node=new Node('ActualPiece');piece.bodySprite=new Node('Body').addComponent(Sprite);
+piece.setValue(512);assert.equal(JSON.stringify(piece.bodySprite.color),JSON.stringify(cc.Color.fromHEX(new cc.Color(),'#6e55b8')));
+const {ScoreManager}=load('assets/script/gameplay/ScoreManager.ts',{});const scoreManager=new ScoreManager();
+for(const value of [128,512,256])scoreManager.updateHighestPieceValue(value);
+assert.equal(scoreManager.getHighestPieceValue(),512);scoreManager.reset();assert.equal(scoreManager.getHighestPieceValue(),0);
+scoreManager.restore(0,1024);scoreManager.updateHighestPieceValue(512);assert.equal(scoreManager.getHighestPieceValue(),1024);
+console.log('最高合成：统计间距、512 紫色数字缩略图、共享棋盘配色、零值隐藏、本局最高记录与榜单分离通过');

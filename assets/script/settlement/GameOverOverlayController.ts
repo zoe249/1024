@@ -1,6 +1,7 @@
 import { _decorator, Color, Component, EventTouch, game, Game, Graphics, instantiate, Label, Node, Prefab, resources, Sprite, SpriteFrame, tween, Tween, UIOpacity, UITransform, Vec3 } from 'cc'
 import type { LeaderboardEntryDto, SettlementRank } from '../online/api/GameApiClient'
 import { PlayerAvatarRenderer } from '../profile/PlayerAvatarRenderer'
+import { getPieceStyle } from '../gameplay/PieceStyle'
 import { buildSettlementTrack, formatSettlementScore, makeCelebration, particleFrame, settlementFrame, SETTLEMENT_LIST_HEIGHT, type CelebrationParticle, type SettlementTrack } from './SettlementPresentation'
 
 const { ccclass } = _decorator
@@ -41,6 +42,10 @@ export class GameOverOverlayController extends Component {
   private buttons: Node[] = []
   private scoreLabel: Label | null = null
   private highestLabel: Label | null = null
+  private highestIcon: Sprite | null = null
+  private highestIconOutline: Sprite | null = null
+  private highestIconLabel: Label | null = null
+  private highestIconValue = -1
   private coinsLabel: Label | null = null
   private rankLabel: Label | null = null
   private rankNumber: Label | null = null
@@ -240,6 +245,9 @@ export class GameOverOverlayController extends Component {
     const label = (path: string) => panel.getChildByPath(path)?.getComponent(Label) ?? null
     this.scoreLabel = label('Score')
     this.highestLabel = label('Statistics/Highest/Label')
+    this.highestIcon = panel.getChildByPath('Statistics/Highest/Icon')?.getComponent(Sprite) ?? null
+    this.highestIconOutline = panel.getChildByPath('Statistics/Highest/Icon/Outline')?.getComponent(Sprite) ?? null
+    this.highestIconLabel = label('Statistics/Highest/Icon/Value')
     this.coinsLabel = label('Statistics/Coins/Label')
     this.rankLabel = label('Board/Rank')
     this.rankNumber = label('Board/RankValue/Number')
@@ -306,6 +314,23 @@ export class GameOverOverlayController extends Component {
     if (this.scoreLabel) this.scoreLabel.string = formatSettlementScore(this.values.score)
     if (this.highestLabel) this.highestLabel.string = `${compact ? '' : '最高合成  '}${this.values.highest}`
     if (this.coinsLabel) this.coinsLabel.string = `${compact ? '' : '金币  '}+${formatSettlementScore(this.values.coins)}`
+    this.refreshHighestIcon()
+  }
+
+  private refreshHighestIcon() {
+    if (!this.highestIcon || this.highestIconValue === this.values.highest) return
+    const value = this.values.highest
+    this.highestIconValue = value
+    this.highestIcon.node.active = value > 0
+    const style = getPieceStyle(value)
+    const color = (hex: string) => Color.fromHEX(new Color(), hex)
+    this.highestIcon.color = color(style.bodyColor)
+    if (this.highestIconOutline) this.highestIconOutline.color = color(style.outlineColor ?? '#4b3528')
+    if (this.highestIconLabel) {
+      this.highestIconLabel.string = `${value}`
+      this.highestIconLabel.color = color(style.textColor ?? '#fff9ea')
+      this.highestIconLabel.outlineColor = color('#4a3125')
+    }
   }
 
   private applyRank() {
