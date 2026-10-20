@@ -210,7 +210,7 @@ export class GameOverOverlayController extends Component {
     }
     this.particles = panel.getChildByName('Confetti')?.getComponent(Graphics) ?? null
     this.buttons = ['Home', 'Replay', 'Share'].map(name => panel.getChildByPath(`Actions/${name}`)!).filter(Boolean)
-    this.buttons.forEach((node, index) => this.paintButton(node, index))
+    this.buttons.forEach((node, index) => this.restoreButtonArtwork(node, index))
     for (const name of ['Highest', 'Coins']) {
       const node = panel.getChildByPath(`Statistics/${name}`)
       if (node) this.rounded(node, new Color(255, 243, 212), 22)
@@ -224,14 +224,24 @@ export class GameOverOverlayController extends Component {
     const row = { node, rank: node.getChildByName('Rank')!.getComponent(Label)!, medal: node.getChildByName('Medal')!.getComponent(Sprite)!, name: node.getChildByName('Name')!.getComponent(Label)!, score: node.getChildByName('Score')!.getComponent(Label)!, avatar: new PlayerAvatarRenderer(sprite), opacity: node.getComponent(UIOpacity) ?? node.addComponent(UIOpacity), key: '' }
     const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics)
     if (self) {
-      this.rounded(node, new Color(245, 129, 85), 24)
-      graphics.strokeColor = new Color(255, 224, 164, 65)
+      const size = node.getComponent(UITransform)!
+      graphics.clear()
+      graphics.fillColor = new Color(181, 110, 57, 53)
+      graphics.roundRect(-size.width / 2, -size.height / 2 - 4, size.width, size.height, 24)
+      graphics.fill()
+      graphics.fillColor = new Color(245, 129, 85)
+      graphics.strokeColor = new Color(116, 68, 38, 170)
+      graphics.lineWidth = 1.2
+      graphics.roundRect(-size.width / 2, -size.height / 2, size.width, size.height, 24)
+      graphics.fill(); graphics.stroke()
+      let seed = 301
+      const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296 }
       graphics.lineWidth = 1.3
-      for (let index = 0; index < 32; index += 1) {
-        const x = -275 + (index * 71 % 540), y = -40 + (index * 17 % 78)
-        graphics.moveTo(x, y); graphics.lineTo(x + 12, y + 5)
+      for (let index = 0; index < 70; index += 1) {
+        const x = -size.width / 2 + 12 + random() * (size.width - 64), y = -size.height / 2 + 16 + random() * (size.height - 32)
+        graphics.strokeColor = index % 3 === 0 ? new Color(113, 67, 30, 18) : new Color(255, 240, 204, 40)
+        graphics.moveTo(x, y); graphics.lineTo(x + 10 + random() * 30, y - 8 + random() * 12); graphics.stroke()
       }
-      graphics.stroke()
     } else {
       graphics.strokeColor = new Color(192, 161, 109, 28)
       graphics.lineWidth = 1
@@ -303,17 +313,20 @@ export class GameOverOverlayController extends Component {
     if (!track || !this.rankLabel) return
     const frame = settlementFrame(track, this.elapsed)
     const final = this.elapsed >= track.landing
-    this.rankLabel.string = frame.rank === 1 && final ? '已登顶' : `第 ${frame.rank} 名`
+    this.rankLabel.string = `第 ${frame.rank} 名`
     if (this.rankNumber?.node.parent) {
       this.rankNumber.string = `${frame.rank}`
-      this.rankNumber.node.parent.active = !(frame.rank === 1 && final)
-      this.rankLabel.node.active = frame.rank === 1 && final
+      this.rankNumber.node.parent.active = true
+      this.rankLabel.node.active = false
     }
     if (this.deltaLabel) {
       const delta = (track.result.previous ?? frame.rank!) - frame.rank!
       this.deltaLabel.string = track.result.previous === null ? '新上榜' : delta > 0 ? `↑${delta}` : ''
+      this.deltaLabel.color = track.result.previous === null ? new Color(199, 122, 36) : new Color(113, 155, 65)
     }
-    if (this.statusLabel) this.statusLabel.string = final ? track.result.current === 1 ? '已登顶' : track.moving ? '超越完成' : track.result.previous === null ? '新上榜' : '历史最佳成绩' : this.elapsed < 450 ? '准备冲榜' : '正在超越'
+    this.layoutRankSummary()
+    const rise = (track.result.previous ?? track.result.current!) - track.result.current!
+    if (this.statusLabel) this.statusLabel.string = final ? track.result.current === 1 ? '已登顶' : track.result.previous === null ? '新上榜' : rise > 0 ? `超越 ${rise} 位玩家` : '保持当前名次' : this.elapsed < 450 ? '准备冲榜' : '正在超越'
     const visible = frame.rows.filter(row => row.y > -SETTLEMENT_LIST_HEIGHT / 2 - 56 && row.y < SETTLEMENT_LIST_HEIGHT / 2 + 56)
     this.rows.forEach((view, index) => {
       const row = visible[index]
@@ -343,6 +356,26 @@ export class GameOverOverlayController extends Component {
     this.playing = false
     this.paper = []
     this.particles?.clear()
+  }
+
+  /** 按数字长度收紧「第 N 名」和增量，登顶仍保留名次，状态仅在右侧小字显示。 */
+  private layoutRankSummary() {
+    const number = this.rankNumber
+    const group = number?.node.parent
+    if (!number || !group) return
+    const width = Math.min(240, Math.max(48, number.string.length * 40))
+    number.node.getComponent(UITransform)!.setContentSize(width, 84)
+    group.getChildByName('Prefix')?.setPosition(-width / 2 - 20, 0, 0)
+    group.getChildByName('Suffix')?.setPosition(width / 2 + 20, 0, 0)
+    group.getComponent(UITransform)!.setContentSize(width + 80, 84)
+    const hasDelta = !!this.deltaLabel?.string
+    const deltaWidth = hasDelta ? Math.min(190, Math.max(80, this.deltaLabel!.string.length * 28)) : 0
+    group.setPosition(hasDelta ? -(deltaWidth + 24) / 2 : 0, 164, 0)
+    if (this.deltaLabel) {
+      this.deltaLabel.node.active = hasDelta
+      this.deltaLabel.node.getComponent(UITransform)!.setContentSize(Math.max(1, deltaWidth), 70)
+      this.deltaLabel.node.setPosition((width + 80 + 24) / 2, 164, 0)
+    }
   }
 
   private drawPaper(elapsed: number) {
@@ -387,34 +420,18 @@ export class GameOverOverlayController extends Component {
     graphics.fill(); graphics.stroke()
   }
 
-  private paintButton(node: Node, index: number) {
-    this.rounded(node, index === 0 ? new Color(255, 240, 203) : index === 1 ? new Color(244, 124, 81) : new Color(168, 198, 101), 30)
-    if (index > 0) {
-      const background = node.getComponent(Graphics)!
-      const width = node.getComponent(UITransform)!.width
-      background.strokeColor = new Color(255, 240, 204, 50)
-      background.lineWidth = 1.3
-      for (let line = 0; line < Math.floor(width / 13); line += 1) {
-        const x = -width / 2 + 12 + (line * 47 % (width - 42)), y = -34 + (line * 17 % 66)
-        background.moveTo(x, y); background.lineTo(x + 15, y + 5)
-      }
-      background.stroke()
+  private restoreButtonArtwork(node: Node, index: number) {
+    const background = node.getComponent(Graphics)
+    if (background) { background.clear(); background.enabled = false }
+    const frame = [this.options?.homeButtonSpriteFrame, this.options?.replayButtonSpriteFrame, this.options?.shareButtonSpriteFrame][index]
+    const sprite = node.getChildByName('Artwork')?.getComponent(Sprite)
+    if (sprite) {
+      if (frame) sprite.spriteFrame = frame
+      sprite.sizeMode = Sprite.SizeMode.CUSTOM
+      sprite.trim = false
+      const size = node.getComponent(UITransform)!
+      sprite.node.getComponent(UITransform)!.setContentSize(size.width, size.height)
     }
-    const icon = node.getChildByName('Icon')
-    const graphics = icon?.getComponent(Graphics)
-    if (!graphics) return
-    graphics.clear(); graphics.strokeColor = index === 0 ? INK : CREAM; graphics.lineWidth = 4.4
-    if (index === 0) {
-      graphics.moveTo(-19, -1); graphics.lineTo(0, 17); graphics.lineTo(19, -1)
-      graphics.moveTo(-13, 3); graphics.lineTo(-13, -19); graphics.lineTo(-4, -19); graphics.lineTo(-4, -7); graphics.lineTo(4, -7); graphics.lineTo(4, -19); graphics.lineTo(13, -19); graphics.lineTo(13, 3)
-    } else if (index === 1) {
-      graphics.arc(0, 0, 16, Math.PI * 0.85, Math.PI * 2.65, false)
-      graphics.moveTo(-18, 18); graphics.lineTo(-18, 2); graphics.lineTo(-2, 2)
-    } else {
-      graphics.moveTo(-9, 3); graphics.lineTo(11, 14); graphics.moveTo(-9, -3); graphics.lineTo(11, -14)
-      for (const [x, y] of [[-16, 0], [16, 19], [16, -19]]) graphics.circle(x, y, 6)
-    }
-    graphics.stroke()
   }
 
   private bindSwallow(node: Node | null, bind: boolean) {
@@ -478,7 +495,15 @@ export class GameOverOverlayController extends Component {
       button.addComponent(UITransform).setContentSize(210, 100)
       const label = makeLabel(`${name}Label`, name, 0, 32)
       label.node.setParent(button); label.node.setPosition(0, 0, 0); label.node.getComponent(UITransform)!.setContentSize(200, 90)
-      this.paintButton(button, index)
+      const frame = [this.options?.homeButtonSpriteFrame, this.options?.replayButtonSpriteFrame, this.options?.shareButtonSpriteFrame][index]
+      if (frame) {
+        label.node.active = false
+        const artwork = new Node('Artwork'); artwork.layer = this.node.layer; artwork.setParent(button)
+        const width = index === 2 ? 210 : 100
+        artwork.addComponent(UITransform).setContentSize(width, index === 2 ? 84 : 100)
+        const sprite = artwork.addComponent(Sprite); sprite.sizeMode = Sprite.SizeMode.CUSTOM; sprite.trim = false; sprite.spriteFrame = frame
+        artwork.getComponent(UITransform)!.setContentSize(width, index === 2 ? 84 : 100)
+      }
       return button
     })
     this.bindSwallow(this.panel, true)
