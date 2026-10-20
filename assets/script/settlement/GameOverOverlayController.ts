@@ -533,6 +533,8 @@ export class GameOverOverlayController extends Component {
   private bindButtons(bind: boolean) {
     const callbacks = [this.homeTap, this.replayTap, this.shareTap]
     this.buttons.forEach((node, index) => {
+      // 切场景先销毁子按钮；此时事件处理器已释放，不能再调用 off。
+      if (!node.isValid) return
       node.off(Node.EventType.TOUCH_END, callbacks[index], this)
       if (bind) node.on(Node.EventType.TOUCH_END, callbacks[index], this)
     })

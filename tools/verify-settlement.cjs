@@ -68,7 +68,7 @@ class Node {
   setScale(x,y,z=1){this.scale=x instanceof Vec3?x:new Vec3(x,y,z)}
   setSiblingIndex(index){if(!this.parent)return;const a=this.parent.children;a.splice(a.indexOf(this),1);a.splice(index,0,this)}
   on(event,fn,owner){const list=this.events.get(event)||[];list.push({fn,owner});this.events.set(event,list)}
-  off(event,fn,owner){this.events.set(event,(this.events.get(event)||[]).filter(x=>x.fn!==fn||x.owner!==owner))}
+  off(event,fn,owner){if(!this.events)throw new TypeError("null is not an object (evaluating 'this._eventProcessor.off')");this.events.set(event,(this.events.get(event)||[]).filter(x=>x.fn!==fn||x.owner!==owner))}
 }
 class UITransform extends Component {setContentSize(w,h){this.width=w;this.height=h}}
 class Label extends Component { static Overflow={SHRINK:2};static HorizontalAlign={CENTER:1};static VerticalAlign={CENTER:1};constructor(){super();this.string=''} }
@@ -189,3 +189,40 @@ for(const value of [128,512,256])scoreManager.updateHighestPieceValue(value);
 assert.equal(scoreManager.getHighestPieceValue(),512);scoreManager.reset();assert.equal(scoreManager.getHighestPieceValue(),0);
 scoreManager.restore(0,1024);scoreManager.updateHighestPieceValue(512);assert.equal(scoreManager.getHighestPieceValue(),1024);
 console.log('最高合成：统计间距、512 紫色数字缩略图、共享棋盘配色、零值隐藏、本局最高记录与榜单分离通过');
+
+// Cocos 切场景先停用，再销毁子节点，最后调用父节点组件的 onDestroy。
+function destroySceneOverlay(controller) {
+  controller.onDisable();
+  const destroyChildrenFirst = node => {
+    for(const child of node.children)destroyChildrenFirst(child);
+    node.events=null;
+    for(const component of node.components)component.isValid=false;
+    node.isValid=false;
+  };
+  for(const child of controller.node.children)destroyChildrenFirst(child);
+  controller.node.events=null;
+  controller.onDestroy();
+  controller.node.isValid=false;
+}
+for(const fallback of [false,true]){
+  const home=harness(750,1334,fallback), controller=home.controller;
+  controller.renderState(true,4172,512,68);home.ready();
+  if(!fallback){controller.renderRank(result(7,1),false);controller.update(2.8);assert.ok(controller.paper.length);}
+  const oldButtons=[...controller.buttons];
+  controller.options.homeHandler=()=>{home.calls[0]++;destroySceneOverlay(controller)};
+  controller.homeTap({propagationStopped:false});
+  assert.doesNotThrow(()=>stepButtons());
+  assert.deepEqual(home.calls,[1,0,0]);assert.equal(controller.disposed,true);
+  assert.ok(oldButtons.every(button=>!button.isValid&&button.events===null));
+  assert.equal([...eventBus.values()].flat().length,0);assert.equal(animations.length,0);
+}
+const leaving=harness();leaving.controller.renderState(true,4172,512,68);
+assert.doesNotThrow(()=>destroySceneOverlay(leaving.controller));
+leaving.ready();assert.equal(leaving.controller.panel,null);
+const detached=harness();detached.ready();
+const liveButtons=[...detached.controller.buttons];
+assert.ok(liveButtons.every(button=>button.events.get(Node.EventType.TOUCH_END).length===1));
+detached.controller.onDestroy();
+assert.ok(liveButtons.every(button=>button.events.get(Node.EventType.TOUCH_END).length===0));
+assert.equal([...eventBus.values()].flat().length,0);assert.equal(animations.length,0);
+console.log('结算返回首页：子按钮先销毁时不访问事件处理器、彩纸中离场、回退界面与未完成加载清理通过');
