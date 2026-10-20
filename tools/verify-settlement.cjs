@@ -95,7 +95,7 @@ const {GameOverOverlayController}=load('assets/script/settlement/GameOverOverlay
 function harness(width=750,height=1334,fallback=false){resourceLoads=[];const controller=new GameOverOverlayController();controller.node=new Node('Overlay');const parent=new Node('Root');controller.node.setParent(parent);const host=new Node('Content');host.addComponent(UITransform).setContentSize(width,height);const calls=[0,0,0];controller.setup({hostNode:host,homeHandler:()=>calls[0]++,replayHandler:()=>calls[1]++,shareHandler:()=>calls[2]++,homeButtonSpriteFrame:new SpriteFrame(),replayButtonSpriteFrame:new SpriteFrame(),shareButtonSpriteFrame:new SpriteFrame()});controller.onEnable();return{controller,calls,ready(){resourceLoads.shift()(fallback?Error('fixture'):null,fallback?null:{});return controller}}}
 for(const [width,height]of[[640,1136],[750,1334],[860,1864]])for(const data of scenarios){const h=harness(width,height),c=h.controller;c.renderState(true,52880,2048,128);c.renderRank(data,false);assert.equal(c.track,null);h.ready();assert.equal(c.scoreLabel.string,'52,880');assert.equal(c.rows.length,8);assert.ok(c.layoutScale*1360<=height-64+0.01);assert.ok(c.layoutScale*750<=width-40+0.01);for(let i=0;i<390;i++)c.update(0.016);assert.equal(c.playing,false);assert.equal(c.paper.length,0);assert.equal(c.rankLabel.string,`第 ${data.current} 名`);assert.equal(c.rankNumber.string,String(data.current));assert.equal(c.rankNumber.node.parent.active,true);assert.equal(c.rankLabel.node.active,false);if(data.current===1)assert.equal(c.statusLabel.string,'已登顶');assert.equal(c.selfRow.score.string,presentation.formatSettlementScore(data.self.value));assert.equal(c.selfRow.node.scale.x,1);assert.equal(c.selfRow.score.outlineWidth,0.5);assert.equal(c.statusLabel.isBold,false);assert.equal(c.statusLabel.fontFamily,'"Microsoft YaHei","PingFang SC",sans-serif');const border=c.selfRow.node.getComponent(Graphics).strokes[0];assert.equal(border.width,1.2);assert.equal(JSON.stringify(border.color),JSON.stringify({r:116,g:68,b:38,a:170}));for(const [index,frame]of [c.options.homeButtonSpriteFrame,c.options.replayButtonSpriteFrame,c.options.shareButtonSpriteFrame].entries()){const b=c.buttons[index];assert.equal(b.getChildByName('Artwork').getComponent(Sprite).spriteFrame,frame);assert.equal(b.getComponent(Graphics),null);assert.equal(b.getComponent(UITransform).width,index===2?316:126);assert.equal(b.getChildByName('Artwork').getComponent(UITransform).height,126)}assert.equal(c.selfRow.medal.node.active,data.current<=3);assert.equal(c.selfRow.rank.node.active,data.current>3);for(const row of c.rows.filter(r=>r.node.active)){assert.equal(row.score.overflow,2);assert.equal(row.score.enableWrapText,false);assert.ok(row.name.string.endsWith('…'))}c.onDestroy()}
 console.log('真实 Prefab/组件：18 种屏幕情景、历史最佳与本局分离、十位数 SHRINK、昵称省略、单次动画通过')
-const safe=harness();safe.controller.options.getSafeInsets=()=>({top:120,bottom:68});safe.controller.renderState(true,1,2,5);safe.ready();safe.controller.syncLayout();assert.ok(safe.controller.panel.position.y+1360*safe.controller.layoutScale/2<=1334/2-120-32+0.01);assert.ok(safe.controller.panel.position.y-1360*safe.controller.layoutScale/2>=-1334/2+68+32-0.01);safe.controller.onDestroy();
+const safe=harness();safe.controller.options.getSafeInsets=()=>({top:120,bottom:68});safe.controller.renderState(true,1,2,5);safe.ready();for(let i=0;i<32;i++){safe.controller.update(.01);const panel=safe.controller.panel;assert.ok(panel.position.y+1360*panel.scale.y/2<=1334/2-120);assert.ok(panel.position.y-1360*panel.scale.y/2>=-1334/2+68)}safe.controller.syncLayout();assert.ok(safe.controller.panel.position.y+1360*safe.controller.layoutScale/2<=1334/2-120-32+0.01);assert.ok(safe.controller.panel.position.y-1360*safe.controller.layoutScale/2>=-1334/2+68+32-0.01);safe.controller.onDestroy();
 const h=harness(),c=h.controller;c.renderState(true,1000,128,10);h.ready();c.renderRank(null,true);assert.equal(c.rankLabel.string,'名次计算中');c.renderRank(scenarios[0],false);for(let i=0;i<180;i++)c.update(.016);assert.ok(c.paper.length);emit('hide');assert.equal(c.playing,false);assert.equal(c.paper.length,0);assert.equal(c.rankLabel.string,'第 13 名');emit('show');assert.equal(c.playing,false);for(let i=0;i<3;i++){c.act({propagationStopped:false},i);stepButtons()}assert.deepEqual(h.calls,[1,1,1]);c.renderState(false,0,0,0);c.onDisable();c.renderState(true,2000,256,20);c.onEnable();c.renderRank(scenarios[2],false);assert.equal(c.elapsed,0);c.update(.8);c.onDestroy();assert.equal([...eventBus.values()].flat().length,0);assert.equal(animations.length,0)
 reduced=true;const r=harness();r.controller.renderState(true,1,2,5);r.ready();r.controller.renderRank(scenarios[2],false);assert.equal(r.controller.playing,false);assert.equal(r.controller.rankLabel.string,'第 1 名');assert.equal(r.controller.statusLabel.string,'已登顶');assert.equal(r.controller.paper.length,0);r.controller.onDestroy();reduced=false
 const f=harness(750,1334,true);f.controller.renderState(true,12,16,5);f.ready();assert.equal(f.controller.buttons.length,3);f.controller.act({propagationStopped:false},1);stepButtons();assert.equal(f.calls[1],1);f.controller.onDestroy()
@@ -118,3 +118,40 @@ assert.equal(view.selfRow.node.position.y,presentation.SETTLEMENT_LIST_HEIGHT/2-
 const heading=view.panel.getChildByPath('Board/Heading');assert.ok(listTop<heading.position.y-heading.getComponent(UITransform).height/2);
 view.onDestroy();
 console.log('一体结算卡：标题烘图、七至十位千分位、奖励行、五行视口及登顶落位通过');
+
+// 入场与冲榜共用更新时钟，但冲榜只能在卡片稳定之后推进。
+const opening=harness(), oc=opening.controller;
+opening.ready();assert.equal(oc.panel.active,false);
+oc.renderState(true,1258880,2048,128);oc.renderRank(result(7,1),false);
+assert.equal(oc.panelOpacity.opacity,0);assert.equal(oc.maskOpacity.opacity,0);
+assert.ok(oc.panel.scale.x<oc.layoutScale);assert.ok(oc.panel.position.y<0);
+const startY=oc.selfRow.node.position.y;oc.update(.1);
+assert.ok(oc.panelOpacity.opacity>0&&oc.panelOpacity.opacity<255);
+assert.ok(oc.maskOpacity.opacity>0&&oc.maskOpacity.opacity<255);
+assert.equal(oc.elapsed,0);assert.equal(oc.selfRow.node.position.y,startY);
+const movingY=oc.panel.position.y;oc.syncLayout();assert.equal(oc.panel.position.y,movingY);
+oc.renderState(true,1258880,2048,128);assert.ok(oc.panelOpacity.opacity>0);
+oc.update(.22);assert.equal(oc.entering,false);assert.equal(oc.elapsed,0);
+assert.equal(oc.panelOpacity.opacity,255);assert.equal(oc.maskOpacity.opacity,255);
+assert.equal(oc.panel.scale.x,oc.layoutScale);assert.equal(oc.panel.position.y,0);
+oc.update(.18);assert.equal(oc.elapsed,180);oc.onDestroy();
+
+// Prefab 慢于遮罩时，只对新卡片入场；不要再次把遮罩闪回透明。
+const delayed=harness(), dc=delayed.controller;dc.renderState(true,3560,256,37);dc.update(.5);
+assert.equal(dc.maskOpacity.opacity,255);delayed.ready();
+assert.equal(dc.panelOpacity.opacity,0);assert.equal(dc.maskOpacity.opacity,255);
+dc.renderRank(result(7,1),false);dc.update(.1);emit('hide');
+assert.equal(dc.entering,false);assert.equal(dc.panelOpacity.opacity,255);assert.equal(dc.maskOpacity.opacity,255);
+assert.equal(dc.panel.scale.x,dc.layoutScale);assert.equal(dc.playing,false);
+emit('show');dc.update(.5);assert.equal(dc.entering,false);
+dc.renderState(false,0,0,0);dc.onDisable();dc.onEnable();dc.renderState(true,6000,512,80);
+assert.equal(dc.panelOpacity.opacity,0);assert.equal(dc.maskOpacity.opacity,0);dc.onDestroy();
+
+const stopped=harness();stopped.controller.renderState(true,1,2,5);stopped.controller.onDisable();stopped.ready();
+assert.equal(stopped.controller.entering,false);assert.equal(stopped.controller.panelOpacity.opacity,255);stopped.controller.onDestroy();
+const closed=harness();closed.controller.renderState(true,1,2,5);closed.controller.renderState(false,0,0,0);closed.ready();
+assert.equal(closed.controller.panel.active,false);assert.equal(closed.controller.entering,false);closed.controller.onDestroy();
+reduced=true;const still=harness();still.controller.renderState(true,1,2,5);still.ready();
+assert.equal(still.controller.entering,false);assert.equal(still.controller.panelOpacity.opacity,255);assert.equal(still.controller.maskOpacity.opacity,255);still.controller.onDestroy();reduced=false;
+assert.equal([...eventBus.values()].flat().length,0);assert.equal(animations.length,0);
+console.log('弹窗入场：渐显、重排连续、冲榜等待、慢加载不闪遮罩、后台与关闭清理、减少动态通过');

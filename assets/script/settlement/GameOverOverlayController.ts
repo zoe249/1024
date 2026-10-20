@@ -8,6 +8,8 @@ const CREAM = new Color(255, 249, 237, 255)
 const PAPER = [new Color(255, 214, 121), new Color(245, 138, 101), new Color(168, 198, 101), new Color(139, 206, 213), new Color(255, 240, 189)]
 const WIDTH = 750
 const HEIGHT = 1360
+const ENTRANCE_DURATION = 320
+const MASK_FADE_DURATION = 180
 
 type Options = {
   hostNode: Node
@@ -29,6 +31,8 @@ export class GameOverOverlayController extends Component {
   private options: Options | null = null
   private mask: Node | null = null
   private panel: Node | null = null
+  private panelOpacity: UIOpacity | null = null
+  private maskOpacity: UIOpacity | null = null
   private list: Node | null = null
   private particles: Graphics | null = null
   private rows: Row[] = []
@@ -53,12 +57,16 @@ export class GameOverOverlayController extends Component {
   private foreground = true
   private actionPending = false
   private layoutScale = 1
+  private layoutY = 0
+  private entering = false
+  private entranceElapsed = 0
+  private panelEntranceStart: number | null = null
   private latestRank: SettlementRank | null = null
   private latestPending = false
   private rankKey = ''
   private values = { score: 0, highest: 0, coins: 0 }
   private readonly reducedMotion = (globalThis as { matchMedia?: (query: string) => { matches: boolean } }).matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-  private readonly hideEvent = () => { this.foreground = false; this.finishImmediately() }
+  private readonly hideEvent = () => { this.foreground = false; this.finishEntrance(); this.finishImmediately() }
   private readonly showEvent = () => { this.foreground = true }
   private readonly homeTap = (event: EventTouch) => this.act(event, 0)
   private readonly replayTap = (event: EventTouch) => this.act(event, 1)
@@ -74,6 +82,7 @@ export class GameOverOverlayController extends Component {
       this.mask.setParent(this.node)
       this.mask.addComponent(UITransform)
       this.mask.addComponent(Graphics)
+      this.maskOpacity = this.mask.addComponent(UIOpacity)
       this.bindSwallow(this.mask, true)
     }
     this.syncLayout()
@@ -90,6 +99,11 @@ export class GameOverOverlayController extends Component {
         this.panel.setParent(this.node)
         this.bindPanel()
       }
+      this.panelOpacity = this.panel!.getComponent(UIOpacity) ?? this.panel!.addComponent(UIOpacity)
+      if (this.visible && this.foreground && !this.reducedMotion) {
+        this.panelEntranceStart = this.entranceElapsed
+        this.entering = true
+      }
       this.syncLayout()
       this.refreshValues()
       this.applyRank()
@@ -104,8 +118,10 @@ export class GameOverOverlayController extends Component {
   }
 
   onDisable() {
+    this.foreground = false
     game.off(Game.EVENT_HIDE, this.hideEvent, this)
     game.off(Game.EVENT_SHOW, this.showEvent, this)
+    this.finishEntrance()
     this.finishImmediately()
     this.stopButtons()
     for (const row of [...this.rows, ...(this.selfRow ? [this.selfRow] : [])]) { row.avatar.clear(); row.key = '' }
@@ -114,6 +130,7 @@ export class GameOverOverlayController extends Component {
 
   onDestroy() {
     this.disposed = true
+    this.entering = false
     game.off(Game.EVENT_HIDE, this.hideEvent, this)
     game.off(Game.EVENT_SHOW, this.showEvent, this)
     this.playing = false
@@ -143,8 +160,8 @@ export class GameOverOverlayController extends Component {
     }
     const insets = this.options?.getSafeInsets?.() ?? { top: 0, bottom: 0 }
     this.layoutScale = Math.min(1, Math.max(0.1, (width - 40) / WIDTH), Math.max(0.1, (height - insets.top - insets.bottom - 64) / HEIGHT))
-    this.panel?.setScale(this.layoutScale, this.layoutScale, 1)
-    this.panel?.setPosition(0, (insets.bottom - insets.top) / 2, 0)
+    this.layoutY = (insets.bottom - insets.top) / 2
+    this.drawEntrance()
     this.protectedAreas = []
     // 静态标题已烘入底图，TitleBounds 只提供彩纸避让范围。
     for (const path of ['TitleBounds', 'ScoreLabel', 'Score', 'Statistics', 'Board/Rank', 'Board/RankValue', 'Board/Delta', 'Board/Heading', 'Board/Status', 'Board/List', 'Actions']) {
@@ -158,16 +175,18 @@ export class GameOverOverlayController extends Component {
   }
 
   renderState(isGameOver: boolean, score: number, highestValue: number, coinReward: number) {
+    const opening = isGameOver && !this.visible
     this.values = { score: Math.max(0, Math.floor(score)), highest: Math.max(0, Math.floor(highestValue)), coins: Math.max(0, Math.floor(coinReward)) }
     this.refreshValues()
     if (this.visible !== isGameOver) {
       this.visible = isGameOver
       this.rankKey = ''
       this.actionPending = false
-      if (!isGameOver) { this.latestRank = null; this.latestPending = false; this.track = null; this.finishImmediately() }
+      if (!isGameOver) { this.latestRank = null; this.latestPending = false; this.track = null; this.finishEntrance(); this.finishImmediately() }
       if (this.panel) this.panel.active = isGameOver
     }
     this.node.active = isGameOver
+    if (opening) this.startEntrance()
     if (isGameOver && this.node.parent) this.node.setSiblingIndex(this.node.parent.children.length - 1)
   }
 
@@ -178,9 +197,42 @@ export class GameOverOverlayController extends Component {
   }
 
   update(dt: number) {
-    if (!this.playing || !this.foreground || !this.track) return
-    this.elapsed += dt * 1000
+    if (!this.foreground) return
+    let milliseconds = dt * 1000
+    if (this.entering) {
+      this.entranceElapsed += milliseconds
+      this.drawEntrance()
+      if (this.panelEntranceStart === null || this.entranceElapsed < this.panelEntranceStart + ENTRANCE_DURATION) return
+      milliseconds = this.entranceElapsed - this.panelEntranceStart - ENTRANCE_DURATION
+      this.finishEntrance()
+    }
+    if (!this.playing || !this.track) return
+    this.elapsed += milliseconds
     this.drawFrame()
+  }
+
+  private startEntrance() {
+    this.entranceElapsed = 0
+    this.panelEntranceStart = this.panel ? 0 : null
+    this.entering = !this.reducedMotion && this.foreground
+    this.drawEntrance()
+  }
+
+  /** 遮罩先渐入；异步底图就绪后卡片再上浮落定，冲榜时钟等待卡片稳定。 */
+  private drawEntrance() {
+    const t = this.entering ? Math.min(1, Math.max(0, (this.entranceElapsed - (this.panelEntranceStart ?? this.entranceElapsed)) / ENTRANCE_DURATION)) : 1
+    const scale = t < 0.72 ? 0.94 + 0.07 * (1 - Math.pow(1 - t / 0.72, 3)) : 1 + 0.01 * Math.pow((1 - t) / 0.28, 2)
+    if (this.maskOpacity) this.maskOpacity.opacity = this.entering ? Math.round(255 * Math.min(1, this.entranceElapsed / MASK_FADE_DURATION)) : 255
+    if (this.panelOpacity) this.panelOpacity.opacity = Math.round(255 * Math.min(1, t * 2))
+    if (this.panel?.isValid) {
+      this.panel.setScale(this.layoutScale * scale, this.layoutScale * scale, 1)
+      this.panel.setPosition(0, this.layoutY - 22 * Math.pow(1 - t, 3) * this.layoutScale, 0)
+    }
+  }
+
+  private finishEntrance() {
+    this.entering = false
+    this.drawEntrance()
   }
 
   private bindPanel() {
