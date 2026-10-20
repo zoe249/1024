@@ -1,828 +1,487 @@
-import {
-  _decorator,
-  Color,
-  Component,
-  EventTouch,
-  Graphics,
-  Label,
-  LabelOutline,
-  Node,
-  resources,
-  Sprite,
-  SpriteFrame,
-  tween,
-  Tween,
-  UIOpacity,
-  UITransform,
-  Vec3
-} from 'cc'
-import type { SettlementRank } from '../online/api/GameApiClient'
+import { _decorator, Color, Component, EventTouch, game, Game, Graphics, instantiate, Label, Node, Prefab, resources, Sprite, SpriteFrame, tween, Tween, UIOpacity, UITransform, Vec3 } from 'cc'
+import type { LeaderboardEntryDto, SettlementRank } from '../online/api/GameApiClient'
+import { PlayerAvatarRenderer } from '../profile/PlayerAvatarRenderer'
+import { buildSettlementTrack, makeCelebration, particleFrame, settlementFrame, SETTLEMENT_LIST_HEIGHT, type CelebrationParticle, type SettlementTrack } from './SettlementPresentation'
 
 const { ccclass } = _decorator
+const INK = new Color(98, 57, 31, 255)
+const CREAM = new Color(255, 249, 237, 255)
+const PAPER = [new Color(255, 214, 121), new Color(245, 138, 101), new Color(168, 198, 101), new Color(139, 206, 213), new Color(255, 240, 189)]
+const WIDTH = 750
+const HEIGHT = 1488
 
-const SETTLEMENT_ANIM_DURATION = 0.2
-const SETTLEMENT_CONTENT_WIDTH = 750
-const SETTLEMENT_CONTENT_HEIGHT = 1180
-const SETTLEMENT_EDGE_INSET = 20
-const SETTLEMENT_VERTICAL_INSET = 32
-const SETTLEMENT_ART_ROOT = 'Settlement/'
-const CELEBRATION_ART_ROOT = `${SETTLEMENT_ART_ROOT}Celebration/`
-
-const ACTION_BUTTON_HEIGHT = 126
-const ACTION_ICON_BUTTON_WIDTH = 126
-const ACTION_SHARE_BUTTON_WIDTH = 316
-const ACTION_BUTTON_GAP = 18
-
-const SettlementArtwork = {
-  header: 'victory-header',
-  statistics: 'statistics-strip',
-  rewardCoin: 'reward-coin',
-  homeButton: 'button-home-v3',
-  replayButton: 'button-replay-v3',
-  shareButton: 'button-share-v3'
-} as const
-
-type GameOverOverlayOptions = {
+type Options = {
   hostNode: Node
   replayHandler: (() => void) | null
   homeHandler: (() => void) | null
   shareHandler: (() => void) | null
   onButtonClick?: () => void
-  // 结算按钮由场景直接引用 SpriteFrame，避免微信端首次展示时动态加载失败留下空按钮。
+  getSafeInsets?: () => { top: number; bottom: number }
   popupSpriteFrame?: SpriteFrame | null
   replayButtonSpriteFrame?: SpriteFrame | null
   homeButtonSpriteFrame?: SpriteFrame | null
   shareButtonSpriteFrame?: SpriteFrame | null
 }
+type Row = { node: Node; rank: Label; medal: Sprite; name: Label; score: Label; avatar: PlayerAvatarRenderer; opacity: UIOpacity; key: string }
 
+/** 固定层级由 Prefab 维护；单局数据、压缩冲榜和短时彩纸由此处渲染。 */
 @ccclass('GameOverOverlayController')
 export class GameOverOverlayController extends Component {
-  private hostNode: Node | null = null
-  private maskNode: Node | null = null
-  private contentNode: Node | null = null
-  private statisticsLabel: Label | null = null
-  private rankNode: Node | null = null
+  private options: Options | null = null
+  private mask: Node | null = null
+  private panel: Node | null = null
+  private list: Node | null = null
+  private particles: Graphics | null = null
+  private rows: Row[] = []
+  private selfRow: Row | null = null
+  private medals: Array<SpriteFrame | null> = []
+  private buttons: Node[] = []
+  private scoreLabel: Label | null = null
+  private highestLabel: Label | null = null
+  private coinsLabel: Label | null = null
   private rankLabel: Label | null = null
-  private rankDeltaLabel: Label | null = null
-  private rankKey = ''
+  private rankNumber: Label | null = null
+  private deltaLabel: Label | null = null
+  private statusLabel: Label | null = null
+  private track: SettlementTrack | null = null
+  private paper: CelebrationParticle[] = []
+  private protectedAreas: Array<{ x: number; y: number; width: number; height: number }> = []
+  private elapsed = 0
+  private playing = false
+  private loading = false
+  private disposed = false
+  private visible = false
+  private foreground = true
+  private actionPending = false
+  private layoutScale = 1
   private latestRank: SettlementRank | null = null
-  private latestRankPending = false
-  private readonly rankCounter = { value: 0 }
-  private rewardValueLabel: Label | null = null
-  private rewardNode: Node | null = null
-  private actionsNode: Node | null = null
-  private homeButtonNode: Node | null = null
-  private continueButtonNode: Node | null = null
-  private shareButtonNode: Node | null = null
-  private mascotRoot: Node | null = null
-  private glowNode: Node | null = null
-  private noteNodes: Node[] = []
-  private overlayOpacity: UIOpacity | null = null
-  private homeHandler: (() => void) | null = null
-  private replayHandler: (() => void) | null = null
-  private shareHandler: (() => void) | null = null
-  private buttonClickHandler: (() => void) | null = null
-  private homeButtonSpriteFrame: SpriteFrame | null = null
-  private replayButtonSpriteFrame: SpriteFrame | null = null
-  private shareButtonSpriteFrame: SpriteFrame | null = null
-  private isVisible = false
-  private contentLayoutScale = 1
-  private pendingArtworkLoads = 0
-  private showWhenArtworkReady = false
+  private latestPending = false
+  private rankKey = ''
+  private values = { score: 0, highest: 0, coins: 0 }
+  private readonly reducedMotion = (globalThis as { matchMedia?: (query: string) => { matches: boolean } }).matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  private readonly hideEvent = () => { this.foreground = false; this.finishImmediately() }
+  private readonly showEvent = () => { this.foreground = true }
+  private readonly homeTap = (event: EventTouch) => this.act(event, 0)
+  private readonly replayTap = (event: EventTouch) => this.act(event, 1)
+  private readonly shareTap = (event: EventTouch) => this.act(event, 2)
 
-  setup(options: GameOverOverlayOptions) {
-    this.hostNode = options.hostNode
-    this.homeHandler = options.homeHandler
-    this.replayHandler = options.replayHandler
-    this.shareHandler = options.shareHandler
-    this.buttonClickHandler = options.onButtonClick ?? null
-    this.homeButtonSpriteFrame = options.homeButtonSpriteFrame ?? null
-    this.replayButtonSpriteFrame = options.replayButtonSpriteFrame ?? null
-    this.shareButtonSpriteFrame = options.shareButtonSpriteFrame ?? null
-    this.ensureOverlayStructure()
-    this.bindTouchEvents()
-    this.syncLayout()
-  }
-
-  /**
-   * 遮罩永远铺满实际游戏画布；结算内容按 750 × 1180 的安全区域等比缩放，
-   * 长屏不会把标题顶出屏幕，窄屏也不会裁掉底部按钮。
-   */
-  syncLayout() {
-    const hostTransform = this.hostNode?.getComponent(UITransform)
-    const overlayTransform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform)
-    const width = hostTransform?.width ?? overlayTransform.width ?? 750
-    const height = hostTransform?.height ?? overlayTransform.height ?? 1334
-    overlayTransform.setContentSize(width, height)
-    this.drawMask(width, height)
-
-    this.contentLayoutScale = Math.min(
-      1,
-      Math.max(0.58, (width - SETTLEMENT_EDGE_INSET * 2) / SETTLEMENT_CONTENT_WIDTH),
-      Math.max(0.58, (height - SETTLEMENT_VERTICAL_INSET * 2) / SETTLEMENT_CONTENT_HEIGHT)
-    )
-    this.contentNode?.setPosition(0, -18, 0)
-    this.contentNode?.setScale(this.getContentScale())
-  }
-
-  // UI 主控只传入纯展示状态，结算组件不直接读取或修改棋盘数据。
-  renderState(
-    isGameOver: boolean,
-    score: number,
-    highestValue: number,
-    coinReward: number
-  ) {
-    this.refreshStatistics(score, highestValue)
-    this.refreshReward(coinReward)
-    this.bringNodeToTop(this.node)
-
-    if (isGameOver) {
-      this.show()
-    } else {
-      this.hide()
+  setup(options: Options) {
+    this.options = options
+    if (!this.mask) {
+      // 保留场景挂点与 UUID，关闭旧版子节点，避免两套弹窗重叠。
+      for (const child of this.node.children) child.active = false
+      this.mask = new Node('SettlementMask')
+      this.mask.layer = this.node.layer
+      this.mask.setParent(this.node)
+      this.mask.addComponent(UITransform)
+      this.mask.addComponent(Graphics)
+      this.bindSwallow(this.mask, true)
     }
+    this.syncLayout()
+    if (this.panel || this.loading) return
+    this.loading = true
+    resources.load('Settlement/SettlementPopup', Prefab, (error, prefab) => {
+      this.loading = false
+      if (this.disposed || !this.node.isValid) return
+      if (error || !prefab) {
+        console.warn('[结算弹窗] Prefab 加载失败，显示基础结算', error)
+        this.createFallback()
+      } else {
+        this.panel = instantiate(prefab)
+        this.panel.setParent(this.node)
+        this.bindPanel()
+      }
+      this.syncLayout()
+      this.refreshValues()
+      this.applyRank()
+      this.panel!.active = this.visible
+    })
+  }
+
+  onEnable() {
+    this.foreground = true
+    game.on(Game.EVENT_HIDE, this.hideEvent, this)
+    game.on(Game.EVENT_SHOW, this.showEvent, this)
+  }
+
+  onDisable() {
+    game.off(Game.EVENT_HIDE, this.hideEvent, this)
+    game.off(Game.EVENT_SHOW, this.showEvent, this)
+    this.finishImmediately()
+    this.stopButtons()
+    for (const row of [...this.rows, ...(this.selfRow ? [this.selfRow] : [])]) { row.avatar.clear(); row.key = '' }
+    this.rankKey = ''
   }
 
   onDestroy() {
-    this.stopRankAnimation()
-    this.showWhenArtworkReady = false
-    this.unbindSwallowNode(this.maskNode)
-    this.unbindSwallowNode(this.contentNode)
-    this.unbindButtonTouchEvents(this.homeButtonNode, this.onHomeButtonTap)
-    this.unbindButtonTouchEvents(this.continueButtonNode, this.onContinueButtonTap)
-    this.unbindButtonTouchEvents(this.shareButtonNode, this.onShareButtonTap)
-    this.stopNodeTreeTweens(this.node)
+    this.disposed = true
+    game.off(Game.EVENT_HIDE, this.hideEvent, this)
+    game.off(Game.EVENT_SHOW, this.showEvent, this)
+    this.playing = false
+    this.paper = []
+    this.particles?.clear()
+    this.stopButtons()
+    this.bindSwallow(this.mask, false)
+    this.bindSwallow(this.panel, false)
+    this.bindButtons(false)
+    for (const row of [...this.rows, ...(this.selfRow ? [this.selfRow] : [])]) row.avatar.dispose()
+    this.rows = []
+    this.selfRow = null
   }
 
-  private ensureOverlayStructure() {
-    this.node.active = false
-    this.overlayOpacity = this.node.getComponent(UIOpacity) ?? this.node.addComponent(UIOpacity)
-    this.overlayOpacity.opacity = 0
-
-    this.maskNode = this.getOrCreateNode(this.node, 'Mask')
-    this.maskNode.getComponent(Graphics) ?? this.maskNode.addComponent(Graphics)
-
-    // 复用 Scene 中的 Panel 挂点，但关闭旧版卡片、标签和三枚 icon，避免两套结算界面叠加。
-    this.contentNode = this.getOrCreateNode(this.node, 'Panel')
-    ;(this.contentNode.getComponent(UITransform) ?? this.contentNode.addComponent(UITransform)).setContentSize(
-      SETTLEMENT_CONTENT_WIDTH,
-      SETTLEMENT_CONTENT_HEIGHT
-    )
-    const legacySprite = this.contentNode.getComponent(Sprite)
-    if (legacySprite) {
-      legacySprite.enabled = false
+  syncLayout() {
+    const host = this.options?.hostNode.getComponent(UITransform)
+    const width = host?.width ?? WIDTH
+    const height = host?.height ?? 1334
+    ;(this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform)).setContentSize(width, height)
+    const mask = this.mask?.getComponent(Graphics)
+    if (mask) {
+      this.mask!.getComponent(UITransform)!.setContentSize(width, height)
+      mask.clear()
+      mask.fillColor = new Color(41, 71, 47, 92)
+      mask.rect(-width / 2, -height / 2, width, height)
+      mask.fill()
     }
-    const legacyGraphics = this.contentNode.getComponent(Graphics)
-    if (legacyGraphics) {
-      legacyGraphics.clear()
-      legacyGraphics.enabled = false
+    const insets = this.options?.getSafeInsets?.() ?? { top: 0, bottom: 0 }
+    this.layoutScale = Math.min(1, Math.max(0.1, (width - 40) / WIDTH), Math.max(0.1, (height - insets.top - insets.bottom - 64) / HEIGHT))
+    this.panel?.setScale(this.layoutScale, this.layoutScale, 1)
+    this.panel?.setPosition(0, (insets.bottom - insets.top) / 2, 0)
+    this.protectedAreas = []
+    for (const path of ['Title', 'ScoreLabel', 'Score', 'Statistics', 'Board/Rank', 'Board/RankValue', 'Board/Delta', 'Board/Heading', 'Board/Status', 'Board/List', 'Actions']) {
+      const node = this.panel?.getChildByPath(path)
+      const size = node?.getComponent(UITransform)
+      if (!node || !size) continue
+      let x = node.position.x, y = node.position.y
+      for (let parent = node.parent; parent && parent !== this.panel; parent = parent.parent) { x += parent.position.x; y += parent.position.y }
+      this.protectedAreas.push({ x, y, width: size.width, height: size.height })
     }
-    for (const child of this.contentNode.children) {
-      child.active = false
+  }
+
+  renderState(isGameOver: boolean, score: number, highestValue: number, coinReward: number) {
+    this.values = { score: Math.max(0, Math.floor(score)), highest: Math.max(0, Math.floor(highestValue)), coins: Math.max(0, Math.floor(coinReward)) }
+    this.refreshValues()
+    if (this.visible !== isGameOver) {
+      this.visible = isGameOver
+      this.rankKey = ''
+      this.actionPending = false
+      if (!isGameOver) { this.latestRank = null; this.latestPending = false; this.track = null; this.finishImmediately() }
+      if (this.panel) this.panel.active = isGameOver
     }
-
-    this.ensureHeader(this.contentNode)
-    this.ensureStatistics(this.contentNode)
-    this.ensureRank(this.contentNode)
-    this.ensureCelebration(this.contentNode)
-    this.ensureReward(this.contentNode)
-    this.ensureActions(this.contentNode)
-  }
-
-  private ensureHeader(parent: Node) {
-    const header = this.getOrCreateNode(parent, 'SettlementHeader')
-    header.active = true
-    header.setPosition(0, 400, 0)
-    this.applyArtwork(header, SettlementArtwork.header, 710, 346)
-  }
-
-  private ensureStatistics(parent: Node) {
-    const statistics = this.getOrCreateNode(parent, 'SettlementStatistics')
-    statistics.active = true
-    statistics.setPosition(0, 145, 0)
-    this.applyArtwork(statistics, SettlementArtwork.statistics, 660, 128)
-
-    // 素材保留手绘边框，内部示例数字由同色底覆盖，再叠加真实对局数据。
-    const cover = this.getOrCreateNode(statistics, 'DynamicCover')
-    cover.active = true
-    cover.setPosition(0, 0, 0)
-    ;(cover.getComponent(UITransform) ?? cover.addComponent(UITransform)).setContentSize(610, 82)
-    const graphics = cover.getComponent(Graphics) ?? cover.addComponent(Graphics)
-    graphics.clear()
-    graphics.fillColor = new Color(255, 247, 226, 255)
-    graphics.roundRect(-305, -41, 610, 82, 26)
-    graphics.fill()
-
-    this.statisticsLabel = this.ensureLabel(
-      cover,
-      'StatisticsText',
-      '本关得分 0   ◆   最高合成 0',
-      29,
-      new Color(71, 48, 31, 255),
-      Vec3.ZERO,
-      600,
-      70,
-      true
-    )
-  }
-
-  private ensureRank(parent: Node) {
-    this.rankNode = this.getOrCreateNode(parent, 'SettlementRank')
-    this.rankNode.setPosition(0, 207, 0)
-    this.rankLabel = this.ensureLabel(this.rankNode, 'Rank', '', 27, new Color(255, 249, 237, 255), Vec3.ZERO, 460, 38, true, new Color(98, 57, 31, 255), 2)
-    this.rankDeltaLabel = this.ensureLabel(this.rankNode, 'Delta', '', 29, new Color(129, 205, 77, 255), new Vec3(180, 0, 0), 150, 38, true, new Color(98, 57, 31, 255), 2)
-    this.rankNode.active = false
+    this.node.active = isGameOver
+    if (isGameOver && this.node.parent) this.node.setSiblingIndex(this.node.parent.children.length - 1)
   }
 
   renderRank(rank: SettlementRank | null, pending: boolean) {
     this.latestRank = rank
-    this.latestRankPending = pending
-    if (!this.rankNode || !this.rankLabel || !this.rankDeltaLabel) return
-    if (!this.isVisible) { this.rankKey = ''; return }
-    const key = pending ? 'pending' : rank?.current ? `${rank.previous}:${rank.current}` : 'hidden'
+    this.latestPending = pending
+    this.applyRank()
+  }
+
+  update(dt: number) {
+    if (!this.playing || !this.foreground || !this.track) return
+    this.elapsed += dt * 1000
+    this.drawFrame()
+  }
+
+  private bindPanel() {
+    const panel = this.panel!
+    const label = (path: string) => panel.getChildByPath(path)?.getComponent(Label) ?? null
+    this.scoreLabel = label('Score')
+    this.highestLabel = label('Statistics/Highest/Label')
+    this.coinsLabel = label('Statistics/Coins/Label')
+    this.rankLabel = label('Board/Rank')
+    this.rankNumber = label('Board/RankValue/Number')
+    this.deltaLabel = label('Board/Delta')
+    this.statusLabel = label('Board/Status')
+    this.medals = ['Gold', 'Silver', 'Bronze'].map(name => panel.getChildByPath(`MedalAssets/${name}`)?.getComponent(Sprite)?.spriteFrame ?? null)
+    this.list = panel.getChildByPath('Board/List')
+    const template = this.list?.getChildByName('PeerTemplate')
+    const self = this.list?.getChildByName('Self')
+    if (this.list && template && self) {
+      this.selfRow = this.bindRow(self, true)
+      for (let index = 0; index < 8; index += 1) {
+        const peer = instantiate(template)
+        peer.name = `Peer${index}`
+        peer.setParent(this.list)
+        this.rows.push(this.bindRow(peer, false))
+      }
+      template.active = false
+      self.setSiblingIndex(this.list.children.length - 1)
+    }
+    this.particles = panel.getChildByName('Confetti')?.getComponent(Graphics) ?? null
+    this.buttons = ['Home', 'Replay', 'Share'].map(name => panel.getChildByPath(`Actions/${name}`)!).filter(Boolean)
+    this.buttons.forEach((node, index) => this.paintButton(node, index))
+    for (const name of ['Highest', 'Coins']) {
+      const node = panel.getChildByPath(`Statistics/${name}`)
+      if (node) this.rounded(node, new Color(255, 243, 212), 22)
+    }
+    this.bindSwallow(panel, true)
+    this.bindButtons(true)
+  }
+
+  private bindRow(node: Node, self: boolean): Row {
+    const sprite = node.getChildByName('Avatar')!.getComponent(Sprite)!
+    const row = { node, rank: node.getChildByName('Rank')!.getComponent(Label)!, medal: node.getChildByName('Medal')!.getComponent(Sprite)!, name: node.getChildByName('Name')!.getComponent(Label)!, score: node.getChildByName('Score')!.getComponent(Label)!, avatar: new PlayerAvatarRenderer(sprite), opacity: node.getComponent(UIOpacity) ?? node.addComponent(UIOpacity), key: '' }
+    const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics)
+    if (self) {
+      this.rounded(node, new Color(245, 129, 85), 24)
+      graphics.strokeColor = new Color(255, 224, 164, 65)
+      graphics.lineWidth = 1.3
+      for (let index = 0; index < 32; index += 1) {
+        const x = -275 + (index * 71 % 540), y = -40 + (index * 17 % 78)
+        graphics.moveTo(x, y); graphics.lineTo(x + 12, y + 5)
+      }
+      graphics.stroke()
+    } else {
+      graphics.strokeColor = new Color(192, 161, 109, 28)
+      graphics.lineWidth = 1
+      graphics.moveTo(-276, -54); graphics.lineTo(276, -54); graphics.stroke()
+    }
+    node.active = false
+    return row
+  }
+
+  private refreshValues() {
+    if (this.scoreLabel) this.scoreLabel.string = `${this.values.score}`
+    if (this.highestLabel) this.highestLabel.string = `最高合成  ${this.values.highest}`
+    if (this.coinsLabel) this.coinsLabel.string = `金币  +${this.values.coins}`
+  }
+
+  private applyRank() {
+    if (!this.visible || !this.panel || !this.rankLabel) return
+    const result = this.latestRank
+    const key = this.latestPending ? 'pending' : result?.current ? `${result.operationId ?? ''}:${result.previous}:${result.current}:${result.celebrate}` : 'empty'
     if (key === this.rankKey) return
     this.rankKey = key
-    this.stopRankAnimation()
-    const opacity = this.rankNode.getComponent(UIOpacity) ?? this.rankNode.addComponent(UIOpacity)
-    if (key === 'hidden') {
-      if (this.rankNode.active) tween(opacity).to(0.12, { opacity: 0 }).call(() => { if (this.rankKey === 'hidden' && this.rankNode?.isValid) this.rankNode.active = false }).start()
+    this.playing = false
+    this.track = null
+    this.paper = []
+    this.particles?.clear()
+    for (const row of this.rows) { row.node.active = false; row.avatar.clear(); row.key = '' }
+    if (this.selfRow) { this.selfRow.node.active = false; this.selfRow.avatar.clear(); this.selfRow.key = '' }
+    if (this.deltaLabel) this.deltaLabel.string = ''
+    if (!result?.current || this.latestPending) {
+      if (this.rankNumber?.node.parent) this.rankNumber.node.parent.active = false
+      this.rankLabel.node.active = true
+      this.rankLabel.string = this.latestPending ? '名次计算中' : '本局已完成'
+      if (this.statusLabel) this.statusLabel.string = this.latestPending ? '正在同步本局成绩' : '分数排行暂未更新'
       return
     }
-    this.rankNode.active = true
-    opacity.opacity = 255
-    this.rankDeltaLabel.node.active = false
-    this.rankLabel.node.setPosition(0, 0, 0)
-    if (pending) { this.rankLabel.string = '名次计算中'; return }
-    if (!rank?.current) return
-    const current = rank.current
-    const previous = rank.previous
-    this.rankLabel.string = previous === null ? `新上榜 第 ${current} 名` : `第 ${current} 名`
-    if (previous === null || previous <= current) return
-    this.rankLabel.node.setPosition(-45, 0, 0)
-    this.rankCounter.value = previous
-    tween(this.rankCounter).to(0.45, { value: current }, {
-      easing: 'quadOut', onUpdate: () => { if (this.rankLabel?.isValid) this.rankLabel.string = `第 ${Math.round(this.rankCounter.value)} 名` }
-    }).start()
-    const delta = this.rankDeltaLabel.node
-    const deltaOpacity = delta.getComponent(UIOpacity) ?? delta.addComponent(UIOpacity)
-    this.rankDeltaLabel.string = `↑${previous - current}`
-    delta.active = true
-    delta.setPosition(180, -24, 0)
-    deltaOpacity.opacity = 0
-    tween(delta).to(0.25, { position: new Vec3(180, 0, 0) }, { easing: 'backOut' }).start()
-    tween(deltaOpacity).to(0.25, { opacity: 255 }).start()
-    tween(this.rankNode).to(0.15, { scale: new Vec3(1.06, 1.06, 1) }).to(0.15, { scale: Vec3.ONE }).start()
+    this.track = buildSettlementTrack(result)
+    if (this.track.celebrationDuration) this.paper = makeCelebration(result.current === 1, result.previous === null)
+    this.elapsed = 0
+    this.playing = !this.reducedMotion && this.foreground
+    if (!this.playing) this.elapsed = this.track.landing + Math.max(340, this.track.celebrationDuration)
+    this.drawFrame()
   }
 
-  private stopRankAnimation() {
-    Tween.stopAllByTarget(this.rankCounter)
-    for (const node of [this.rankNode, this.rankDeltaLabel?.node]) {
-      if (!node?.isValid) continue
-      Tween.stopAllByTarget(node)
-      const opacity = node.getComponent(UIOpacity)
-      if (opacity) Tween.stopAllByTarget(opacity)
-      node.setScale(Vec3.ONE)
+  private fillRow(row: Row, entry: LeaderboardEntryDto, rank: number, key: string) {
+    row.node.active = true
+    row.rank.string = `${rank}`
+    const medal = rank <= 3 ? this.medals[rank - 1] : null
+    row.rank.node.active = !medal
+    row.medal.node.active = !!medal
+    row.medal.spriteFrame = medal
+    if (row.key === key) return
+    row.key = key
+    const name = entry.isSelf ? '我' : entry.displayName
+    const chars = Array.from(name)
+    let units = 0
+    let shown = ''
+    for (const char of chars) {
+      units += /[\u0000-\u00ff]/.test(char) ? 0.55 : 1
+      if (units > 7.5) { shown += '…'; break }
+      shown += char
     }
+    row.name.string = shown
+    row.score.string = `${entry.value}`
+    void row.avatar.render(entry)
   }
 
-  /** 兔子保持静止，庆祝感只由背后的光芒和闪光粒子提供，避免低帧切图破坏实机观感。 */
-  private ensureCelebration(parent: Node) {
-    const celebration = this.getOrCreateNode(parent, 'SettlementCelebration')
-    celebration.active = true
-    celebration.setPosition(0, -65, 0)
-    ;(celebration.getComponent(UITransform) ?? celebration.addComponent(UITransform)).setContentSize(500, 430)
-
-    this.glowNode = this.getOrCreateNode(celebration, 'GoldenBurst')
-    this.glowNode.active = true
-    this.glowNode.setPosition(0, 0, 0)
-    this.applyResourceArtwork(this.glowNode, `${CELEBRATION_ART_ROOT}golden-burst`, 480, 480)
-
-    this.mascotRoot = this.getOrCreateNode(celebration, 'SuonaRabbit')
-    this.mascotRoot.active = true
-    this.mascotRoot.setPosition(0, -4, 0)
-    ;(this.mascotRoot.getComponent(UITransform) ?? this.mascotRoot.addComponent(UITransform)).setContentSize(390, 390)
-    this.applyResourceArtwork(this.mascotRoot, `${CELEBRATION_ART_ROOT}rabbit-inhale`, 390, 390)
-
-    this.noteNodes = [
-      this.ensureEffectNode(celebration, 'MusicNoteA', 'note-single-a', 135, 72),
-      this.ensureEffectNode(celebration, 'MusicNoteB', 'note-double', 168, 122),
-      this.ensureEffectNode(celebration, 'Sparkle', 'sparkle', 104, 105)
-    ]
-  }
-
-  private ensureEffectNode(parent: Node, name: string, resource: string, x: number, y: number) {
-    const node = this.getOrCreateNode(parent, name)
-    node.active = true
-    node.setPosition(x, y, 0)
-    this.applyResourceArtwork(node, `${CELEBRATION_ART_ROOT}${resource}`, 66, 66)
-    const opacity = node.getComponent(UIOpacity) ?? node.addComponent(UIOpacity)
-    opacity.opacity = 0
-    return node
-  }
-
-  private ensureReward(parent: Node) {
-    const reward = this.getOrCreateNode(parent, 'SettlementReward')
-    this.rewardNode = reward
-    reward.active = true
-    reward.setPosition(0, -300, 0)
-    ;(reward.getComponent(UITransform) ?? reward.addComponent(UITransform)).setContentSize(520, 110)
-
-    this.ensureLabel(
-      reward,
-      'RewardTitle',
-      '奖励',
-      48,
-      Color.WHITE,
-      new Vec3(-145, 0, 0),
-      150,
-      86,
-      true,
-      new Color(87, 53, 27, 255),
-      4
-    )
-
-    const coin = this.getOrCreateNode(reward, 'RewardCoin')
-    coin.active = true
-    coin.setPosition(-18, 0, 0)
-    this.applyArtwork(coin, SettlementArtwork.rewardCoin, 84, 89)
-
-    this.rewardValueLabel = this.ensureLabel(
-      reward,
-      'RewardValue',
-      '×0',
-      54,
-      new Color(255, 187, 31, 255),
-      new Vec3(122, 0, 0),
-      210,
-      92,
-      true,
-      new Color(77, 45, 22, 255),
-      4
-    )
-  }
-
-  private ensureActions(parent: Node) {
-    const actions = this.getOrCreateNode(parent, 'SettlementActions')
-    this.actionsNode = actions
-    actions.active = true
-    actions.setPosition(0, -455, 0)
-    ;(actions.getComponent(UITransform) ?? actions.addComponent(UITransform)).setContentSize(700, 150)
-
-    // 三个按钮各用一张完整素材，底色、图标和文字在图内统一完成。
-    for (const child of actions.children) {
-      child.active = false
+  private drawFrame() {
+    const track = this.track
+    if (!track || !this.rankLabel) return
+    const frame = settlementFrame(track, this.elapsed)
+    const final = this.elapsed >= track.landing
+    this.rankLabel.string = frame.rank === 1 && final ? '已登顶' : `第 ${frame.rank} 名`
+    if (this.rankNumber?.node.parent) {
+      this.rankNumber.string = `${frame.rank}`
+      this.rankNumber.node.parent.active = !(frame.rank === 1 && final)
+      this.rankLabel.node.active = frame.rank === 1 && final
     }
-    const rowWidth = ACTION_ICON_BUTTON_WIDTH * 2 + ACTION_SHARE_BUTTON_WIDTH + ACTION_BUTTON_GAP * 2
-    const rowStartX = -rowWidth * 0.5
-    const homeX = rowStartX + ACTION_ICON_BUTTON_WIDTH * 0.5
-    const replayX = rowStartX + ACTION_ICON_BUTTON_WIDTH + ACTION_BUTTON_GAP + ACTION_ICON_BUTTON_WIDTH * 0.5
-    const shareX = rowStartX + ACTION_ICON_BUTTON_WIDTH * 2 + ACTION_BUTTON_GAP * 2 + ACTION_SHARE_BUTTON_WIDTH * 0.5
-
-    this.homeButtonNode = this.ensureActionButton(
-      actions,
-      'HomeButton',
-      homeX,
-      ACTION_ICON_BUTTON_WIDTH,
-      SettlementArtwork.homeButton,
-      this.homeButtonSpriteFrame
-    )
-    this.continueButtonNode = this.ensureActionButton(
-      actions,
-      'ReplayButton',
-      replayX,
-      ACTION_ICON_BUTTON_WIDTH,
-      SettlementArtwork.replayButton,
-      this.replayButtonSpriteFrame
-    )
-    this.shareButtonNode = this.ensureActionButton(
-      actions,
-      'ShareButton',
-      shareX,
-      ACTION_SHARE_BUTTON_WIDTH,
-      SettlementArtwork.shareButton,
-      this.shareButtonSpriteFrame
-    )
-  }
-
-  /** 按钮根节点保持完整热区，单张透明贴图提供最终视觉。 */
-  private ensureActionButton(
-    parent: Node,
-    name: string,
-    x: number,
-    width: number,
-    artwork: string,
-    spriteFrame: SpriteFrame | null
-  ) {
-    const button = this.getOrCreateNode(parent, name)
-    button.active = true
-    button.setPosition(x, 0, 0)
-    ;(button.getComponent(UITransform) ?? button.addComponent(UITransform)).setContentSize(width, ACTION_BUTTON_HEIGHT)
-    const background = button.getComponent(Graphics)
-    if (background) {
-      background.clear()
-      background.enabled = false
+    if (this.deltaLabel) {
+      const delta = (track.result.previous ?? frame.rank!) - frame.rank!
+      this.deltaLabel.string = track.result.previous === null ? '新上榜' : delta > 0 ? `↑${delta}` : ''
     }
-    const legacySprite = button.getComponent(Sprite)
-    if (legacySprite) {
-      legacySprite.enabled = false
-    }
-    const legacyLabel = button.getComponent(Label)
-    if (legacyLabel) {
-      legacyLabel.enabled = false
-    }
-    for (const child of button.children) {
-      child.active = false
-    }
-    const artworkNode = this.getOrCreateNode(button, 'Artwork')
-    artworkNode.active = true
-    artworkNode.setPosition(0, 0, 0)
-    artworkNode.setSiblingIndex(button.children.length - 1)
-    if (spriteFrame) {
-      const transform = artworkNode.getComponent(UITransform) ?? artworkNode.addComponent(UITransform)
-      const sprite = artworkNode.getComponent(Sprite) ?? artworkNode.addComponent(Sprite)
-      sprite.enabled = true
-      sprite.sizeMode = Sprite.SizeMode.CUSTOM
-      sprite.type = Sprite.Type.SIMPLE
-      sprite.trim = false
-      sprite.color = Color.WHITE
-      sprite.spriteFrame = spriteFrame
-      // 贴图赋值可能将节点恢复到素材原尺寸，最后重设设计尺寸避免分享按钮盖住重玩按钮。
-      transform.setContentSize(width, ACTION_BUTTON_HEIGHT)
-    } else {
-      this.applyArtwork(artworkNode, artwork, width, ACTION_BUTTON_HEIGHT)
-    }
-    return button
-  }
-
-  private applyArtwork(node: Node, artwork: string, width: number, height: number) {
-    this.applyResourceArtwork(node, `${SETTLEMENT_ART_ROOT}${artwork}`, width, height)
-  }
-
-  private applyResourceArtwork(node: Node, resourcePath: string, width: number, height: number) {
-    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform)
-    transform.setContentSize(width, height)
-    const sprite = node.getComponent(Sprite) ?? node.addComponent(Sprite)
-    sprite.enabled = true
-    sprite.sizeMode = Sprite.SizeMode.CUSTOM
-    sprite.type = Sprite.Type.SIMPLE
-    sprite.trim = false
-    sprite.color = Color.WHITE
-
-    this.pendingArtworkLoads += 1
-    resources.load(`${resourcePath}/spriteFrame`, SpriteFrame, (error, spriteFrame) => {
-      if (error || !spriteFrame || !this.canUseNode(node)) {
-        console.warn(`[结算弹窗] 素材加载失败: ${resourcePath}`, error)
-      } else {
-        sprite.spriteFrame = spriteFrame
-        transform.setContentSize(width, height)
-      }
-      this.pendingArtworkLoads = Math.max(0, this.pendingArtworkLoads - 1)
-      if (this.pendingArtworkLoads === 0 && this.showWhenArtworkReady) {
-        this.show()
-      }
-    })
-  }
-
-  private ensureLabel(
-    parent: Node,
-    name: string,
-    text: string,
-    fontSize: number,
-    color: Color,
-    position: Vec3,
-    width: number,
-    height: number,
-    isBold: boolean,
-    outlineColor = new Color(255, 255, 255, 0),
-    outlineWidth = 0
-  ) {
-    const labelNode = this.getOrCreateNode(parent, name)
-    labelNode.active = true
-    labelNode.setPosition(position)
-    ;(labelNode.getComponent(UITransform) ?? labelNode.addComponent(UITransform)).setContentSize(width, height)
-    const label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label)
-    label.string = text
-    label.fontSize = fontSize
-    label.lineHeight = Math.ceil(fontSize * 1.18)
-    label.horizontalAlign = Label.HorizontalAlign.CENTER
-    label.verticalAlign = Label.VerticalAlign.CENTER
-    label.color = color
-    label.isBold = isBold
-    const outline = labelNode.getComponent(LabelOutline) ?? labelNode.addComponent(LabelOutline)
-    outline.color = outlineColor
-    outline.width = outlineWidth
-    return label
-  }
-
-  private refreshStatistics(score: number, highestValue: number) {
-    if (!this.statisticsLabel) {
-      return
-    }
-    const safeScore = Math.max(0, Math.floor(score))
-    const safeHighest = Math.max(0, Math.floor(highestValue))
-    this.statisticsLabel.string = `本关得分 ${safeScore}   ◆   最高合成 ${safeHighest}`
-  }
-
-  private refreshReward(coinReward: number) {
-    if (this.rewardValueLabel) {
-      this.rewardValueLabel.string = `×${Math.max(0, Math.floor(coinReward))}`
-    }
-  }
-
-  private drawMask(width: number, height: number) {
-    if (!this.maskNode) {
-      return
-    }
-    const transform = this.maskNode.getComponent(UITransform) ?? this.maskNode.addComponent(UITransform)
-    transform.setContentSize(width, height)
-    const graphics = this.maskNode.getComponent(Graphics) ?? this.maskNode.addComponent(Graphics)
-    graphics.enabled = true
-    graphics.clear()
-    graphics.fillColor = new Color(0, 48, 53, 190)
-    graphics.rect(-width * 0.5, -height * 0.5, width, height)
-    graphics.fill()
-  }
-
-  private bindTouchEvents() {
-    this.bindSwallowNode(this.maskNode)
-    this.bindSwallowNode(this.contentNode)
-    this.bindButtonTouchEvents(this.homeButtonNode, this.onHomeButtonTap)
-    this.bindButtonTouchEvents(this.continueButtonNode, this.onContinueButtonTap)
-    this.bindButtonTouchEvents(this.shareButtonNode, this.onShareButtonTap)
-  }
-
-  private bindSwallowNode(node: Node | null) {
-    this.unbindSwallowNode(node)
-    this.safeOn(node, Node.EventType.TOUCH_START, this.swallowTouch)
-    this.safeOn(node, Node.EventType.TOUCH_MOVE, this.swallowTouch)
-    this.safeOn(node, Node.EventType.TOUCH_END, this.swallowTouch)
-    this.safeOn(node, Node.EventType.TOUCH_CANCEL, this.swallowTouch)
-  }
-
-  private unbindSwallowNode(node: Node | null) {
-    this.safeOff(node, Node.EventType.TOUCH_START, this.swallowTouch)
-    this.safeOff(node, Node.EventType.TOUCH_MOVE, this.swallowTouch)
-    this.safeOff(node, Node.EventType.TOUCH_END, this.swallowTouch)
-    this.safeOff(node, Node.EventType.TOUCH_CANCEL, this.swallowTouch)
-  }
-
-  private bindButtonTouchEvents(node: Node | null, endHandler: (event: EventTouch) => void) {
-    this.unbindButtonTouchEvents(node, endHandler)
-    if (!this.canUseNode(node)) {
-      return
-    }
-    node.on(Node.EventType.TOUCH_START, this.swallowTouch, this)
-    node.on(Node.EventType.TOUCH_MOVE, this.swallowTouch, this)
-    node.on(Node.EventType.TOUCH_CANCEL, this.swallowTouch, this)
-    node.on(Node.EventType.TOUCH_END, endHandler, this)
-  }
-
-  private unbindButtonTouchEvents(node: Node | null, endHandler: (event: EventTouch) => void) {
-    if (!this.canUseNode(node)) {
-      return
-    }
-    node.off(Node.EventType.TOUCH_START, this.swallowTouch, this)
-    node.off(Node.EventType.TOUCH_MOVE, this.swallowTouch, this)
-    node.off(Node.EventType.TOUCH_CANCEL, this.swallowTouch, this)
-    node.off(Node.EventType.TOUCH_END, endHandler, this)
-  }
-
-  private onHomeButtonTap(event: EventTouch) {
-    event.propagationStopped = true
-    this.playActionFeedback(this.homeButtonNode, this.homeHandler)
-  }
-
-  private onContinueButtonTap(event: EventTouch) {
-    event.propagationStopped = true
-    this.playActionFeedback(this.continueButtonNode, this.replayHandler)
-  }
-
-  private onShareButtonTap(event: EventTouch) {
-    event.propagationStopped = true
-    this.playActionFeedback(this.shareButtonNode, this.shareHandler)
-  }
-
-  // 点击只做一次短促回弹；回调延后到回弹低点，触感清楚但不会拖慢操作。
-  private playActionFeedback(node: Node | null, handler: (() => void) | null) {
-    this.playButtonClickFeedback()
-    if (!this.canUseNode(node)) {
-      handler?.()
-      return
-    }
-    Tween.stopAllByTarget(node)
-    tween(node)
-      .to(0.06, { scale: new Vec3(0.94, 0.94, 1) }, { easing: 'quadOut' })
-      .call(() => handler?.())
-      .to(0.1, { scale: Vec3.ONE }, { easing: 'backOut' })
-      .start()
-  }
-
-  private playButtonClickFeedback() {
-    this.buttonClickHandler?.()
-  }
-
-  private swallowTouch(event: EventTouch) {
-    event.propagationStopped = true
-  }
-
-  private getOrCreateNode(parent: Node, name: string) {
-    let node = parent.getChildByName(name)
-    if (!node) {
-      node = new Node(name)
-      node.setParent(parent)
-      node.addComponent(UITransform)
-    }
-    return node
-  }
-
-  private canUseNode(node: Node | null): node is Node {
-    return !!node && node.isValid
-  }
-
-  private safeOn(node: Node | null, eventType: string, handler: (event: EventTouch) => void) {
-    if (this.canUseNode(node)) {
-      node.on(eventType, handler, this)
-    }
-  }
-
-  private safeOff(node: Node | null, eventType: string, handler: (event: EventTouch) => void) {
-    if (this.canUseNode(node)) {
-      node.off(eventType, handler, this)
-    }
-  }
-
-  private bringNodeToTop(node: Node | null) {
-    const parent = node?.parent ?? null
-    if (this.canUseNode(node) && parent?.isValid) {
-      node.setSiblingIndex(parent.children.length - 1)
-    }
-  }
-
-  private stopNodeTreeTweens(node: Node | null) {
-    if (!this.canUseNode(node)) {
-      return
-    }
-    Tween.stopAllByTarget(node)
-    const opacity = node.getComponent(UIOpacity)
-    if (opacity) {
-      Tween.stopAllByTarget(opacity)
-    }
-    for (const child of [...node.children]) {
-      this.stopNodeTreeTweens(child)
-    }
-  }
-
-  private getContentScale(factor = 1) {
-    const scale = this.contentLayoutScale * factor
-    return new Vec3(scale, scale, 1)
-  }
-
-  private resetCelebrationAnimation() {
-    if (this.canUseNode(this.mascotRoot)) {
-      Tween.stopAllByTarget(this.mascotRoot)
-      this.mascotRoot.setPosition(0, -4, 0)
-      this.mascotRoot.setScale(Vec3.ONE)
-      this.mascotRoot.angle = 0
-    }
-    if (this.canUseNode(this.glowNode)) {
-      Tween.stopAllByTarget(this.glowNode)
-      this.glowNode.setScale(Vec3.ONE)
-      this.glowNode.angle = 0
-    }
-    for (const note of this.noteNodes) {
-      Tween.stopAllByTarget(note)
-      const opacity = note.getComponent(UIOpacity)
-      if (opacity) {
-        Tween.stopAllByTarget(opacity)
-        opacity.opacity = 0
-      }
-      note.setScale(new Vec3(0.55, 0.55, 1))
-    }
-  }
-
-  /** 角色完全静止；光芒与闪光粒子独立循环，不受五点五秒音频长度限制。 */
-  private playCelebrationAnimation() {
-    this.resetCelebrationAnimation()
-
-    if (this.glowNode) {
-      this.glowNode.setScale(new Vec3(0.96, 0.96, 1))
-      tween(this.glowNode)
-        .repeatForever(
-          tween<Node>()
-            .to(1.15, { scale: new Vec3(1.06, 1.06, 1), angle: 4 }, { easing: 'sineInOut' })
-            .to(1.15, { scale: new Vec3(0.96, 0.96, 1), angle: 0 }, { easing: 'sineInOut' })
-        )
-        .start()
-    }
-
-    const noteOrigins = [new Vec3(135, 72, 0), new Vec3(168, 122, 0), new Vec3(104, 105, 0)]
-    this.noteNodes.forEach((note, index) => {
-      const opacity = note.getComponent(UIOpacity)
-      if (!opacity) {
+    if (this.statusLabel) this.statusLabel.string = final ? track.result.current === 1 ? '已登顶' : track.moving ? '超越完成' : track.result.previous === null ? '新上榜' : '历史最佳成绩' : this.elapsed < 450 ? '准备冲榜' : '正在超越'
+    const visible = frame.rows.filter(row => row.y > -SETTLEMENT_LIST_HEIGHT / 2 - 56 && row.y < SETTLEMENT_LIST_HEIGHT / 2 + 56)
+    this.rows.forEach((view, index) => {
+      const row = visible[index]
+      if (!row) {
+        view.node.active = false
+        if (view.key) { view.avatar.clear(); view.key = '' }
         return
       }
-      note.setPosition(noteOrigins[index])
-      tween(opacity)
-        .delay(0.55 + index * 0.42)
-        .repeatForever(
-          tween<UIOpacity>()
-            .to(0.18, { opacity: 210 }, { easing: 'sineOut' })
-            .delay(0.28)
-            .to(0.42, { opacity: 0 }, { easing: 'sineIn' })
-            .delay(1.45)
-        )
-        .start()
-      tween(note)
-        .delay(0.55 + index * 0.42)
-        .repeatForever(
-          tween<Node>()
-            .call(() => {
-              note.setPosition(noteOrigins[index])
-              note.setScale(new Vec3(0.62, 0.62, 1))
-            })
-            .to(0.88, { position: noteOrigins[index].clone().add3f(12 - index * 8, 48, 0), scale: Vec3.ONE }, { easing: 'sineOut' })
-            .delay(1.45)
-        )
-        .start()
+      this.fillRow(view, row.entry, row.rank, `${row.entry.rank}:${row.entry.displayName}:${row.entry.value}`)
+      view.node.setPosition(row.crossing * 16, row.y, 0)
+      view.opacity.opacity = Math.round(255 * (1 - row.crossing * 0.25))
+    })
+    if (this.selfRow && track.result.self) {
+      this.fillRow(this.selfRow, track.result.self, frame.rank!, `self:${track.result.operationId ?? ''}`)
+      this.selfRow.node.setPosition(0, frame.selfY, 0)
+      this.selfRow.node.setScale(frame.selfScale, frame.selfScale, 1)
+    }
+    this.drawPaper(frame.celebrationElapsed)
+    if (frame.done) { this.playing = false; this.paper = []; this.particles?.clear() }
+  }
+
+  private finishImmediately() {
+    if (this.track) {
+      this.elapsed = this.track.landing + Math.max(340, this.track.celebrationDuration)
+      this.drawFrame()
+    }
+    this.playing = false
+    this.paper = []
+    this.particles?.clear()
+  }
+
+  private drawPaper(elapsed: number) {
+    const graphics = this.particles
+    if (!graphics) return
+    graphics.clear()
+    if (elapsed < 0 || !this.paper.length) return
+    for (const particle of this.paper) {
+      const frame = particleFrame(particle, elapsed)
+      if (!frame || Math.abs(frame.x) > 375 || Math.abs(frame.y) > 744) continue
+      // 彩纸只经过信息区两侧与留白，不盖住头像、成绩和操作按钮。
+      if (this.protectedAreas.some(area => Math.abs(frame.x - area.x) < area.width / 2 + 14 && Math.abs(frame.y - area.y) < area.height / 2 + 14)) continue
+      const color = PAPER[particle.color]
+      graphics.fillColor = new Color(color.r, color.g, color.b, Math.round(frame.alpha * 255))
+      graphics.strokeColor = new Color(98, 57, 31, Math.round(frame.alpha * 150))
+      graphics.lineWidth = 1.3
+      const c = Math.cos(frame.angle), s = Math.sin(frame.angle)
+      const point = (x: number, y: number) => ({ x: frame.x + x * c - y * s, y: frame.y + x * s + y * c })
+      const w = particle.width, h = particle.height * frame.flip
+      if (particle.kind > 0.86) {
+        graphics.strokeColor = graphics.fillColor
+        graphics.lineWidth = 5
+        const a = point(-w, -h * 2), b = point(w, h * 2), c1 = point(w, -h), c2 = point(-w, h)
+        graphics.moveTo(a.x, a.y); graphics.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, b.x, b.y); graphics.stroke()
+      } else {
+        const vertices = particle.kind > 0.74 ? Array.from({ length: 10 }, (_, index) => {
+          const radius = index % 2 ? w * 0.43 : w
+          return point(Math.cos(index * Math.PI / 5) * radius, Math.sin(index * Math.PI / 5) * radius * frame.flip)
+        }) : [point(-w / 2, -h / 2), point(w / 2, -h / 2), point(w / 2, h / 2), point(-w / 2, h / 2)]
+        graphics.moveTo(vertices[0].x, vertices[0].y)
+        for (const vertex of vertices.slice(1)) graphics.lineTo(vertex.x, vertex.y)
+        graphics.close(); graphics.fill(); graphics.stroke()
+      }
+    }
+  }
+
+  private rounded(node: Node, color: Color, radius: number) {
+    const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics)
+    const size = node.getComponent(UITransform)!
+    graphics.clear(); graphics.fillColor = color; graphics.strokeColor = INK; graphics.lineWidth = 3
+    graphics.roundRect(-size.width / 2, -size.height / 2, size.width, size.height, radius)
+    graphics.fill(); graphics.stroke()
+  }
+
+  private paintButton(node: Node, index: number) {
+    this.rounded(node, index === 0 ? new Color(255, 240, 203) : index === 1 ? new Color(244, 124, 81) : new Color(168, 198, 101), 30)
+    if (index > 0) {
+      const background = node.getComponent(Graphics)!
+      const width = node.getComponent(UITransform)!.width
+      background.strokeColor = new Color(255, 240, 204, 50)
+      background.lineWidth = 1.3
+      for (let line = 0; line < Math.floor(width / 13); line += 1) {
+        const x = -width / 2 + 12 + (line * 47 % (width - 42)), y = -34 + (line * 17 % 66)
+        background.moveTo(x, y); background.lineTo(x + 15, y + 5)
+      }
+      background.stroke()
+    }
+    const icon = node.getChildByName('Icon')
+    const graphics = icon?.getComponent(Graphics)
+    if (!graphics) return
+    graphics.clear(); graphics.strokeColor = index === 0 ? INK : CREAM; graphics.lineWidth = 4.4
+    if (index === 0) {
+      graphics.moveTo(-19, -1); graphics.lineTo(0, 17); graphics.lineTo(19, -1)
+      graphics.moveTo(-13, 3); graphics.lineTo(-13, -19); graphics.lineTo(-4, -19); graphics.lineTo(-4, -7); graphics.lineTo(4, -7); graphics.lineTo(4, -19); graphics.lineTo(13, -19); graphics.lineTo(13, 3)
+    } else if (index === 1) {
+      graphics.arc(0, 0, 16, Math.PI * 0.85, Math.PI * 2.65, false)
+      graphics.moveTo(-18, 18); graphics.lineTo(-18, 2); graphics.lineTo(-2, 2)
+    } else {
+      graphics.moveTo(-9, 3); graphics.lineTo(11, 14); graphics.moveTo(-9, -3); graphics.lineTo(11, -14)
+      for (const [x, y] of [[-16, 0], [16, 19], [16, -19]]) graphics.circle(x, y, 6)
+    }
+    graphics.stroke()
+  }
+
+  private bindSwallow(node: Node | null, bind: boolean) {
+    if (!node?.isValid) return
+    for (const event of [Node.EventType.TOUCH_START, Node.EventType.TOUCH_MOVE, Node.EventType.TOUCH_END, Node.EventType.TOUCH_CANCEL]) {
+      node.off(event, this.swallow, this)
+      if (bind) node.on(event, this.swallow, this)
+    }
+  }
+
+  private swallow(event: EventTouch) { event.propagationStopped = true }
+
+  private bindButtons(bind: boolean) {
+    const callbacks = [this.homeTap, this.replayTap, this.shareTap]
+    this.buttons.forEach((node, index) => {
+      node.off(Node.EventType.TOUCH_END, callbacks[index], this)
+      if (bind) node.on(Node.EventType.TOUCH_END, callbacks[index], this)
     })
   }
 
-  private show() {
-    if (!this.overlayOpacity) {
-      return
-    }
-    if (this.pendingArtworkLoads > 0) {
-      this.showWhenArtworkReady = true
-      return
-    }
-    this.showWhenArtworkReady = false
-    if (this.isVisible) {
-      this.node.active = true
-      this.overlayOpacity.opacity = 255
-      this.contentNode?.setScale(this.getContentScale())
-      return
-    }
-
-    this.isVisible = true
-    this.node.active = true
-    this.overlayOpacity.opacity = 0
-    this.contentNode?.setScale(this.getContentScale(0.94))
-    this.contentNode?.setPosition(0, -42, 0)
-    Tween.stopAllByTarget(this.overlayOpacity)
-    if (this.contentNode) {
-      Tween.stopAllByTarget(this.contentNode)
-    }
-    for (const node of [this.rewardNode, this.actionsNode]) {
-      if (!node) {
-        continue
-      }
-      Tween.stopAllByTarget(node)
-      node.setScale(Vec3.ONE)
-      const opacity = node.getComponent(UIOpacity) ?? node.addComponent(UIOpacity)
-      Tween.stopAllByTarget(opacity)
-      opacity.opacity = 255
-    }
-    tween(this.overlayOpacity).to(SETTLEMENT_ANIM_DURATION, { opacity: 255 }, { easing: 'quadOut' }).start()
-    if (this.contentNode) {
-      tween(this.contentNode)
-        .to(
-          SETTLEMENT_ANIM_DURATION,
-          { position: new Vec3(0, -18, 0), scale: this.getContentScale() },
-          { easing: 'quadOut' }
-        )
-        .start()
-    }
-    this.playCelebrationAnimation()
-    this.renderRank(this.latestRank, this.latestRankPending)
+  private act(event: EventTouch, index: number) {
+    event.propagationStopped = true
+    if (this.actionPending) return
+    this.options?.onButtonClick?.()
+    const handler = index === 0 ? this.options?.homeHandler : index === 1 ? this.options?.replayHandler : this.options?.shareHandler
+    const node = this.buttons[index]
+    if (!node) { handler?.(); return }
+    this.actionPending = true
+    Tween.stopAllByTarget(node)
+    tween(node).to(0.06, { scale: new Vec3(0.94, 0.94, 1) }).call(() => {
+      this.actionPending = false
+      handler?.()
+    }).to(0.1, { scale: Vec3.ONE }).start()
   }
 
-  private hide() {
-    this.stopRankAnimation()
-    this.rankKey = ''
-    if (this.rankNode) this.rankNode.active = false
-    this.showWhenArtworkReady = false
-    if (!this.overlayOpacity) {
-      return
-    }
-    if (!this.isVisible) {
-      this.node.active = false
-      return
-    }
+  private stopButtons() {
+    this.actionPending = false
+    for (const node of this.buttons) if (node.isValid) { Tween.stopAllByTarget(node); node.setScale(Vec3.ONE) }
+  }
 
-    this.isVisible = false
-    this.resetCelebrationAnimation()
-    Tween.stopAllByTarget(this.overlayOpacity)
-    if (this.contentNode) {
-      Tween.stopAllByTarget(this.contentNode)
+  private createFallback() {
+    this.panel = new Node('SettlementFallback')
+    this.panel.layer = this.node.layer
+    this.panel.setParent(this.node)
+    this.panel.addComponent(UITransform).setContentSize(WIDTH, HEIGHT)
+    const makeLabel = (name: string, value: string, y: number, size: number) => {
+      const node = new Node(name); node.layer = this.node.layer; node.setParent(this.panel!); node.setPosition(0, y)
+      node.addComponent(UITransform).setContentSize(660, 100)
+      const label = node.addComponent(Label); label.string = value; label.fontSize = size; label.color = CREAM
+      label.horizontalAlign = Label.HorizontalAlign.CENTER; label.verticalAlign = Label.VerticalAlign.CENTER
+      return label
     }
-    tween(this.overlayOpacity)
-      .to(0.12, { opacity: 0 }, { easing: 'quadIn' })
-      .call(() => {
-        if (!this.isVisible) {
-          this.node.active = false
-          this.contentNode?.setScale(this.getContentScale())
-        }
-      })
-      .start()
+    makeLabel('Title', '本局结算', 430, 60)
+    this.scoreLabel = makeLabel('Score', '', 300, 90)
+    this.highestLabel = makeLabel('Highest', '', 190, 32)
+    this.coinsLabel = makeLabel('Coins', '', 110, 32)
+    this.rankLabel = makeLabel('Rank', '', -30, 40)
+    this.buttons = ['首页', '再来一局', '分享'].map((name, index) => {
+      const button = new Node(name)
+      button.layer = this.node.layer; button.setParent(this.panel!); button.setPosition((index - 1) * 230, -250)
+      button.addComponent(UITransform).setContentSize(210, 100)
+      const label = makeLabel(`${name}Label`, name, 0, 32)
+      label.node.setParent(button); label.node.setPosition(0, 0, 0); label.node.getComponent(UITransform)!.setContentSize(200, 90)
+      this.paintButton(button, index)
+      return button
+    })
+    this.bindSwallow(this.panel, true)
+    this.bindButtons(true)
   }
 }

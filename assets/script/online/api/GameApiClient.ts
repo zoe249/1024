@@ -60,7 +60,14 @@ export type LeaderboardTargetResponse = {
   isTop: boolean
 }
 
-export type SettlementRank = { current: number | null; previous: number | null }
+export type SettlementRank = {
+  current: number | null
+  previous: number | null
+  operationId?: string
+  self?: LeaderboardEntryDto
+  entries?: LeaderboardEntryDto[]
+  celebrate?: boolean
+}
 
 export type PlayerProfileResponse = {
   playerId: string
@@ -80,6 +87,7 @@ export type UpdatePlayerProfileRequest = {
 
 export type SyncResponse<TSnapshot> = {
   rank?: SettlementRank
+  settlement?: SettlementRank & { operationId: string }
   serverTime: string
   cloudRevision: number
   snapshot: TSnapshot

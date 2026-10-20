@@ -1,0 +1,98 @@
+// 校验真实 Prefab 和组件时序；不替代 Creator/微信的视觉验收。
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
+const vm = require('node:vm')
+const ts = require(process.argv[2] || 'typescript')
+const root = path.resolve(__dirname, '..')
+function load(file, dependencies, globals = {}) {
+  const source = fs.readFileSync(path.join(root, file), 'utf8')
+  const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2018, experimentalDecorators: true } }).outputText
+  const module = { exports: {} }
+  vm.runInNewContext(output, { module, exports: module.exports, require: name => { assert.ok(name in dependencies, name); return dependencies[name] }, console, ...globals }, { filename: file })
+  return module.exports
+}
+const presentation = load('assets/script/settlement/SettlementPresentation.ts', {})
+const entry = (rank, self = false, value = 600000 - rank * 1000) => ({ rank, displayName: self ? '自己' : '这是一个非常非常长的玩家昵称', value, avatarIndex: rank % 11, isSelf: self })
+const result = (previous, current, extra = {}) => ({ previous, current, operationId: 'finish', self: entry(current, true), entries: Array.from({ length: Math.max(previous || 0, current) + 5 }, (_, i) => i + 1).filter(rank => rank !== current).map(rank => entry(rank)), celebrate: previous === null || previous > current, ...extra })
+const scenarios = [result(21, 13), result(121, 13), result(7, 1), result(13, 13), result(null, 13), result(21, 13, { self: entry(13, true, 1_000_000_000) })]
+for (const data of scenarios) {
+  const track = presentation.buildSettlementTrack(data)
+  let last = Infinity
+  for (let time = 0; time <= 6200; time += 16) {
+    const frame = presentation.settlementFrame(track, time)
+    assert.ok(frame.rank <= last, '名次倒退'); last = frame.rank
+    assert.ok(Number.isFinite(frame.selfY) && frame.selfScale >= 1)
+    const visible = frame.rows.filter(row => Math.abs(row.y) < 340)
+    const ranks = visible.map(row => row.rank)
+    assert.equal(new Set([...ranks, frame.rank]).size, ranks.length + 1, JSON.stringify({previous:data.previous,current:data.current,time,rank:frame.rank,position:frame.position,ranks}))
+    assert.ok(visible.length <= 8, '超过渲染池上限')
+  }
+  const end = presentation.settlementFrame(track, 6200)
+  assert.equal(end.rank, data.current); assert.equal(end.done, true)
+  const around = end.rows.filter(row => Math.abs(row.y) < 284).map(row => row.rank).concat([end.rank]).sort((a, b) => a - b)
+  for (let i = 1; i < around.length; i++) assert.equal(around[i], around[i - 1] + 1)
+}
+// 稀疏快照跨百万名，中段允许跳号，首尾保留连续真实邻居。
+const sparse = result(1_000_000, 13, { entries: [9,10,11,12,14,15,16,17,150000,300000,600000,999996,999997,999998,999999,1000000,1000001,1000002].map(rank=>entry(rank)) })
+const st = presentation.buildSettlementTrack(sparse)
+assert.equal(presentation.settlementFrame(st, 0).rank, 1_000_000)
+assert.equal(presentation.settlementFrame(st, 6200).rank, 13)
+assert.ok(st.landing + 340 <= 3070)
+for (const [top, first, count, duration] of [[false,false,96,2600],[true,false,144,3000],[false,true,36,1900]]) {
+  const particles = presentation.makeCelebration(top, first)
+  assert.equal(particles.length, count)
+  assert.deepEqual(JSON.stringify(particles), JSON.stringify(presentation.makeCelebration(top, first)))
+  for (let time=0;time<duration;time+=17) for(const particle of particles){const f=presentation.particleFrame(particle,time);if(f)for(const value of Object.values(f))assert.ok(Number.isFinite(value))}
+  assert.ok(particles.every(p=>presentation.particleFrame(p,duration)===null))
+}
+console.log('纯动画：六种情景、百万名压缩、连续最终名次、三档彩纸及收尾通过')
+
+let reduced=false, resourceLoads=[], animations=[]
+class Vec3 { constructor(x=0,y=0,z=0){Object.assign(this,{x,y,z})} static ONE=new Vec3(1,1,1) }
+class Component { constructor(){this.isValid=true} }
+class Node {
+  static EventType={TOUCH_START:'start',TOUCH_MOVE:'move',TOUCH_END:'end',TOUCH_CANCEL:'cancel'}
+  constructor(name=''){Object.assign(this,{name,children:[],components:[],parent:null,active:true,isValid:true,layer:33554432,position:new Vec3(),scale:Vec3.ONE,events:new Map()})}
+  setParent(parent){if(this.parent)this.parent.children=this.parent.children.filter(n=>n!==this);this.parent=parent;parent.children.push(this)}
+  getChildByName(name){return this.children.find(n=>n.name===name)||null}
+  getChildByPath(p){return p.split('/').reduce((node,part)=>node?.getChildByName(part),this)||null}
+  addComponent(Type){const c=new Type();c.node=this;this.components.push(c);return c}
+  getComponent(Type){return this.components.find(c=>c instanceof Type)||null}
+  setPosition(x,y,z=0){this.position=x instanceof Vec3?x:new Vec3(x,y,z)}
+  setScale(x,y,z=1){this.scale=x instanceof Vec3?x:new Vec3(x,y,z)}
+  setSiblingIndex(index){if(!this.parent)return;const a=this.parent.children;a.splice(a.indexOf(this),1);a.splice(index,0,this)}
+  on(event,fn,owner){const list=this.events.get(event)||[];list.push({fn,owner});this.events.set(event,list)}
+  off(event,fn,owner){this.events.set(event,(this.events.get(event)||[]).filter(x=>x.fn!==fn||x.owner!==owner))}
+}
+class UITransform extends Component {setContentSize(w,h){this.width=w;this.height=h}}
+class Label extends Component { static HorizontalAlign={CENTER:1};static VerticalAlign={CENTER:1};constructor(){super();this.string=''} }
+class Graphics extends Component { clear(){this.operations=0} }
+for(const name of ['rect','roundRect','moveTo','lineTo','circle','arc','bezierCurveTo','close','fill','stroke'])Graphics.prototype[name]=function(...args){for(const x of args)if(typeof x==='number')assert.ok(Number.isFinite(x));this.operations=(this.operations||0)+1}
+class Sprite extends Component{}
+class SpriteFrame{}
+class Prefab{}
+class Mask extends Component{}
+class UIOpacity extends Component {constructor(){super();this.opacity=255}}
+const eventBus=new Map()
+const game={on(event,fn,owner){const list=eventBus.get(event)||[];list.push({fn,owner});eventBus.set(event,list)},off(event,fn,owner){eventBus.set(event,(eventBus.get(event)||[]).filter(x=>x.fn!==fn||x.owner!==owner))}}
+const Game={EVENT_HIDE:'hide',EVENT_SHOW:'show'}
+const emit=event=>(eventBus.get(event)||[]).slice().forEach(x=>x.fn.call(x.owner))
+const Tween={stopAllByTarget(target){animations=animations.filter(a=>a.target!==target)}}
+function tween(target){const actions=[];return{to(time,props){actions.push(()=>Object.assign(target,props));return this},call(fn){actions.push(fn);return this},start(){animations.push({target,actions})}}}
+const stepButtons=()=>{const items=animations;animations=[];items.forEach(a=>a.actions.forEach(fn=>fn()))}
+class Avatar {constructor(sprite){this.sprite=sprite;this.cleared=0;this.disposed=false}render(entry){this.entry=entry;return Promise.resolve(true)}clear(){this.cleared++;this.entry=null}dispose(){this.clear();this.disposed=true}}
+const prefab=JSON.parse(fs.readFileSync(path.join(root,'assets/resources/Settlement/SettlementPopup.prefab'),'utf8'))
+const types={'cc.UITransform':UITransform,'cc.Label':Label,'cc.Sprite':Sprite,'cc.Graphics':Graphics,'cc.Mask':Mask,'cc.UIOpacity':UIOpacity}
+function deserialize(){const nodes=new Map();prefab.forEach((x,i)=>{if(x.__type__==='cc.Node'){const n=new Node(x._name);n.active=x._active;n.setPosition(x._lpos.x,x._lpos.y,x._lpos.z);nodes.set(i,n)}});for(const [id,n]of nodes){const x=prefab[id];if(x._parent)n.setParent(nodes.get(x._parent.__id__));for(const ref of x._components){const c=prefab[ref.__id__],Type=types[c.__type__];assert.ok(Type,c.__type__);const value=n.addComponent(Type);if(Type===UITransform)value.setContentSize(c._contentSize.width,c._contentSize.height);if(Type===Sprite)value.spriteFrame=c._spriteFrame?new SpriteFrame():null;if(Type===Label){value.string=c._string;value.fontSize=c._fontSize;value.overflow=c._overflow;value.enableWrapText=c._enableWrapText}}}return nodes.get(prefab[0].data.__id__)}
+function clone(n){const copy=new Node(n.name);const t=n.getComponent(UITransform);if(t)copy.addComponent(UITransform).setContentSize(t.width,t.height);for(const c of n.components.filter(c=>!(c instanceof UITransform))){const nc=copy.addComponent(c.constructor);if(c instanceof Sprite)nc.spriteFrame=c.spriteFrame;if(c instanceof Label)Object.assign(nc,{string:c.string,fontSize:c.fontSize,overflow:c.overflow,enableWrapText:c.enableWrapText})}for(const child of n.children)clone(child).setParent(copy);return copy}
+const cc={_decorator:{ccclass:()=>Type=>Type},Color:class{constructor(r,g,b,a=255){Object.assign(this,{r,g,b,a})}},Component,EventTouch:class{},game,Game,Graphics,instantiate:p=>p instanceof Node?clone(p):deserialize(),Label,Node,Prefab,resources:{load(...args){resourceLoads.push(args.at(-1))}},Sprite,SpriteFrame,tween,Tween,UIOpacity,UITransform,Vec3}
+const {GameOverOverlayController}=load('assets/script/settlement/GameOverOverlayController.ts',{cc,'../profile/PlayerAvatarRenderer':{PlayerAvatarRenderer:Avatar},'./SettlementPresentation':presentation},{matchMedia:()=>({matches:reduced})})
+function harness(width=750,height=1334,fallback=false){resourceLoads=[];const controller=new GameOverOverlayController();controller.node=new Node('Overlay');const parent=new Node('Root');controller.node.setParent(parent);const host=new Node('Content');host.addComponent(UITransform).setContentSize(width,height);const calls=[0,0,0];controller.setup({hostNode:host,homeHandler:()=>calls[0]++,replayHandler:()=>calls[1]++,shareHandler:()=>calls[2]++});controller.onEnable();return{controller,calls,ready(){resourceLoads.shift()(fallback?Error('fixture'):null,fallback?null:{});return controller}}}
+for(const [width,height]of[[640,1136],[750,1334],[860,1864]])for(const data of scenarios){const h=harness(width,height),c=h.controller;c.renderState(true,52880,2048,128);c.renderRank(data,false);assert.equal(c.track,null);h.ready();assert.equal(c.scoreLabel.string,'52880');assert.equal(c.rows.length,8);assert.ok(c.layoutScale*1488<=height-64+0.01);assert.ok(c.layoutScale*750<=width-40+0.01);for(let i=0;i<390;i++)c.update(0.016);assert.equal(c.playing,false);assert.equal(c.paper.length,0);assert.equal(c.rankLabel.string,data.current===1?'已登顶':`第 ${data.current} 名`);assert.equal(c.selfRow.score.string,String(data.self.value));assert.equal(c.selfRow.node.scale.x,1);assert.equal(c.selfRow.medal.node.active,data.current<=3);assert.equal(c.selfRow.rank.node.active,data.current>3);for(const row of c.rows.filter(r=>r.node.active)){assert.equal(row.score.overflow,2);assert.equal(row.score.enableWrapText,false);assert.ok(row.name.string.endsWith('…'))}c.onDestroy()}
+console.log('真实 Prefab/组件：18 种屏幕情景、历史最佳与本局分离、十位数 SHRINK、昵称省略、单次动画通过')
+const safe=harness();safe.controller.options.getSafeInsets=()=>({top:120,bottom:68});safe.controller.renderState(true,1,2,5);safe.ready();safe.controller.syncLayout();assert.ok(safe.controller.panel.position.y+1488*safe.controller.layoutScale/2<=1334/2-120-32+0.01);assert.ok(safe.controller.panel.position.y-1488*safe.controller.layoutScale/2>=-1334/2+68+32-0.01);safe.controller.onDestroy();
+const h=harness(),c=h.controller;c.renderState(true,1000,128,10);h.ready();c.renderRank(null,true);assert.equal(c.rankLabel.string,'名次计算中');c.renderRank(scenarios[0],false);for(let i=0;i<180;i++)c.update(.016);assert.ok(c.paper.length);emit('hide');assert.equal(c.playing,false);assert.equal(c.paper.length,0);assert.equal(c.rankLabel.string,'第 13 名');emit('show');assert.equal(c.playing,false);for(let i=0;i<3;i++){c.act({propagationStopped:false},i);stepButtons()}assert.deepEqual(h.calls,[1,1,1]);c.renderState(false,0,0,0);c.onDisable();c.renderState(true,2000,256,20);c.onEnable();c.renderRank(scenarios[2],false);assert.equal(c.elapsed,0);c.update(.8);c.onDestroy();assert.equal([...eventBus.values()].flat().length,0);assert.equal(animations.length,0)
+reduced=true;const r=harness();r.controller.renderState(true,1,2,5);r.ready();r.controller.renderRank(scenarios[2],false);assert.equal(r.controller.playing,false);assert.equal(r.controller.rankLabel.string,'已登顶');assert.equal(r.controller.paper.length,0);r.controller.onDestroy();reduced=false
+const f=harness(750,1334,true);f.controller.renderState(true,12,16,5);f.ready();assert.equal(f.controller.buttons.length,3);f.controller.act({propagationStopped:false},1);stepButtons();assert.equal(f.calls[1],1);f.controller.onDestroy()
+console.log('生命周期：加载前后、待同步、后台收敛、重开/返回/分享、减少动态、加载失败回退、释放通过')

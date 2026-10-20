@@ -1070,6 +1070,14 @@ export class PlayUIController extends Component {
       homeHandler: this.gameOverHomeHandler,
       shareHandler: this.gameOverShareHandler,
       onButtonClick: this.buttonClickHandler ?? undefined,
+      getSafeInsets: () => {
+        const root = this.node.getComponent(UITransform)
+        if (!root) return { top: 0, bottom: 0 }
+        const menu = this.getWechatMenuMetrics()
+        const capsuleBottom = menu ? Math.max(0, menu.menuRect.bottom - menu.screenTop)
+          * root.height / Math.max(1, menu.windowHeight || screen.windowSize.height) : 0
+        return { top: Math.max(this.getSafeTopInset(root), capsuleBottom), bottom: this.getSafeBottomInset(root) }
+      },
       popupSpriteFrame,
       replayButtonSpriteFrame,
       homeButtonSpriteFrame,

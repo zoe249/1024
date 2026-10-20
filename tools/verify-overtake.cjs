@@ -101,9 +101,10 @@ async function verifyRivals() {
 
 async function verifySettlementSync() {
   const first = deferred(), sent = [], pending = []
+  let nextSettlement
   const rank = { previous: 12, current: 4 }
   const snapshot = { economy: { lastEnergyRecoveryAt: new Date().toISOString() }, checkIn: {}, progress: { highestScore: 100, highestNumber: 128, completedGames: 1 } }
-  const makeResult = (ids, rank) => ({ snapshot, rank, cloudRevision: 1, serverTime: new Date().toISOString(), acceptedOperationIds: ids, duplicateOperationIds: [], rejectedOperations: [] })
+  const makeResult = (ids, rank) => ({ snapshot, rank, settlement: nextSettlement, cloudRevision: 1, serverTime: new Date().toISOString(), acceptedOperationIds: ids, duplicateOperationIds: [], rejectedOperations: [] })
   const session = { getToken: () => 'token', getSnapshot: () => ({ playerId: 'p1' }), getApiClient: () => ({ sync: body => {
     sent.push(body)
     return sent.length === 1 ? first.promise : Promise.resolve(makeResult(body.operations.map(op => op.operationId), rank))
@@ -124,7 +125,18 @@ async function verifySettlementSync() {
   assert.deepEqual(await receipt, rank)
   assert.equal(sent.length, 2); assert.equal(sent[1].operations[0].operationId, 'finish')
   assert.equal(store.gameRanks.size, 0)
-  console.log('结算同步：加入在途校准请求后等待本局回执，不读取前一批名次，一次性消费通过')
+  pending.push({ operationId: 'old', type: 'game_finished', payload: {} }, { operationId: 'current', type: 'game_finished', payload: {} })
+  nextSettlement = { operationId: 'current', previous: 13, current: 5, celebrate: true, entries: [] }
+  assert.deepEqual(await store.syncGameFinished('current'), nextSettlement)
+  assert.equal(store.gameRanks.get('p1:old'), null)
+  assert.equal(store.gameRanks.has('p1:current'), false)
+  nextSettlement = undefined
+  pending.push({ operationId: 'legacy-old', type: 'game_finished', payload: {} }, { operationId: 'legacy-current', type: 'game_finished', payload: {} })
+  const legacy = await store.syncGameFinished('legacy-current')
+  assert.equal(legacy.previous, legacy.current)
+  assert.equal(legacy.celebrate, false)
+  assert.equal(store.gameRanks.get('p1:legacy-old'), null)
+  console.log('结算同步：加入在途校准请求后等待本局回执，不读取前一批名次，一次性消费与多局快照按操作 ID 归属通过')
 }
 
 async function verifyWidget() {
@@ -280,21 +292,7 @@ async function verifyWidget() {
   assert.equal(long.fits, true); assert.ok(long.node.position.y + 81 <= 668 - 12)
   console.log('HUD 布局：42 种行列组合、出生点/棋盘避让、短屏收起目标保留分数、长屏胶囊避让通过（坐标模拟）')
 
-  const { GameOverOverlayController } = load('assets/script/settlement/GameOverOverlayController.ts', { cc })
-  const settlement = new GameOverOverlayController()
-  settlement.rankNode = new Node(); settlement.rankLabel = new Label(); settlement.rankLabel.node = new Node()
-  settlement.rankDeltaLabel = new Label(); settlement.rankDeltaLabel.node = new Node()
-  settlement.renderRank({ previous: 12, current: 4 }, false)
-  assert.equal(settlement.rankKey, '')
-  settlement.isVisible = true; settlement.renderRank(settlement.latestRank, false)
-  await advance(450); assert.equal(settlement.rankLabel.string, '第 4 名'); assert.equal(settlement.rankDeltaLabel.string, '↑8')
-  settlement.renderRank({ previous: 4, current: 4 }, false); assert.equal(settlement.rankDeltaLabel.node.active, false)
-  settlement.renderRank({ previous: null, current: 13 }, false); assert.equal(settlement.rankLabel.string, '新上榜 第 13 名')
-  settlement.renderRank(null, true); assert.equal(settlement.rankLabel.string, '名次计算中')
-  settlement.renderRank(null, false); await advance(120); assert.equal(settlement.rankNode.active, false)
-  settlement.renderRank({ previous: 50, current: 1 }, false); settlement.stopRankAnimation(); const text = settlement.rankLabel.string
-  await advance(700); assert.equal(settlement.rankLabel.string, text)
-  console.log('结算组件：素材未就绪时延后动画、上升/持平/首次上榜、超时隐藏和停止补间通过（模拟引擎时钟）')
+  console.log('新版结算独立检查：node tools/verify-settlement.cjs <Creator TypeScript 路径>')
 }
 
 Promise.resolve().then(verifyRivals).then(verifySettlementSync).then(verifyWidget).catch(error => { console.error(error); process.exitCode = 1 })

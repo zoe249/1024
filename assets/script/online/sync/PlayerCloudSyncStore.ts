@@ -245,9 +245,15 @@ export class PlayerCloudSyncStore {
       const result = await this.session.getApiClient().sync<PlayerCloudSnapshot>(body)
       if (account !== this.session.getSnapshot().playerId) throw new Error('账号已切换，忽略旧账号响应')
       const accepted = [...result.acceptedOperationIds, ...result.duplicateOperationIds]
+      const gameOperations = operations.filter(operation => operation.type === 'game_finished')
+      const lastGameOperation = gameOperations.slice(-1)[0]
+      const legacyRank = result.rank && gameOperations.length > 1
+        ? { ...result.rank, previous: result.rank.current, celebrate: false } : result.rank
       for (const operation of operations) {
         if (operation.type !== 'game_finished') continue
-        this.gameRanks.set(`${account}:${operation.operationId}`, accepted.indexOf(operation.operationId) >= 0 ? result.rank ?? null : null)
+        const settlement = result.settlement?.operationId === operation.operationId ? result.settlement
+          : !result.settlement && operation === lastGameOperation ? legacyRank : null
+        this.gameRanks.set(`${account}:${operation.operationId}`, accepted.indexOf(operation.operationId) >= 0 ? settlement ?? null : null)
       }
       if (this.gameRanks.size > 200) this.gameRanks.delete(this.gameRanks.keys().next().value!)
       for (const id of accepted) {
