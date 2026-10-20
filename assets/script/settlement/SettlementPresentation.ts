@@ -1,7 +1,9 @@
 import type { LeaderboardEntryDto, SettlementRank } from '../online/api/GameApiClient'
 
-export const SETTLEMENT_ROW_STEP = 112
-export const SETTLEMENT_LIST_HEIGHT = 568
+export const SETTLEMENT_ROW_STEP = 96
+export const SETTLEMENT_LIST_HEIGHT = 500
+
+export const formatSettlementScore = (value: number) => Math.max(0, Math.floor(value)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 
 export type SettlementTrack = {
   result: SettlementRank
@@ -53,7 +55,7 @@ export function settlementFrame(track: SettlementTrack, milliseconds: number) {
   const bounce = moving && milliseconds >= landing && milliseconds < landing + 340 ? Math.sin((milliseconds - landing) / 340 * Math.PI) : 0
   return {
     rank, position, camera,
-    selfY: SETTLEMENT_LIST_HEIGHT / 2 - 56 - (position - camera) * SETTLEMENT_ROW_STEP - charge * 8,
+    selfY: SETTLEMENT_LIST_HEIGHT / 2 - SETTLEMENT_ROW_STEP / 2 - (position - camera) * SETTLEMENT_ROW_STEP - charge * 8,
     selfScale: 1 + charge * 0.018 + bounce * 0.035,
     celebrationElapsed: milliseconds - landing,
     done: milliseconds >= landing + Math.max(moving ? 340 : 0, track.celebrationDuration),
@@ -61,7 +63,7 @@ export function settlementFrame(track: SettlementTrack, milliseconds: number) {
       ...row, index,
       rank: row.baseRank + (position <= index ? 1 : 0),
       crossing: Math.sin(smooth(index + 1 - position) * Math.PI),
-      y: SETTLEMENT_LIST_HEIGHT / 2 - 56 - (index + smooth(index + 1 - position) - camera) * SETTLEMENT_ROW_STEP
+      y: SETTLEMENT_LIST_HEIGHT / 2 - SETTLEMENT_ROW_STEP / 2 - (index + smooth(index + 1 - position) - camera) * SETTLEMENT_ROW_STEP
     }))
   }
 }

@@ -1,14 +1,13 @@
 import { _decorator, Color, Component, EventTouch, game, Game, Graphics, instantiate, Label, Node, Prefab, resources, Sprite, SpriteFrame, tween, Tween, UIOpacity, UITransform, Vec3 } from 'cc'
 import type { LeaderboardEntryDto, SettlementRank } from '../online/api/GameApiClient'
 import { PlayerAvatarRenderer } from '../profile/PlayerAvatarRenderer'
-import { buildSettlementTrack, makeCelebration, particleFrame, settlementFrame, SETTLEMENT_LIST_HEIGHT, type CelebrationParticle, type SettlementTrack } from './SettlementPresentation'
+import { buildSettlementTrack, formatSettlementScore, makeCelebration, particleFrame, settlementFrame, SETTLEMENT_LIST_HEIGHT, type CelebrationParticle, type SettlementTrack } from './SettlementPresentation'
 
 const { ccclass } = _decorator
-const INK = new Color(98, 57, 31, 255)
 const CREAM = new Color(255, 249, 237, 255)
 const PAPER = [new Color(255, 214, 121), new Color(245, 138, 101), new Color(168, 198, 101), new Color(139, 206, 213), new Color(255, 240, 189)]
 const WIDTH = 750
-const HEIGHT = 1488
+const HEIGHT = 1360
 
 type Options = {
   hostNode: Node
@@ -147,7 +146,8 @@ export class GameOverOverlayController extends Component {
     this.panel?.setScale(this.layoutScale, this.layoutScale, 1)
     this.panel?.setPosition(0, (insets.bottom - insets.top) / 2, 0)
     this.protectedAreas = []
-    for (const path of ['Title', 'ScoreLabel', 'Score', 'Statistics', 'Board/Rank', 'Board/RankValue', 'Board/Delta', 'Board/Heading', 'Board/Status', 'Board/List', 'Actions']) {
+    // 静态标题已烘入底图，TitleBounds 只提供彩纸避让范围。
+    for (const path of ['TitleBounds', 'ScoreLabel', 'Score', 'Statistics', 'Board/Rank', 'Board/RankValue', 'Board/Delta', 'Board/Heading', 'Board/Status', 'Board/List', 'Actions']) {
       const node = this.panel?.getChildByPath(path)
       const size = node?.getComponent(UITransform)
       if (!node || !size) continue
@@ -211,10 +211,7 @@ export class GameOverOverlayController extends Component {
     this.particles = panel.getChildByName('Confetti')?.getComponent(Graphics) ?? null
     this.buttons = ['Home', 'Replay', 'Share'].map(name => panel.getChildByPath(`Actions/${name}`)!).filter(Boolean)
     this.buttons.forEach((node, index) => this.restoreButtonArtwork(node, index))
-    for (const name of ['Highest', 'Coins']) {
-      const node = panel.getChildByPath(`Statistics/${name}`)
-      if (node) this.rounded(node, new Color(255, 243, 212), 22)
-    }
+    this.paintSummaryDividers()
     this.bindSwallow(panel, true)
     this.bindButtons(true)
   }
@@ -245,16 +242,18 @@ export class GameOverOverlayController extends Component {
     } else {
       graphics.strokeColor = new Color(192, 161, 109, 28)
       graphics.lineWidth = 1
-      graphics.moveTo(-276, -54); graphics.lineTo(276, -54); graphics.stroke()
+      const size = node.getComponent(UITransform)!
+      graphics.moveTo(-size.width / 2 + 10, -size.height / 2 - 3); graphics.lineTo(size.width / 2 - 10, -size.height / 2 - 3); graphics.stroke()
     }
     node.active = false
     return row
   }
 
   private refreshValues() {
-    if (this.scoreLabel) this.scoreLabel.string = `${this.values.score}`
-    if (this.highestLabel) this.highestLabel.string = `最高合成  ${this.values.highest}`
-    if (this.coinsLabel) this.coinsLabel.string = `金币  +${this.values.coins}`
+    const compact = !!this.panel?.getChildByName('Statistics')
+    if (this.scoreLabel) this.scoreLabel.string = formatSettlementScore(this.values.score)
+    if (this.highestLabel) this.highestLabel.string = `${compact ? '' : '最高合成  '}${this.values.highest}`
+    if (this.coinsLabel) this.coinsLabel.string = `${compact ? '' : '金币  '}+${formatSettlementScore(this.values.coins)}`
   }
 
   private applyRank() {
@@ -304,7 +303,7 @@ export class GameOverOverlayController extends Component {
       shown += char
     }
     row.name.string = shown
-    row.score.string = `${entry.value}`
+    row.score.string = formatSettlementScore(entry.value)
     void row.avatar.render(entry)
   }
 
@@ -363,18 +362,20 @@ export class GameOverOverlayController extends Component {
     const number = this.rankNumber
     const group = number?.node.parent
     if (!number || !group) return
-    const width = Math.min(240, Math.max(48, number.string.length * 40))
-    number.node.getComponent(UITransform)!.setContentSize(width, 84)
+    const width = Math.min(240, Math.max(48, number.string.length * number.fontSize * 0.625))
+    const height = number.node.getComponent(UITransform)!.height
+    const y = group.position.y
+    number.node.getComponent(UITransform)!.setContentSize(width, height)
     group.getChildByName('Prefix')?.setPosition(-width / 2 - 20, 0, 0)
     group.getChildByName('Suffix')?.setPosition(width / 2 + 20, 0, 0)
-    group.getComponent(UITransform)!.setContentSize(width + 80, 84)
+    group.getComponent(UITransform)!.setContentSize(width + 80, height)
     const hasDelta = !!this.deltaLabel?.string
     const deltaWidth = hasDelta ? Math.min(190, Math.max(80, this.deltaLabel!.string.length * 28)) : 0
-    group.setPosition(hasDelta ? -(deltaWidth + 24) / 2 : 0, 164, 0)
+    group.setPosition(hasDelta ? -(deltaWidth + 24) / 2 : 0, y, 0)
     if (this.deltaLabel) {
       this.deltaLabel.node.active = hasDelta
-      this.deltaLabel.node.getComponent(UITransform)!.setContentSize(Math.max(1, deltaWidth), 70)
-      this.deltaLabel.node.setPosition((width + 80 + 24) / 2, 164, 0)
+      this.deltaLabel.node.getComponent(UITransform)!.setContentSize(Math.max(1, deltaWidth), height)
+      this.deltaLabel.node.setPosition((width + 80 + 24) / 2, y, 0)
     }
   }
 
@@ -385,7 +386,7 @@ export class GameOverOverlayController extends Component {
     if (elapsed < 0 || !this.paper.length) return
     for (const particle of this.paper) {
       const frame = particleFrame(particle, elapsed)
-      if (!frame || Math.abs(frame.x) > 375 || Math.abs(frame.y) > 744) continue
+      if (!frame || Math.abs(frame.x) > WIDTH / 2 || Math.abs(frame.y) > HEIGHT / 2) continue
       // 彩纸只经过信息区两侧与留白，不盖住头像、成绩和操作按钮。
       if (this.protectedAreas.some(area => Math.abs(frame.x - area.x) < area.width / 2 + 14 && Math.abs(frame.y - area.y) < area.height / 2 + 14)) continue
       const color = PAPER[particle.color]
@@ -412,12 +413,20 @@ export class GameOverOverlayController extends Component {
     }
   }
 
-  private rounded(node: Node, color: Color, radius: number) {
-    const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics)
-    const size = node.getComponent(UITransform)!
-    graphics.clear(); graphics.fillColor = color; graphics.strokeColor = INK; graphics.lineWidth = 3
-    graphics.roundRect(-size.width / 2, -size.height / 2, size.width, size.height, radius)
-    graphics.fill(); graphics.stroke()
+  private paintSummaryDividers() {
+    const divider = this.panel?.getChildByPath('Board/SummaryDivider')?.getComponent(Graphics)
+    if (divider) {
+      divider.clear(); divider.strokeColor = new Color(239, 186, 92); divider.lineWidth = 1.2
+      divider.moveTo(-292, 0); divider.lineTo(-18, 0)
+      divider.moveTo(18, 0); divider.lineTo(292, 0); divider.stroke()
+      divider.fillColor = new Color(246, 180, 58)
+      divider.moveTo(0, 7); divider.lineTo(6, 0); divider.lineTo(0, -7); divider.lineTo(-6, 0); divider.close(); divider.fill()
+    }
+    const separator = this.panel?.getChildByPath('Statistics/Separator')?.getComponent(Graphics)
+    if (separator) {
+      separator.clear(); separator.strokeColor = new Color(218, 180, 121, 160); separator.lineWidth = 1.2
+      separator.moveTo(0, -22); separator.lineTo(0, 22); separator.stroke()
+    }
   }
 
   private restoreButtonArtwork(node: Node, index: number) {
@@ -482,6 +491,7 @@ export class GameOverOverlayController extends Component {
       node.addComponent(UITransform).setContentSize(660, 100)
       const label = node.addComponent(Label); label.string = value; label.fontSize = size; label.color = CREAM
       label.horizontalAlign = Label.HorizontalAlign.CENTER; label.verticalAlign = Label.VerticalAlign.CENTER
+      label.enableWrapText = false; label.overflow = Label.Overflow.SHRINK
       return label
     }
     makeLabel('Title', '本局结算', 430, 60)
