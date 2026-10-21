@@ -155,12 +155,19 @@ async function verifyWidget() {
     now = end; await flush()
   }
   class Vec3 { constructor(x = 0, y = 0, z = 0) { Object.assign(this, { x, y, z }) } static ZERO = new Vec3(); static ONE = new Vec3(1, 1, 1) }
-  class Component { constructor() { this.isValid = true; this.enabledInHierarchy = true } }
+  class Component {
+    constructor() { this.isValid = true; this.enabledInHierarchy = true; this.scheduled=[] }
+    scheduleOnce(fn) { this.scheduled.push(fn) }
+    unscheduleAllCallbacks() { this.scheduled=[] }
+  }
   class Node {
-    constructor() { this.isValid = true; this.active = true; this.children = []; this.components = []; this.position = new Vec3(); this.scale = Vec3.ONE }
+    static EventType={TOUCH_START:'start',TOUCH_MOVE:'move',TOUCH_END:'end',TOUCH_CANCEL:'cancel'}
+    constructor() { this.isValid = true; this.active = true; this.children = []; this.components = []; this.events=new Map(); this.position = new Vec3(); this.scale = Vec3.ONE }
     getChildByName(name) { return this.children.find(child => child.name === name) }
     getComponent(type) { return this.components.find(component => component instanceof type) || null }
     addComponent(type) { const c = new type(); c.node = this; this.components.push(c); return c }
+    setParent(parent) { this.parent=parent;parent.children.push(this) }
+    off(event,fn,owner) { assert.ok(this.events,'已销毁节点不能解绑');this.events.set(event,(this.events.get(event)||[]).filter(x=>x.fn!==fn||x.owner!==owner)) }
     setPosition(x, y, z) { this.position = x instanceof Vec3 ? x : new Vec3(x, y, z) }
     setScale(value) { this.scale = value }
   }
@@ -178,25 +185,31 @@ async function verifyWidget() {
     return builder
   }
   class PlayerAvatarRenderer {
-    constructor() { this.clears = 0 }
+    constructor() { this.clears = 0;this.disposals=0 }
     render(avatar) { const d = deferred(); avatarLoads.push({ ...d, avatar }); if (!delayAvatar) d.resolve(true); return d.promise }
     clear() { this.clears++ }
-    dispose() { this.clear() }
+    dispose() { this.disposals++;this.clear() }
   }
-  const cc = { _decorator: { ccclass: () => type => type, property: () => () => {} }, Color: class {}, Component, Node, UITransform, Label, Sprite, Graphics, UIOpacity, Vec3, tween, Tween, game: { on() {}, off() {} }, Game: {} }
+  const events=new Map();
+  const game={on(event,fn,owner){const list=events.get(event)||[];list.push({fn,owner});events.set(event,list)},off(event,fn,owner){events.set(event,(events.get(event)||[]).filter(x=>x.fn!==fn||x.owner!==owner))}};
+  const cc = { _decorator: { ccclass: () => type => type, property: () => () => {} }, Color: class {}, Component, Node, UITransform, Label, Sprite, Graphics, UIOpacity, Vec3, tween, Tween, game, Game: {EVENT_HIDE:'hide',EVENT_SHOW:'show'} }
   const { OvertakeTargetWidget } = load('assets/script/gameplay/OvertakeTargetWidget.ts', { cc, '../profile/PlayerAvatarRenderer': { PlayerAvatarRenderer } })
   const serialized = JSON.parse(fs.readFileSync(path.join(root, 'assets/resources/Gameplay/ScoreTargetHUD.prefab')))
-  const objects = serialized.map(item => item.__type__ === 'cc.Node' ? new Node() : cc[item.__type__.slice(3)] ? new cc[item.__type__.slice(3)]() : null)
-  serialized.forEach((item, i) => {
-    const object = objects[i]; if (!object) return
-    if (object instanceof Node) { object.name = item._name; object.active = item._active; object.children = item._children.map(ref => objects[ref.__id__]); object.position = new Vec3(item._lpos.x, item._lpos.y, 0); object.components = item._components.map(ref => objects[ref.__id__]).filter(Boolean) }
-    else { object.node = objects[item.node.__id__]; if (object instanceof UITransform) { object.setContentSize(item._contentSize.width, item._contentSize.height); object.anchorX = item._anchorPoint.x } if (object instanceof Label) { object.fontSize = item._fontSize; object.string = item._string; object.horizontalAlign = item._horizontalAlign; object.overflow = item._overflow } }
-  })
-  const component = serialized.find(item => item.currentScoreLabel)
-  const widget = new OvertakeTargetWidget(); widget.node = objects[1]
-  for (const key of ['currentScoreLabel', 'targetViewport', 'topContent']) widget[key] = objects[component[key].__id__]
-  widget.targetSlots = component.targetSlots.map(ref => objects[ref.__id__])
-  assert.equal(widget.initialize(), true)
+  function createWidget() {
+    const objects = serialized.map(item => item.__type__ === 'cc.Node' ? new Node() : cc[item.__type__.slice(3)] ? new cc[item.__type__.slice(3)]() : null)
+    serialized.forEach((item, i) => {
+      const object = objects[i]; if (!object) return
+      if (object instanceof Node) { object.name = item._name; object.active = item._active; object.children = item._children.map(ref => objects[ref.__id__]); object.position = new Vec3(item._lpos.x, item._lpos.y, 0); object.components = item._components.map(ref => objects[ref.__id__]).filter(Boolean) }
+      else { object.node = objects[item.node.__id__]; if (object instanceof UITransform) { object.setContentSize(item._contentSize.width, item._contentSize.height); object.anchorX = item._anchorPoint.x } if (object instanceof Label) { object.fontSize = item._fontSize; object.string = item._string; object.horizontalAlign = item._horizontalAlign; object.overflow = item._overflow } }
+    })
+    const component = serialized.find(item => item.currentScoreLabel)
+    const widget = objects[1].addComponent(OvertakeTargetWidget)
+    for (const key of ['currentScoreLabel', 'targetViewport', 'topContent']) widget[key] = objects[component[key].__id__]
+    widget.targetSlots = component.targetSlots.map(ref => objects[ref.__id__])
+    assert.equal(widget.initialize(), true)
+    widget.onEnable();return widget;
+  }
+  const widget=createWidget()
   const target = (value, revision, animate = true) => ({ kind: 'rival', key: String(value), name: '一个超过宽度的很长很长的昵称', value, avatar: { avatarIndex: revision }, revision, animate })
   const a = target(100, 1, false), b = target(200, 2), c = target(300, 3)
   widget.render(a, 100); await flush()
@@ -265,6 +278,58 @@ async function verifyWidget() {
     cc, '../settings/PauseOverlayController': {}, '../settlement/GameOverOverlayController': {},
     './OvertakeTargetWidget': { OvertakeTargetWidget }, '../tutorial/FirstEntryTutorialController': {}, './BoardGeometry': geometry
   })
+  const {PauseOverlayController}=load('assets/script/settings/PauseOverlayController.ts',{cc});
+  const presentation=load('assets/script/settlement/SettlementPresentation.ts',{});
+  const pieceStyles=load('assets/script/gameplay/PieceStyle.ts',{});
+  const {GameOverOverlayController}=load('assets/script/settlement/GameOverOverlayController.ts',{
+    cc,'../profile/PlayerAvatarRenderer':{PlayerAvatarRenderer},'../gameplay/PieceStyle':pieceStyles,'./SettlementPresentation':presentation
+  });
+  // 对齐 CCObject._destruct：销毁回调后对象／函数字段变为 null，布尔和数字保留。
+  function destruct(object) {
+    for(const key of Object.keys(object))if(typeof object[key]==='object'||typeof object[key]==='function')object[key]=null;
+    object.isValid=false;
+  }
+  function destroyScene(rootNode) {
+    const disable=node=>{for(const component of node.components)if(component.onDisable){component.onDisable();component.enabledInHierarchy=false;}for(const child of node.children)disable(child)};
+    const destroy=node=>{
+      for(const child of [...node.children])destroy(child);
+      for(const component of [...node.components]){component.onDestroy?.();destruct(component);}
+      destruct(node);
+    };
+    disable(rootNode);destroy(rootNode);
+  }
+  for(const route of ['settings','settlement'])for(const stage of ['ready','swapping','avatarPending']){
+    const rootNode=new Node(),ui=rootNode.addComponent(PlayUIController),hud=createWidget();
+    hud.node.setParent(rootNode);ui.overtakeWidget=hud;
+    hud.render(a,100);await flush();
+    if(stage==='swapping'){hud.render(b,101);await flush();await advance(70);assert.equal(hud.moving,true);}
+    if(stage==='avatarPending'){delayAvatar=true;hud.render(b,101);assert.equal(hud.preparingKey,b.key);}
+    const avatars=hud.slots.map(slot=>slot.renderer);
+    const overlayNode=new Node();overlayNode.setParent(rootNode);
+    let homes=0;
+    const home=()=>{homes++;destroyScene(rootNode)};
+    if(route==='settings'){
+      const overlay=overlayNode.addComponent(PauseOverlayController);overlay.homeHandler=home;
+      overlay.onHomeButtonTap({});overlay.onHomeButtonTap({});
+      const callbacks=[...overlay.scheduled];overlay.scheduled=[];
+      assert.equal(callbacks.length,1);assert.doesNotThrow(()=>callbacks.forEach(fn=>fn()));
+    }else{
+      const overlay=overlayNode.addComponent(GameOverOverlayController);overlay.options={homeHandler:home};
+      assert.doesNotThrow(()=>overlay.homeTap({}));
+    }
+    assert.equal(homes,1);assert.equal(hud.slots,null);assert.equal(hud.node,null);
+    assert.equal(ui.overtakeWidget,null);assert.ok(avatars.every(avatar=>avatar.disposals===1));
+    assert.doesNotThrow(()=>hud.dispose());
+    for(const request of avatarLoads)request.resolve(true);
+    delayAvatar=false;await advance(1000);
+    assert.equal([...events.values()].flat().length,0);
+  }
+  // 父组件单独移除时仍负责释放存活 HUD；之后 HUD 自身销毁不能再次释放。
+  const owner=new PlayUIController(),owned=createWidget(),ownedAvatars=owned.slots.map(slot=>slot.renderer);
+  owner.overtakeWidget=owned;owner.onDestroy();owned.onDestroy();owned.dispose();
+  assert.ok(ownedAvatars.every(avatar=>avatar.disposals===1));
+  assert.equal([...events.values()].flat().length,0);
+  console.log('返回首页：设置／结算两入口 × 稳定／切换／头像待加载；子组件字段清空后父级销毁、单独移除与重复释放通过（模拟 Cocos 销毁顺序）');
   function layout(columns, rows, height = 1334, contentY = 0, capsule = null) {
     const ui = Object.create(PlayUIController.prototype)
     const content = { width: 750, height: 1334, anchorX: .5, anchorY: .5, convertToNodeSpaceAR: p => new Vec3(p.x, p.y - contentY, 0) }

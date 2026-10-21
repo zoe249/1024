@@ -518,7 +518,8 @@ export class PlayUIController extends Component {
 
   onDestroy() {
     this.overtakeLoadGeneration += 1
-    this.overtakeWidget?.dispose()
+    // 子 HUD 可能已完成 onDestroy 并被引擎清空字段，只清理仍存活的组件。
+    if (this.overtakeWidget?.isValid) this.overtakeWidget.dispose()
     this.overtakeWidget = null
     this.isUiDestroyed = true
     // Cocos 先销毁子节点再调用本组件的 onDestroy，清理只能使用缓存引用，不能重新查找层级。

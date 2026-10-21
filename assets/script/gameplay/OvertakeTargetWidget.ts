@@ -23,6 +23,7 @@ export class OvertakeTargetWidget extends Component {
   private generation = 0
   private preparingKey = ''
   private moving = false
+  private disposed = false
   private entryStarted = false
   private exitFinished = false
   private suspended = false
@@ -99,6 +100,9 @@ export class OvertakeTargetWidget extends Component {
   onDestroy() { this.dispose() }
 
   dispose() {
+    // 父组件移除与本组件销毁都可能触发释放，头像和动画只能清理一次。
+    if (this.disposed || !this.isValid) return
+    this.disposed = true
     this.onDisable()
     for (const slot of this.slots) slot.renderer.dispose()
     this.slots = []
