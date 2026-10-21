@@ -7,9 +7,17 @@ const ts = require(process.argv[2] || 'typescript')
 const root = path.resolve(__dirname, '..')
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b }); return { promise, resolve, reject } }
-function load(file, dependencies, globals = {}) {
+function load(file, dependencies, globals = {}, cocosSpread = false) {
   const source = fs.readFileSync(path.join(root, file), 'utf8')
-  const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2018, experimentalDecorators: true } }).outputText
+  let output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2018, experimentalDecorators: true } }).outputText
+  if (cocosSpread) {
+    // Creator 的数组展开按 loose 模式编译，不能用 Node 原生迭代器行为代替。
+    const typescriptRoot = path.dirname(require.resolve(`${process.argv[2] || 'typescript'}/package.json`))
+    const engineModules = path.resolve(typescriptRoot, '../../../resources/3d/engine/node_modules')
+    const babel = require(path.join(engineModules, '@babel/core'))
+    output = babel.transformSync(output, { babelrc: false, configFile: false,
+      plugins: [[require(path.join(engineModules, '@babel/plugin-transform-spread')), { loose: true }]] }).code
+  }
   const module = { exports: {} }
   vm.runInNewContext(output, { module, exports: module.exports, require: name => {
     assert.ok(name in dependencies, `未提供依赖 ${name}`)
@@ -20,7 +28,7 @@ function load(file, dependencies, globals = {}) {
 class ApiError extends Error { constructor(statusCode) { super('api'); this.statusCode = statusCode } }
 const entry = (value, name = '目标', self = false) => ({ value, displayName: name, rank: 3, isSelf: self, avatarIndex: 0, avatarType: 'builtin', wechatAvatarUrl: '' })
 const response = (values, best = 100) => ({ self: entry(best, '自己', true), entries: values.map(value => entry(value)), isTop: values.length === 0 })
-function rivalHarness(best = 100, authenticated = true) {
+function rivalHarness(best = 100, authenticated = true, cocosSpread = false) {
   let now = 10000, serial = 0
   const timers = new Map(), requests = []
   const state = { playerId: authenticated ? 'p1' : null, status: authenticated ? 'authenticated' : 'guest' }
@@ -31,7 +39,7 @@ function rivalHarness(best = 100, authenticated = true) {
   const { OvertakeRivalStore } = load('assets/script/online/leaderboard/OvertakeRivalStore.ts', {
     '../api/GameApiClient': { ApiError }, '../auth/PlayerSessionStore': { PlayerSessionStore: { getInstance: () => session } },
     '../../profile/PlayerProfileStore': { PlayerProfileStore: { getInstance: () => profile } }
-  }, { Date: Clock, setTimeout: (fn, delay) => { const id = ++serial; timers.set(id, { fn, at: now + delay }); return id }, clearTimeout: id => timers.delete(id) })
+  }, { Date: Clock, setTimeout: (fn, delay) => { const id = ++serial; timers.set(id, { fn, at: now + delay }); return id }, clearTimeout: id => timers.delete(id) }, cocosSpread)
   const store = new OvertakeRivalStore()
   return { store, requests, state, timers, profile, async begin(score = 0) { store.begin(score, () => {}); await flush() }, async advance(ms) {
     now += ms
@@ -40,12 +48,27 @@ function rivalHarness(best = 100, authenticated = true) {
   } }
 }
 
-async function verifyRivals() {
+async function verifyRivals(cocosSpread = false) {
+  const harness = (best = 100, authenticated = true) => rivalHarness(best, authenticated, cocosSpread)
   for (const [best, auth] of [[0, true], [100, false]]) {
-    const h = rivalHarness(best, auth); await h.begin(); h.store.updateScore(10000)
+    const h = harness(best, auth); await h.begin(); h.store.updateScore(10000)
     assert.equal(h.requests.length, 0); assert.equal(h.store.resolveOvertake(10000), null); h.store.end()
   }
-  const h = rivalHarness(); await h.begin()
+  const seeded = harness(13288); await seeded.begin()
+  seeded.requests[0].resolve(response([13600, 14000, 14800, 16000, 18000], 13288)); await flush()
+  assert.equal(seeded.store.resolveOvertake(0).kind, 'self')
+  seeded.store.updateScore(14166)
+  assert.equal(seeded.store.resolveOvertake(14166).value, 14800, '14166 分应跳过已超越者，显示 14800 分目标')
+  assert.equal(seeded.store.resolveOvertake(14166).kind, 'rival')
+  await seeded.advance(6000); assert.equal(seeded.requests.length, 1)
+  seeded.store.updateScore(14800); assert.equal(seeded.store.resolveOvertake(14800).value, 14800)
+  seeded.store.updateScore(14801); assert.equal(seeded.store.resolveOvertake(14801).value, 16000)
+  seeded.store.updateScore(18001); assert.equal(seeded.requests.length, 2)
+  seeded.requests[1].resolve(response([20000, 24000], 13288)); await flush()
+  assert.equal(seeded.store.resolveOvertake(18001).value, 20000)
+  assert.equal(seeded.store.entries.length, 7); seeded.store.end()
+
+  const h = harness(); await h.begin()
   h.requests[0].resolve(response([200, 300])); await flush()
   assert.equal(h.store.resolveOvertake(0).kind, 'self')
   h.store.updateScore(100); assert.equal(h.store.resolveOvertake(100).kind, 'self')
@@ -59,14 +82,14 @@ async function verifyRivals() {
   h.requests[1].resolve(response([])); await flush()
   assert.equal(h.store.resolveOvertake(400).kind, 'top'); h.store.end()
 
-  const exact = rivalHarness(); await exact.begin(0); exact.requests[0].resolve(response([200])); await flush()
+  const exact = harness(); await exact.begin(0); exact.requests[0].resolve(response([200])); await flush()
   exact.store.updateScore(300); await exact.advance(1500)
   assert.equal(exact.requests[1].args[1], 299)
   exact.requests[1].resolve(response([300, 400])); await flush()
   assert.equal(exact.store.resolveOvertake(300).value, 300)
   exact.store.end()
 
-  const late = rivalHarness(); await late.begin(500)
+  const late = harness(); await late.begin(500)
   late.requests[0].resolve(response([600])); await flush()
   assert.equal(late.store.resolveOvertake(500).value, 600); assert.equal(late.store.resolveOvertake(500).animate, false)
   await late.begin(0); assert.equal(late.requests.length, 1)
@@ -76,27 +99,27 @@ async function verifyRivals() {
   await late.begin(300); assert.equal(late.store.resolveOvertake(300).value, 600); assert.equal(late.requests.length, 1)
   late.store.end()
 
-  const stale = rivalHarness(); await stale.begin(); stale.store.end()
+  const stale = harness(); await stale.begin(); stale.store.end()
   stale.requests[0].resolve(response([200])); await flush(); assert.equal(stale.store.resolveOvertake(0), null)
-  const failures = rivalHarness(); await failures.begin()
+  const failures = harness(); await failures.begin()
   for (let i = 0; i < 3; i++) { failures.requests[i].reject(new Error('offline')); await flush(); await failures.advance(6000) }
   assert.equal(failures.requests.length, 3); assert.equal(failures.timers.size, 0); failures.store.end()
-  const missing = rivalHarness(); await missing.begin(); missing.requests[0].reject(new ApiError(404)); await flush(); await missing.advance(20000)
+  const missing = harness(); await missing.begin(); missing.requests[0].reject(new ApiError(404)); await flush(); await missing.advance(20000)
   assert.equal(missing.requests.length, 1); assert.equal(missing.store.resolveOvertake(0), null); missing.store.end()
-  const unauthorized = rivalHarness(); await unauthorized.begin(); unauthorized.requests[0].resolve(response([200])); await flush()
+  const unauthorized = harness(); await unauthorized.begin(); unauthorized.requests[0].resolve(response([200])); await flush()
   unauthorized.store.updateScore(300); await unauthorized.advance(1500); unauthorized.state.status = 'reauth-required'
   unauthorized.requests[1].reject(new ApiError(401)); await flush(); assert.equal(unauthorized.store.resolveOvertake(300), null); unauthorized.store.end()
-  const cap = rivalHarness(); await cap.begin()
+  const cap = harness(); await cap.begin()
   for (let i = 0; i < 6; i++) { cap.requests[i].resolve(response([200 + i * 100])); await flush(); cap.store.updateScore(201 + i * 100); await cap.advance(1500) }
   assert.equal(cap.requests.length, 6); cap.store.end()
-  const high = rivalHarness(); await high.begin()
+  const high = harness(); await high.begin()
   high.requests[0].resolve(response([1000000000, 10000000, 580000, 2000000])); await flush()
   for (const [score, expected] of [[101, 580000], [580000, 580000], [580001, 2000000], [10000000, 10000000], [10000001, 1000000000], [1000000000, 1000000000]]) {
     high.store.updateScore(score)
     assert.equal(high.store.resolveOvertake(score).value, expected)
   }
   assert.equal(high.requests.length, 1); high.store.end()
-  console.log('目标数据：同分、连超、同分补页、续局、缓存、过期响应、重试、404 和单局限额通过')
+  console.log(`目标数据（${cocosSpread ? 'Creator loose 展开编译' : 'Node 原生迭代'}）：14166→14800、同分、连超、补页、续局、缓存、过期响应、重试、404 和单局限额通过`)
 }
 
 async function verifySettlementSync() {
@@ -360,4 +383,4 @@ async function verifyWidget() {
   console.log('新版结算独立检查：node tools/verify-settlement.cjs <Creator TypeScript 路径>')
 }
 
-Promise.resolve().then(verifyRivals).then(verifySettlementSync).then(verifyWidget).catch(error => { console.error(error); process.exitCode = 1 })
+Promise.resolve().then(() => verifyRivals()).then(() => verifyRivals(true)).then(verifySettlementSync).then(verifyWidget).catch(error => { console.error(error); process.exitCode = 1 })

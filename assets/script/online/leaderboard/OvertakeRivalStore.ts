@@ -149,7 +149,8 @@ export class OvertakeRivalStore {
     this.self = { ...data.self, value: this.selfBest }
     const entries = new Map(this.entries.map(entry => [`${entry.value}:${entry.displayName}`, entry]))
     for (const entry of data.entries) if (!entry.isSelf) entries.set(`${entry.value}:${entry.displayName}`, entry)
-    this.entries = [...entries.values()].sort((a, b) => a.value - b.value || (a.rank ?? 0) - (b.rank ?? 0))
+    // Creator 的 loose 展开会把 Map 迭代器当成单个数组元素，必须显式转成数组。
+    this.entries = Array.from(entries.values()).sort((a, b) => a.value - b.value || (a.rank ?? 0) - (b.rank ?? 0))
     this.exhausted = data.isTop
     this.ready = true
     this.reconcile(animate)
