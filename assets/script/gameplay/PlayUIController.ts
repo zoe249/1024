@@ -201,14 +201,8 @@ const HUD_MODE_Y = 615
 const HUD_OBJECTIVE_WIDTH = 210
 const HUD_OBJECTIVE_HEIGHT = 90
 const HUD_OBJECTIVE_Y = 507
-const HUD_SCORE_WIDTH = 174
-const HUD_SCORE_HEIGHT = 50
-const HUD_SCORE_X = 268
-const HUD_SCORE_Y = 415
 const HUD_NEXT_X = -297
 const HUD_NEXT_Y = 400
-const HUD_SCORE_BG_COLOR = new Color(255, 250, 230, 238)
-const HUD_SCORE_BORDER_COLOR = new Color(91, 61, 35, 235)
 const HUD_SCORE_TEXT_COLOR = new Color(81, 55, 37, 255)
 const HUD_CARD_BG_COLOR = new Color(255, 250, 234, 246)
 const HUD_CARD_BORDER_COLOR = new Color(75, 53, 40, 255)
@@ -326,15 +320,9 @@ export class PlayUIController extends Component {
   private pauseButtonLabel: Label | null = null
   private pauseButtonNode: Node | null = null
   private settingsButtonNode: Node | null = null
-  // 分数数值文本直接复用 scene 里的 Score/Number 节点，UI 层只负责刷新显示。
-  private scoreNumberLabel: Label | null = null
   private objectiveProgressLabel: Label | null = null
   private nextValueLabel: Label | null = null
   private nextValueTile: Graphics | null = null
-  // 当前已经显示到界面的分数，数字滚动动画会从这个值补间到目标值。
-  private displayedScore = 0
-  // Tween 直接驱动这个简单对象，避免去改节点缩放或位置。
-  private readonly scoreTweenState = { value: 0 }
   // 暂停弹窗相关逻辑全部拆到独立组件，这里只保留组件引用和调用入口。
   private pauseOverlayController: PauseOverlayController | null = null
   // 游戏结束弹窗同样交给独立组件，UI 主控只负责转交状态和按钮回调。
@@ -420,7 +408,7 @@ export class PlayUIController extends Component {
     this.ensureGamePageLayout()
     this.hideCoinBar()
     this.ensureBoardDecorations()
-    this.ensureScoreDisplay()
+    this.ensureHudDisplay()
     this.ensureOvertakeWidget()
     this.ensureSkillButtons()
     this.ensureFeedbackLayer()
@@ -460,7 +448,6 @@ export class PlayUIController extends Component {
   renderState(state: PlayUIState) {
     this.currentState = state
     if (this.overtakeWidget) this.overtakeWidget.render(state.overtake, state.score, state.isPaused || state.isGameOver)
-    else this.refreshScoreDisplay()
     this.refreshObjectiveDisplay()
     this.refreshNextPieceDisplay()
     this.refreshSkillButtonState()
@@ -529,7 +516,6 @@ export class PlayUIController extends Component {
     this.safeOff(this.hammerSkillNode, Node.EventType.TOUCH_END, this.onHammerSkillButtonTap)
     this.safeOff(this.swapSkillNode, Node.EventType.TOUCH_END, this.onSwapSkillButtonTap)
     this.unbindCoinBar()
-    Tween.stopAllByTarget(this.scoreTweenState)
     if (this.canUseNode(this.skillHintNode)) {
       Tween.stopAllByTarget(this.skillHintNode)
     }
@@ -571,7 +557,6 @@ export class PlayUIController extends Component {
     this.rewardedAdIconTexture = null
     this.pauseButtonNode = null
     this.settingsButtonNode = null
-    this.scoreNumberLabel = null
     this.objectiveProgressLabel = null
     this.nextValueLabel = null
     this.nextValueTile = null
@@ -1129,7 +1114,7 @@ export class PlayUIController extends Component {
     })
   }
 
-  // 新 HUD 首轮渲染成功后才关闭旧分数，资源缺失时沿用场景中的回退节点。
+  // 当前分数统一由新版 HUD 显示，不再回退到旧分数条。
   private ensureOvertakeWidget() {
     const generation = ++this.overtakeLoadGeneration
     resources.load('Gameplay/ScoreTargetHUD', Prefab, (error, prefab) => {
@@ -1143,9 +1128,6 @@ export class PlayUIController extends Component {
       widget.render(this.currentState.overtake, this.currentState.score, this.currentState.isPaused || this.currentState.isGameOver)
       this.overtakeWidget = widget
       this.layoutOvertakeWidget()
-      Tween.stopAllByTarget(this.scoreTweenState)
-      const oldScore = content.getChildByName('Score')
-      if (oldScore) oldScore.active = false
     })
   }
 
@@ -1188,8 +1170,8 @@ export class PlayUIController extends Component {
     hud.setTargetFits(fits)
   }
 
-  // 顶部 HUD 复用 scene 中的固定节点，脚本只统一视觉、触摸热区和动态分数。
-  private ensureScoreDisplay() {
+  // 保留设置与下一枚入口，旧分数节点仅保留层级兼容，不再绘制或刷新。
+  private ensureHudDisplay() {
     const statusContent = this.node.getChildByName('Status')?.getChildByName('Content')
     if (!statusContent) {
       return
@@ -1197,66 +1179,12 @@ export class PlayUIController extends Component {
     this.ensureSettingsButtonVisual(statusContent?.getChildByName('SettingsBtn') ?? null)
     this.hideUnsupportedProgressCards(statusContent)
     this.ensureNextPieceCard(statusContent)
-    const scoreNode =
-      statusContent?.getChildByName('Score') ??
-      statusContent?.getChildByName('Source') ??
-      this.node.getChildByName('Score') ??
-      this.node.getChildByName('Source')
-    if (!scoreNode) {
-      return
-    }
-
-    scoreNode.setPosition(HUD_SCORE_X, HUD_SCORE_Y, 0)
-    const scoreTransform = scoreNode.getComponent(UITransform) ?? scoreNode.addComponent(UITransform)
-    scoreTransform.setContentSize(HUD_SCORE_WIDTH, HUD_SCORE_HEIGHT)
-    this.drawScoreCard(scoreNode)
-
-    const titleNode = scoreNode.getChildByName('Label')
-    const titleLabel = titleNode?.getComponent(Label) ?? null
-    if (titleNode && titleLabel) {
-      titleNode.setPosition(-26, 0, 0)
-      const titleTransform = titleNode.getComponent(UITransform) ?? titleNode.addComponent(UITransform)
-      titleTransform.setContentSize(58, 36)
-      titleTransform.setAnchorPoint(0.5, 0.5)
-      titleLabel.string = '分数'
-      titleLabel.fontSize = 20
-      titleLabel.lineHeight = 24
-      titleLabel.color = HUD_SCORE_TEXT_COLOR
-      titleLabel.horizontalAlign = Label.HorizontalAlign.CENTER
-      titleLabel.verticalAlign = Label.VerticalAlign.CENTER
-      titleLabel.isBold = true
-      titleLabel.enableOutline = false
-      titleLabel.enableShadow = false
-      const titleOutline = titleNode.getComponent(LabelOutline)
-      if (titleOutline) {
-        titleOutline.enabled = false
+    for (const parent of [statusContent, this.node]) {
+      for (const name of ['Score', 'Source']) {
+        const scoreNode = parent.getChildByName(name)
+        if (scoreNode) scoreNode.active = false
       }
     }
-
-    this.ensureScoreStar(scoreNode)
-
-    const numberNode = scoreNode.getChildByName('Number')
-    this.scoreNumberLabel = numberNode?.getComponent(Label) ?? null
-    if (numberNode && this.scoreNumberLabel) {
-      numberNode.setPosition(42, 0, 0)
-      const numberTransform = numberNode.getComponent(UITransform) ?? numberNode.addComponent(UITransform)
-      numberTransform.setContentSize(88, 40)
-      numberTransform.setAnchorPoint(0.5, 0.5)
-      this.scoreNumberLabel.fontSize = 25
-      this.scoreNumberLabel.lineHeight = 30
-      this.scoreNumberLabel.color = HUD_SCORE_TEXT_COLOR
-      this.scoreNumberLabel.horizontalAlign = Label.HorizontalAlign.CENTER
-      this.scoreNumberLabel.verticalAlign = Label.VerticalAlign.CENTER
-      this.scoreNumberLabel.isBold = true
-      this.scoreNumberLabel.enableOutline = false
-      this.scoreNumberLabel.enableShadow = false
-      const numberOutline = numberNode.getComponent(LabelOutline)
-      if (numberOutline) {
-        numberOutline.enabled = false
-      }
-    }
-    this.displayedScore = this.currentState.score
-    this.scoreTweenState.value = this.currentState.score
   }
 
   // 当前为无关卡目标的经典合成模式，不展示“第几关”和冰封进度占位卡。
@@ -1268,34 +1196,6 @@ export class PlayUIController extends Component {
       }
     }
     this.objectiveProgressLabel = null
-  }
-
-  /** 分数星标独立绘制，避免星星和文字共用一种颜色。 */
-  private ensureScoreStar(scoreNode: Node) {
-    const starNode = this.ensureHudNode(scoreNode, 'Star', -66, 0, 28, 28)
-    const star = starNode.getComponent(Graphics) ?? starNode.addComponent(Graphics)
-    star.clear()
-    star.fillColor = HUD_CARD_BORDER_COLOR
-    this.traceStar(star, 0, 0, 14, 7)
-    star.fill()
-    star.fillColor = new Color(255, 193, 48, 255)
-    this.traceStar(star, 0, 0, 10.5, 5.2)
-    star.fill()
-  }
-
-  private traceStar(graphics: Graphics, x: number, y: number, outerRadius: number, innerRadius: number) {
-    for (let index = 0; index < 10; index += 1) {
-      const radius = index % 2 === 0 ? outerRadius : innerRadius
-      const angle = -Math.PI / 2 + index * Math.PI / 5
-      const pointX = x + Math.cos(angle) * radius
-      const pointY = y + Math.sin(angle) * radius
-      if (index === 0) {
-        graphics.moveTo(pointX, pointY)
-      } else {
-        graphics.lineTo(pointX, pointY)
-      }
-    }
-    graphics.close()
   }
 
   private ensureModeCard(parent: Node) {
@@ -1488,59 +1388,6 @@ export class PlayUIController extends Component {
         iconSprite.node.getComponent(UITransform)?.setContentSize(HUD_SETTINGS_ICON_SIZE, HUD_SETTINGS_ICON_SIZE)
       }
     })
-  }
-
-  // 分数卡用轻量 Graphics 绘制，避免为一个可伸缩小面板增加新的大图。
-  private drawScoreCard(scoreNode: Node) {
-    const graphics = scoreNode.getComponent(Graphics) ?? scoreNode.addComponent(Graphics)
-    graphics.clear()
-    graphics.fillColor = HUD_SCORE_BORDER_COLOR
-    graphics.roundRect(-HUD_SCORE_WIDTH * 0.5, -HUD_SCORE_HEIGHT * 0.5, HUD_SCORE_WIDTH, HUD_SCORE_HEIGHT, 18)
-    graphics.fill()
-    graphics.fillColor = HUD_SCORE_BG_COLOR
-    graphics.roundRect(
-      -HUD_SCORE_WIDTH * 0.5 + 3,
-      -HUD_SCORE_HEIGHT * 0.5 + 3,
-      HUD_SCORE_WIDTH - 6,
-      HUD_SCORE_HEIGHT - 6,
-      15
-    )
-    graphics.fill()
-  }
-
-  // 分数字样改成“数字递增”动画；加分时逐步滚到目标值，减分或清零时直接同步。
-  private refreshScoreDisplay() {
-    if (!this.scoreNumberLabel) {
-      return
-    }
-
-    const nextScore = Math.max(0, Math.floor(this.currentState.score))
-    const currentScore = Math.max(0, Math.floor(this.displayedScore))
-    Tween.stopAllByTarget(this.scoreTweenState)
-
-    if (nextScore <= currentScore) {
-      // 重开或回退时直接落到目标值，避免分数向下滚动造成误解。
-      this.displayedScore = nextScore
-      this.scoreTweenState.value = nextScore
-      this.scoreNumberLabel.string = `${nextScore}`
-      return
-    }
-
-    // 差值越大动画稍微长一点，但整体仍然控制在很短的 UI 反馈范围内。
-    const duration = Math.min(0.36, Math.max(0.08, (nextScore - currentScore) / 900))
-    this.scoreTweenState.value = currentScore
-    tween(this.scoreTweenState)
-      .to(duration, { value: nextScore }, {
-        easing: 'quadOut',
-        onUpdate: target => {
-          const value = Math.min(nextScore, Math.round(target.value))
-          this.displayedScore = value
-          if (this.scoreNumberLabel) {
-            this.scoreNumberLabel.string = `${value}`
-          }
-        }
-      })
-      .start()
   }
 
   private refreshObjectiveDisplay() {
@@ -2457,7 +2304,7 @@ export class PlayUIController extends Component {
 
     const count = this.currentState.skillCounts[skill] > 0 ? 1 : 0
     const isLoading = this.currentState.skillAdLoading === skill
-    const showsAd = this.currentState.skillAdAvailable[skill] && !isLoading
+    const showsAd = count === 0 && this.currentState.skillAdAvailable[skill] && !isLoading
     const customBadge = skillNode.getChildByName('CountBadge')
     const customBadgeLabel = customBadge?.getChildByName('Value')?.getComponent(Label) ?? null
     if (customBadge) {

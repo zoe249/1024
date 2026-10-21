@@ -268,7 +268,7 @@ export class PlayController extends Component {
   private readonly rewardedAdAdapter = new GameRewardedAdAdapter()
   // 本局结束时发放的金币数，只用于结算弹窗展示，重开或回首页后清零。
   private gameOverCoinReward = 0
-  // 首次成功使用消耗库存；广告奖励的第二次使用只在本局内扣除。
+  // 每局库存最多使用一次，广告另赠一次本局使用机会，不要求先有库存。
   private usedSkillsThisGame: Record<SkillKind, boolean> = this.createEmptySkillUsageState()
   private skillAdRewards: Record<SkillKind, SkillAdRewardState> = this.createEmptySkillAdRewards()
   // 独立于暂停弹窗冻结玩法，避免点击广告时弹出设置界面。
@@ -860,7 +860,7 @@ export class PlayController extends Component {
     }
     for (const skill of ['bomb', 'hammer', 'swap'] as const) {
       const reward = snapshot.skillAdRewards?.[skill]
-      this.skillAdRewards[skill] = this.usedSkillsThisGame[skill] && (reward === 'ready' || reward === 'used')
+      this.skillAdRewards[skill] = reward === 'ready' || reward === 'used'
         ? reward
         : 'unclaimed'
     }
@@ -2827,26 +2827,23 @@ export class PlayController extends Component {
   }
 
   private getSkillRemainingCount(skill: SkillKind) {
-    if (!this.usedSkillsThisGame[skill]) {
-      return this.economy.hasSkill(skill) ? 1 : 0
+    if (this.skillAdRewards[skill] === 'ready') {
+      return 1
     }
-    return this.skillAdRewards[skill] === 'ready' ? 1 : 0
+    return !this.usedSkillsThisGame[skill] && this.economy.hasSkill(skill) ? 1 : 0
   }
 
   private isSkillAdAvailable(skill: SkillKind) {
-    return this.usedSkillsThisGame[skill] && this.skillAdRewards[skill] === 'unclaimed'
+    return this.skillAdRewards[skill] === 'unclaimed'
   }
 
   /** 只在有效施放时扣除对应次数，取消选中或交换回弹均不会消耗广告奖励。 */
   private consumeSkillUse(skill: SkillKind) {
-    if (this.usedSkillsThisGame[skill]) {
-      if (this.skillAdRewards[skill] !== 'ready') {
-        return false
-      }
+    if (this.skillAdRewards[skill] === 'ready') {
       this.skillAdRewards[skill] = 'used'
       return true
     }
-    if (!this.economy.consumeSkill(skill)) {
+    if (this.usedSkillsThisGame[skill] || !this.economy.consumeSkill(skill)) {
       return false
     }
     this.usedSkillsThisGame[skill] = true
@@ -2872,7 +2869,7 @@ export class PlayController extends Component {
       console.warn('[技能广告] 请求失败', error)
     }
     // 切场景、重开或销毁后的旧回调不能把奖励带入下一局。
-    if (!this.node.isValid || !this.hasStartedSession || requestVersion !== this.skillAdRequestVersion) {
+    if (!this.isValid || !this.node?.isValid || !this.hasStartedSession || requestVersion !== this.skillAdRequestVersion) {
       return
     }
     if (result === 'completed' && this.isSkillAdAvailable(skill)) {
