@@ -119,6 +119,7 @@ const HomepageArtwork = {
   shop: 'feature-shop',
   logo: 'logo-1024-number-garden',
   coin: 'resource-coin',
+  avatarFrame: 'avatar-frame',
   settings: 'ui-settings'
 } as const
 
@@ -726,15 +727,8 @@ export class StartPageController extends Component {
     const button = this.getOrCreatePageNode(parent, 'ProfileButton')
     button.active = true
     ;(button.getComponent(UITransform) ?? button.addComponent(UITransform)).setContentSize(82, 82)
-    const frame = button.getComponent(Graphics) ?? button.addComponent(Graphics)
-    frame.clear()
-    frame.fillColor = new Color(255, 247, 218, 255)
-    frame.circle(0, 0, 40)
-    frame.fill()
-    frame.lineWidth = 4
-    frame.strokeColor = new Color(229, 91, 31, 255)
-    frame.circle(0, 0, 38)
-    frame.stroke()
+    const oldFrame = button.getComponent(Graphics)
+    if (oldFrame) { oldFrame.clear(); oldFrame.enabled = false }
 
     const avatar = this.getOrCreatePageNode(button, 'Avatar')
     avatar.setPosition(0, 0, 0)
@@ -744,6 +738,10 @@ export class StartPageController extends Component {
     this.profileAvatarSprite.sizeMode = Sprite.SizeMode.CUSTOM
     this.profileAvatarSprite.trim = false
     this.renderProfileAvatar(this.currentAvatar)
+    const frame = this.getOrCreatePageNode(button, 'Frame')
+    // PNG 主体为 224/256，保持原 80 直径；内沿盖住头像 Mask 的硬边。
+    this.applyHomepageArtwork(frame, HomepageArtwork.avatarFrame, 80 * 256 / 224, 80 * 256 / 224)
+    frame.setSiblingIndex(button.children.length - 1)
     return button
   }
 
