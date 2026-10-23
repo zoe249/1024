@@ -1,6 +1,9 @@
+import { GameAppearance } from './GameAppearance'
+import type { AppearanceLease } from '../appearance/AppearanceRuntime'
+import { PlayHudView } from './PlayHudView'
+import { SkillBarView } from './SkillBarView'
 ﻿import {
   _decorator,
-  assetManager,
   Button,
   Color,
   Component,
@@ -137,16 +140,6 @@ const BOARD_BORDER_WIDTH = 8
 const STATIC_BOARD_COLUMN_COUNT = 5
 // 棋盘内层圆角与棋子圆角保持一致，保证视觉统一。
 const BOARD_INNER_RADIUS = 14
-// 棋盘外层玻璃阴影色，用很低透明度替代原来的实色边框。
-const BOARD_GLASS_SHADOW_COLOR = new Color(75, 55, 32, 18)
-// 棋盘主体玻璃蒙版色改成浅青蓝灰，保持冷色调但不过度压暗。
-const BOARD_GLASS_TINT_COLOR = new Color(255, 248, 220, 8)
-// 棋盘内区玻璃底色只做浅冷雾化，避免变成厚重实色背景。
-const BOARD_GLASS_INNER_COLOR = new Color(255, 248, 220, 0)
-// 棋盘列的轻量蒙版色，用交替透明块让五列仍然可识别。
-const BOARD_COLUMN_TINT_COLOR = new Color(255, 255, 255, 0)
-// 棋盘列边缘柔光色，让虚线和玻璃面板看起来是一体的。
-const BOARD_COLUMN_EDGE_COLOR = new Color(255, 255, 255, 0)
 // 外层圆角由内层圆角叠加边框厚度得到，确保边框厚度视觉一致。
 const BOARD_OUTER_RADIUS = BOARD_INNER_RADIUS + BOARD_BORDER_WIDTH
 // 列分隔虚线宽度。
@@ -159,8 +152,6 @@ const BOARD_DASH_GAP = 12
 const BOARD_DASH_INSET = 16
 // 虚线圆角半径，让列分隔更柔和。
 const BOARD_DASH_RADIUS = 2
-// 虚线颜色改成浅冷柔光，配合新的玻璃蒙版而不是原来的实色样式。
-const BOARD_DASH_COLOR = new Color(255, 255, 255, 0)
 // 首页和游戏资源条统一缩放，游戏内再根据设置按钮位置单独布局。
 const PLAYER_AMOUNT_BAR_SCALE = 0.36
 const PLAYER_AMOUNT_BAR_SOURCE_HEIGHT = 155
@@ -173,14 +164,7 @@ const HUD_TOP_SAFE_AREA_GAP = 12
 // 游戏页以 750×1334 为设计基准，运行时只对安全区做整体补偿。
 const GAME_DESIGN_WIDTH = 750
 const GAME_DESIGN_HEIGHT = 1334
-const GAME_BACKGROUND_SPRITE_FRAME_UUID = '5ad49fb5-9e08-4dc5-9ee9-1451320c9378@f9941'
-// 游戏页与首页共用同一枚设置图标，避免两个界面出现不同的齿轮样式。
-const GAME_SETTINGS_SPRITE_FRAME_UUID = '84a1f2b0-6d31-4e77-9c42-2b80d1f5100d@f9941'
-const SKILL_ICON_SPRITE_FRAME_UUIDS: Record<PlaySkillKind, string> = {
-  bomb: 'c2bd34f2-a783-4855-8af8-fa07fe942dc1@f9941',
-  hammer: 'a7c0480a-a4dd-46dc-ab94-4c0df29d1bd8@f9941',
-  swap: '32927f70-f651-471d-b8a1-7c2bbe5ddc17@f9941'
-}
+
 const GAME_BOARD_Y = -60
 const GAME_SKILLS_Y = -568
 const GAME_SKILLS_WIDTH = 520
@@ -210,8 +194,6 @@ const HUD_ACCENT_GREEN = new Color(101, 190, 54, 255)
 const HUD_ACCENT_BLUE = new Color(74, 183, 205, 255)
 // 技能状态层只做轻量描边和标签，不创建独立材质。
 const SKILL_SELECTION_COLOR = new Color(255, 242, 142, 245)
-const SKILL_DISABLED_OPACITY = 118
-const SKILL_EMPTY_OPACITY = 178
 const SKILL_CARD_BORDER_COLOR = new Color(75, 53, 40, 255)
 const SKILL_CARD_INNER_COLORS: Record<PlaySkillKind, Color> = {
   bomb: new Color(131, 82, 185, 255),
@@ -235,18 +217,13 @@ const SKILL_ICON_LAYOUTS: Record<PlaySkillKind, { width: number; height: number;
   swap: { width: 78, height: 78, y: 0 }
 }
 
-const HUD_PIECE_COLORS: Record<number, Color> = {
-  2: new Color(248, 236, 220, 255),
-  4: new Color(247, 165, 54, 255),
-  8: new Color(255, 194, 46, 255),
-  16: new Color(155, 200, 73, 255),
-  32: new Color(80, 174, 97, 255),
-  64: new Color(53, 161, 165, 255),
-  128: new Color(63, 136, 199, 255)
-}
+
 
 @ccclass('PlayUIController')
 export class PlayUIController extends Component {
+  private gameAppearance: GameAppearance | null = null
+
+  private getGameAppearance() { return this.gameAppearance ??= new GameAppearance() }
   // 当前棋盘列数，供棋盘绘制和列节点对齐使用。
   private boardwidth = 5
   // 当前棋盘行数，虽然 UI 不直接参与结算，但用于保持绘制配置完整。
@@ -323,6 +300,7 @@ export class PlayUIController extends Component {
   private objectiveProgressLabel: Label | null = null
   private nextValueLabel: Label | null = null
   private nextValueTile: Graphics | null = null
+  private nextPieceBody: Sprite | null = null
   // 暂停弹窗相关逻辑全部拆到独立组件，这里只保留组件引用和调用入口。
   private pauseOverlayController: PauseOverlayController | null = null
   // 游戏结束弹窗同样交给独立组件，UI 主控只负责转交状态和按钮回调。
@@ -375,11 +353,14 @@ export class PlayUIController extends Component {
 
   // 由逻辑层在启动时调用，把布局、动作和表现资源分别交给 UI 层管理。
   setup(options: {
+    appearance?: AppearanceLease
     layout: PlayUILayout
     actions: PlayUIActions
     resources?: PlayUIResources
   }) {
     const { layout, actions, resources = {} } = options
+    const previousAppearance = this.gameAppearance
+    this.gameAppearance = new GameAppearance(options.appearance?.retain())
     this.boardwidth = layout.boardwidth
     this.boardheight = layout.boardheight
     this.pieceSize = layout.pieceSize
@@ -429,6 +410,7 @@ export class PlayUIController extends Component {
     this.layoutOvertakeWidget()
     this.updateSkillHintLayout()
     this.renderState(this.currentState)
+    previousAppearance?.dispose()
   }
 
   // 某些平台启动后一帧安全区才稳定，因此开放一个额外布局入口给逻辑层补收。
@@ -504,6 +486,13 @@ export class PlayUIController extends Component {
   }
 
   onDestroy() {
+    if (this.nextPieceBody?.isValid && this.nextPieceBody.node?.isValid) {
+      this.nextPieceBody.spriteFrame = null
+      this.nextPieceBody.node.active = false
+    }
+    this.nextPieceBody = null
+    this.gameAppearance?.dispose()
+    this.gameAppearance = null
     this.overtakeLoadGeneration += 1
     // 子 HUD 可能已完成 onDestroy 并被引擎清空字段，只清理仍存活的组件。
     if (this.overtakeWidget?.isValid) this.overtakeWidget.dispose()
@@ -634,11 +623,7 @@ export class PlayUIController extends Component {
 
     sprite.enabled = true
     sprite.sizeMode = Sprite.SizeMode.CUSTOM
-    assetManager.loadAny(GAME_BACKGROUND_SPRITE_FRAME_UUID, (error, asset) => {
-      if (error || !this.node.isValid || !(asset instanceof SpriteFrame)) {
-        return
-      }
-      sprite.spriteFrame = asset
+    this.getGameAppearance().bindSprite(this.getGameAppearance().lease.appearance.game.background, sprite, () => {
       sprite.enabled = true
       sprite.sizeMode = Sprite.SizeMode.CUSTOM
       sprite.type = Sprite.Type.SIMPLE
@@ -769,7 +754,7 @@ export class PlayUIController extends Component {
     frameGraphics.enabled = true
     frameGraphics.clear()
     // 外层先铺一层低透明阴影，视觉上保留边界但不再使用厚重实色边框。
-    frameGraphics.fillColor = BOARD_GLASS_SHADOW_COLOR
+    frameGraphics.fillColor = this.getGameAppearance().boardColor('shadow')
     frameGraphics.roundRect(
       -innerWidth / 2 - BOARD_BORDER_WIDTH,
       -innerHeight / 2 - BOARD_BORDER_WIDTH,
@@ -780,7 +765,7 @@ export class PlayUIController extends Component {
     frameGraphics.fill()
 
     // 主体玻璃层略小于阴影层，避免外缘太硬，同时覆盖原来的黄色纯色样式。
-    frameGraphics.fillColor = BOARD_GLASS_TINT_COLOR
+    frameGraphics.fillColor = this.getGameAppearance().boardColor('tint')
     frameGraphics.roundRect(
       -innerWidth / 2 - BOARD_BORDER_WIDTH * 0.65,
       -innerHeight / 2 - BOARD_BORDER_WIDTH * 0.65,
@@ -791,7 +776,7 @@ export class PlayUIController extends Component {
     frameGraphics.fill()
 
     // 内区只保留轻微雾化蒙版，让棋盘仍然有面积感，但不会变成纯色背景。
-    frameGraphics.fillColor = BOARD_GLASS_INNER_COLOR
+    frameGraphics.fillColor = this.getGameAppearance().boardColor('inner')
     frameGraphics.roundRect(-innerWidth / 2, -innerHeight / 2, innerWidth, innerHeight, BOARD_INNER_RADIUS)
     frameGraphics.fill()
 
@@ -841,7 +826,7 @@ export class PlayUIController extends Component {
         continue
       }
 
-      graphics.fillColor = BOARD_COLUMN_TINT_COLOR
+      graphics.fillColor = this.getGameAppearance().boardColor('columnTint')
       graphics.roundRect(
         -innerWidth / 2 + columnWidth * column + 5,
         bottom,
@@ -855,11 +840,11 @@ export class PlayUIController extends Component {
     for (let column = 0; column < this.boardwidth - 1; column++) {
       const x = this.getBoardSeparatorX(column)
       // 每条分隔线先铺一条柔光底，再叠加短虚线，避免虚线像单独贴上去的素材。
-      graphics.fillColor = BOARD_COLUMN_EDGE_COLOR
+      graphics.fillColor = this.getGameAppearance().boardColor('columnEdge')
       graphics.roundRect(x - BOARD_DASH_WIDTH / 2, bottom, BOARD_DASH_WIDTH, top - bottom, BOARD_DASH_RADIUS)
       graphics.fill()
 
-      graphics.fillColor = BOARD_DASH_COLOR
+      graphics.fillColor = this.getGameAppearance().boardColor('dash')
       for (let y = bottom; y < top; y += BOARD_DASH_LENGTH + BOARD_DASH_GAP) {
         const segmentEnd = Math.min(y + BOARD_DASH_LENGTH, top)
         graphics.roundRect(
@@ -1050,6 +1035,7 @@ export class PlayUIController extends Component {
     }
 
     this.gameOverOverlayController = overlay.getComponent(GameOverOverlayController) ?? overlay.addComponent(GameOverOverlayController)
+    this.gameOverOverlayController.applyPieceAppearance(this.getGameAppearance().piece, this.getGameAppearance().frames(), this.getGameAppearance().lease)
     this.gameOverOverlayController.setup({
       hostNode: this.node,
       replayHandler: this.gameOverReplayHandler,
@@ -1381,9 +1367,8 @@ export class PlayUIController extends Component {
       return
     }
     iconSprite.sizeMode = Sprite.SizeMode.CUSTOM
-    assetManager.loadAny(GAME_SETTINGS_SPRITE_FRAME_UUID, (error, asset) => {
-      if (!error && !this.isUiDestroyed && iconSprite.isValid && this.canUseNode(iconSprite.node) && asset instanceof SpriteFrame) {
-        iconSprite.spriteFrame = asset
+    this.getGameAppearance().bindSprite(this.getGameAppearance().lease.appearance.game.settings, iconSprite, () => {
+      if (!this.isUiDestroyed && iconSprite.isValid && this.canUseNode(iconSprite.node)) {
         iconSprite.sizeMode = Sprite.SizeMode.CUSTOM
         iconSprite.node.getComponent(UITransform)?.setContentSize(HUD_SETTINGS_ICON_SIZE, HUD_SETTINGS_ICON_SIZE)
       }
@@ -1398,25 +1383,7 @@ export class PlayUIController extends Component {
   }
 
   private refreshNextPieceDisplay() {
-    if (!this.nextValueLabel || !this.nextValueTile) {
-      return
-    }
-
-    const value = this.currentState.nextValue ?? 2
-    const bodyColor = HUD_PIECE_COLORS[value] ?? new Color(207, 88, 109, 255)
-    this.nextValueTile.clear()
-    this.nextValueTile.fillColor = HUD_CARD_BORDER_COLOR
-    this.nextValueTile.roundRect(-26, -26, 52, 52, 9)
-    this.nextValueTile.fill()
-    this.nextValueTile.fillColor = bodyColor
-    this.nextValueTile.roundRect(-23, -23, 46, 46, 7)
-    this.nextValueTile.fill()
-    this.nextValueLabel.string = `${value}`
-    this.nextValueLabel.fontSize = value >= 100 ? 19 : value >= 10 ? 21 : 24
-    this.nextValueLabel.color = new Color(255, 249, 234, 255)
-    this.nextValueLabel.enableOutline = true
-    this.nextValueLabel.outlineColor = HUD_CARD_BORDER_COLOR
-    this.nextValueLabel.outlineWidth = 2
+    this.nextPieceBody = PlayHudView.renderNextPiece(this.currentState.nextValue ?? 2, this.nextValueLabel, this.nextValueTile, this.gameAppearance?.piece, this.gameAppearance?.frames().body)
   }
 
   // 游戏内不再展示金币余额；金币仍由经济仓库维护，首页和购买弹窗按需展示。
@@ -1902,9 +1869,8 @@ export class PlayUIController extends Component {
       if (icon) {
         icon.sizeMode = Sprite.SizeMode.CUSTOM
         icon.trim = false
-        assetManager.loadAny(SKILL_ICON_SPRITE_FRAME_UUIDS[skill], (error, asset) => {
-          if (!error && icon.node.isValid && asset instanceof SpriteFrame) {
-            icon.spriteFrame = asset
+        this.getGameAppearance().bindSprite(this.getGameAppearance().lease.appearance.game.skills[skill], icon, () => {
+          if (icon.node.isValid) {
             icon.sizeMode = Sprite.SizeMode.CUSTOM
             icon.node.getComponent(UITransform)?.setContentSize(iconLayout.width, iconLayout.height)
           }
@@ -2108,7 +2074,7 @@ export class PlayUIController extends Component {
 
   // 技能数量节点固定在 Box 里；旧场景还没迁移 Box 时，临时兼容直接挂在 Skill 下的节点。
   private getSkillBox(skillNode: Node) {
-    return skillNode.getChildByName('Box') ?? skillNode
+    return SkillBarView.getSkillBox(skillNode)
   }
 
   // 新版场景直接使用 CountBadge；这里只读取历史 Count 图片，不再为新版层级动态补旧节点。
@@ -2259,30 +2225,7 @@ export class PlayUIController extends Component {
   }
 
   private refreshSingleSkillVisual(skill: PlaySkillKind, skillNode: Node | null) {
-    if (!skillNode) {
-      return
-    }
-
-    const isActive = this.currentState.activeSkill === skill
-    const isUsed = this.currentState.skillUsed[skill]
-    const count = Math.max(0, this.currentState.skillCounts[skill])
-    const canWatchAd = this.currentState.skillAdAvailable[skill]
-    const isAdBusy = this.currentState.skillAdLoading !== null
-    const visualKey = `${isActive}-${isUsed}-${count}-${canWatchAd}-${isAdBusy}`
-    skillNode.getChildByName('SelectionRing')!.active = isActive && count > 0 && !isAdBusy
-    // 技能状态只通过图标明暗和次数角标表达，避免文字遮挡图标。
-    skillNode.getChildByName('UsedLabel')!.active = false
-    const opacity = skillNode.getComponent(UIOpacity) ?? skillNode.addComponent(UIOpacity)
-    opacity.opacity = isAdBusy ? SKILL_EMPTY_OPACITY : count > 0 || canWatchAd ? 255 : isUsed ? SKILL_DISABLED_OPACITY : SKILL_EMPTY_OPACITY
-
-    if (this.skillVisualKeys[skill] === visualKey) {
-      return
-    }
-    this.skillVisualKeys[skill] = visualKey
-    Tween.stopAllByTarget(skillNode)
-    tween(skillNode)
-      .to(0.1, { scale: isActive ? new Vec3(1.05, 1.05, 1) : Vec3.ONE }, { easing: 'quadOut' })
-      .start()
+    this.skillVisualKeys[skill] = SkillBarView.renderSelection(skill, skillNode, this.currentState, this.skillVisualKeys[skill])
   }
 
   // 对局角标只展示本局剩余使用次数，避免库存数量让玩家误以为本局可以连续施放。
@@ -2293,94 +2236,7 @@ export class PlayUIController extends Component {
   }
 
   private refreshSingleSkillCount(skill: PlaySkillKind, skillNode: Node | null) {
-    if (!skillNode) {
-      return
-    }
-
-    const boxNode = this.getSkillBox(skillNode)
-    const moreButtonNode = boxNode.getChildByName('MoreBtn')
-    const amountBgNode = boxNode.getChildByName('AmountBG')
-    const countNode = boxNode.getChildByName('Count')
-
-    const count = this.currentState.skillCounts[skill] > 0 ? 1 : 0
-    const isLoading = this.currentState.skillAdLoading === skill
-    const showsAd = count === 0 && this.currentState.skillAdAvailable[skill] && !isLoading
-    const customBadge = skillNode.getChildByName('CountBadge')
-    const customBadgeLabel = customBadge?.getChildByName('Value')?.getComponent(Label) ?? null
-    if (customBadge) {
-      customBadge.active = true
-      // 场景使用 Sprite 底图，旧场景补建 Graphics 底图；广告态需要同时兼容。
-      const background = customBadge.getComponent(Graphics) ?? customBadge.getComponent(Sprite)
-      if (background) {
-        background.enabled = !showsAd
-      }
-      const adNode = customBadge.getChildByName('AdIcon')
-      if (adNode) {
-        adNode.active = showsAd
-      }
-      const loadingNode = customBadge.getChildByName('AdLoading')
-      if (loadingNode && loadingNode.active !== isLoading) {
-        Tween.stopAllByTarget(loadingNode)
-        loadingNode.angle = 0
-        loadingNode.active = isLoading
-        if (isLoading) {
-          tween(loadingNode).by(0.8, { angle: -360 }).repeatForever().start()
-        }
-      }
-    }
-    if (customBadgeLabel) {
-      const showsCount = !showsAd && !isLoading
-      customBadgeLabel.string = showsCount ? `${count}` : ''
-      customBadgeLabel.node.active = showsCount
-    }
-    if (moreButtonNode) {
-      // 对局技能只展示次数或视频角标，不保留旧补货入口。
-      moreButtonNode.active = false
-    }
-    if (amountBgNode) {
-      amountBgNode.active = false
-    }
-    if (countNode) {
-      countNode.active = false
-      const countSprite = countNode.getComponent(Sprite) ?? countNode.addComponent(Sprite)
-      const spriteFrame = this.getCounterNumberSpriteFrame(count)
-      countSprite.spriteFrame = spriteFrame
-      countSprite.enabled = !!spriteFrame
-      countSprite.sizeMode = Sprite.SizeMode.CUSTOM
-      const fallback = this.ensureSkillCountFallback(countNode)
-      fallback.node.active = !spriteFrame
-      fallback.string = `${count}`
-    }
-  }
-
-  private ensureSkillCountFallback(countNode: Node) {
-    let fallbackNode = countNode.getChildByName('FallbackLabel')
-    if (!fallbackNode) {
-      fallbackNode = new Node('FallbackLabel')
-      fallbackNode.setParent(countNode)
-      fallbackNode.addComponent(UITransform).setContentSize(28, 24)
-      fallbackNode.addComponent(Label)
-    }
-    fallbackNode.setPosition(0, 0, 0)
-    const label = fallbackNode.getComponent(Label) ?? fallbackNode.addComponent(Label)
-    label.fontSize = 17
-    label.lineHeight = 20
-    label.color = new Color(255, 255, 255, 255)
-    label.horizontalAlign = Label.HorizontalAlign.CENTER
-    label.verticalAlign = Label.VerticalAlign.CENTER
-    label.isBold = true
-    return label
-  }
-
-  // counterNumberSpriteFrames 里的图片以 0-9 命名，优先按名字找，找不到时用下标兜底。
-  private getCounterNumberSpriteFrame(count: number) {
-    const displayCount = Math.min(9, Math.max(0, count))
-    const displayName = `${displayCount}`
-    return (
-      this.counterNumberSpriteFrames.find((spriteFrame) => spriteFrame?.name === displayName) ??
-      this.counterNumberSpriteFrames[displayCount] ??
-      null
-    )
+    SkillBarView.renderCount(skill, skillNode, this.currentState, this.counterNumberSpriteFrames)
   }
 
   // 技能激活时提示常驻并轻微呼吸，取消或施放结束时淡出。

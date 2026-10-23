@@ -1,3 +1,5 @@
+import { HomeAppearance } from './HomeAppearance'
+import type { HomeArtworkKey } from '../appearance/AppearanceTypes'
 import {
   _decorator,
   Color,
@@ -12,14 +14,13 @@ import {
   screen,
   Sprite,
   SpriteFrame,
-  sys,
   tween,
   Tween,
   UITransform,
   UIOpacity,
-  Vec3,
-  view
+  Vec3
 } from 'cc'
+import { HomeLayout } from './HomeLayout'
 import { HomeSwingAnimator } from './HomeSwingAnimator'
 import {
   LeaderboardPopupController,
@@ -57,21 +58,6 @@ type StartPageOptions = {
   avatar?: PlayerAvatar
 }
 
-// 只读取首页胶囊避让所需字段，避免项目依赖额外的微信类型声明。
-type WechatMenuButtonRect = {
-  top: number
-  bottom: number
-  left: number
-  right: number
-  width: number
-  height: number
-}
-
-type WechatWindowInfo = {
-  windowHeight?: number
-  screenTop?: number
-}
-
 // 首页整体改用低亮护眼色，降低手机屏幕上的白场刺激。
 const PAGE_BG_COLOR = new Color(235, 247, 244, 255)
 const PAGE_DOT_COLOR = new Color(164, 216, 219, 54)
@@ -93,34 +79,31 @@ const DEFAULT_MAX_ENERGY = 10
 const AMOUNT_BAR_SOURCE_HEIGHT = 56
 const AMOUNT_BAR_DEFAULT_TOP_INSET = 92
 const AMOUNT_BAR_TITLE_GAP = 20
-// 顶部交互控件与刘海/灵动岛安全区之间保留少量呼吸空间。
-const TOP_SAFE_AREA_GAP = 12
 // 固定资源条左边缘，数值取自最初确认的 0.55 缩放布局，后续缩放不会再向中间漂移。
 const AMOUNT_BAR_LEFT_INSET = 57
 // 排行榜使用深色遮罩突出弹窗，暂停页复用时保持透明，避免叠加已有暂停蒙版。
 const RANK_MASK_HOME_COLOR = new Color(23, 43, 46, 196)
 const RANK_MASK_PAUSE_COLOR = new Color(0, 0, 0, 0)
-const HOMEPAGE_ART_ROOT = 'Homepage/'
 const HOMEPAGE_DESIGN_WIDTH = 750
 const HOMEPAGE_DESIGN_HEIGHT = 1625
 const LEADERBOARD_PREFAB_PATH = 'Leaderboard/LeaderboardPopup'
 
 const HomepageArtwork = {
-  background: 'SwingV14/background-tree-branch',
-  start: 'button-start-game',
-  swingBird: 'SwingV14/swing-bird-seated',
-  swingSeat: 'SwingV14/swing-seat',
-  swingRope: 'SwingV14/swing-rope',
-  swingKnot: 'SwingV14/swing-seat-knot',
-  swingLeaf: 'SwingV14/swing-leaf',
-  daily: 'feature-daily-reward',
-  leaderboard: 'feature-leaderboard',
-  share: 'feature-share',
-  shop: 'feature-shop',
-  logo: 'logo-1024-number-garden',
-  coin: 'resource-coin',
-  avatarFrame: 'avatar-frame',
-  settings: 'ui-settings'
+  background: 'background',
+  start: 'start',
+  swingBird: 'swingBird',
+  swingSeat: 'swingSeat',
+  swingRope: 'swingRope',
+  swingKnot: 'swingKnot',
+  swingLeaf: 'swingLeaf',
+  daily: 'daily',
+  leaderboard: 'leaderboard',
+  share: 'share',
+  shop: 'shop',
+  logo: 'logo',
+  coin: 'coin',
+  avatarFrame: 'avatarFrame',
+  settings: 'settings'
 } as const
 
 const TIP_TEXTS = [
@@ -133,6 +116,8 @@ const TIP_TEXTS = [
 
 @ccclass('StartPageController')
 export class StartPageController extends Component {
+  private readonly homeLayout = new HomeLayout()
+  private readonly homeAppearance = new HomeAppearance()
   // 首页根节点优先由层级管理器指定，未指定时再按 StartPageOverlay 名称查找。
   @property({ type: Node, tooltip: '首页根节点，建议在 home.scene 层级中维护' })
   private rootNodeRef: Node | null = null
@@ -455,6 +440,7 @@ export class StartPageController extends Component {
   }
 
   onDestroy() {
+    this.homeAppearance.dispose()
     this.avatarRenderer?.dispose()
     this.unscheduleAllCallbacks()
     // 场景销毁时 Node 会自动释放事件。此阶段子节点可能已经进入销毁流程，
@@ -688,7 +674,7 @@ export class StartPageController extends Component {
   private ensureHomepageButton(
     parent: Node,
     name: string,
-    artwork: string,
+    artwork: HomeArtworkKey,
     width: number,
     height: number
   ) {
@@ -698,7 +684,7 @@ export class StartPageController extends Component {
     return button
   }
 
-  private ensureResourceBar(parent: Node, name: string, artwork: string, stamina: boolean) {
+  private ensureResourceBar(parent: Node, name: string, artwork: HomeArtworkKey, stamina: boolean) {
     const bar = this.getOrCreatePageNode(parent, name)
     bar.active = true
     this.applyHomepageArtwork(bar, artwork, 188, stamina ? 60 : 54)
@@ -760,29 +746,8 @@ export class StartPageController extends Component {
     return label
   }
 
-  private applyHomepageArtwork(node: Node, artwork: string, width: number, height: number) {
-    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform)
-    transform.setContentSize(width, height)
-    const sprite = node.getComponent(Sprite) ?? node.addComponent(Sprite)
-    sprite.enabled = true
-    sprite.type = Sprite.Type.SIMPLE
-    sprite.sizeMode = Sprite.SizeMode.CUSTOM
-    sprite.trim = false
-    sprite.color = Color.WHITE
-
-    // 场景中已经绑定的新版素材可直接参与首帧渲染，不再重复走异步 resources.load。
-    if (sprite.spriteFrame) {
-      return
-    }
-
-    resources.load(`${HOMEPAGE_ART_ROOT}${artwork}/spriteFrame`, SpriteFrame, (error, spriteFrame) => {
-      if (error || !spriteFrame || !this.canUseNode(node)) {
-        console.warn(`[首页] 素材加载失败: ${artwork}`, error)
-        return
-      }
-      sprite.spriteFrame = spriteFrame
-      transform.setContentSize(width, height)
-    })
+  private applyHomepageArtwork(node: Node, artwork: HomeArtworkKey, width: number, height: number) {
+    this.homeAppearance.applyArtwork(node, artwork, width, height)
   }
 
   private getOrCreatePageNode(parent: Node, name: string) {
@@ -845,79 +810,21 @@ export class StartPageController extends Component {
     animator.setup({ leftRope, rightRope, seatRoot, bird, leaves })
   }
 
-  /**
-   * 定稿坐标以 750 × 1625 为基准：横向按画布宽度等比缩放，短屏压缩纵向间距；
-   * 背景独立使用 cover 铺满实际画布，前景素材本身始终保持比例、不做拉伸。
-   */
   private layoutHomepageArtwork(cardWidth: number, cardHeight: number) {
-    if (!this.homepageLayerNode) {
-      return
-    }
-    // 横向始终贴合设计宽度；短屏只压缩元素间的纵向距离，不把整套 UI 等比缩小到画面中央。
-    // 这样 750 × 1335 预览里设置按钮仍贴近左上角，左右功能按钮也不会向中间收拢。
-    const foregroundScale = cardWidth / HOMEPAGE_DESIGN_WIDTH
-    const verticalScale = Math.min(1, cardHeight / Math.max(1, HOMEPAGE_DESIGN_HEIGHT * foregroundScale))
-    this.homepageLayerNode.setPosition(0, 0, 0)
-    this.homepageLayerNode.setScale(foregroundScale, foregroundScale, 1)
-
-    const background = this.homepageLayerNode.getChildByName('HomepageBackground')
-    const coverScale = Math.max(cardWidth / 750, cardHeight / 1625) / Math.max(0.001, foregroundScale)
-    background?.setPosition(0, 0, 0)
-    background?.setScale(coverScale, coverScale, 1)
-
-    const topControlsY = this.getHomepageTopControlsY(cardHeight, foregroundScale, verticalScale)
-    this.homepageLayerNode.getChildByName('HomepageLogo')?.setPosition(0, Math.min(455 * verticalScale, topControlsY - 72 - 18 - 161), 0)
-    this.settingsButtonNode?.setPosition(-318, topControlsY, 0)
-    this.coinResourceButtonNode?.setPosition(-164, topControlsY, 0)
-    if (this.energyBarNode) {
-      const energyPosition = this.energyBarNode.position
-      this.energyBarNode.setPosition(energyPosition.x, topControlsY, energyPosition.z)
-    }
-    this.profileButtonNode?.setPosition(304, topControlsY - 104, 0)
-    this.dailyRewardButtonNode?.setPosition(-294, -292 * verticalScale, 0)
-    this.rankButtonNode?.setPosition(-294, -455 * verticalScale, 0)
-    this.shopButtonNode?.setPosition(294, -292 * verticalScale, 0)
-    this.shareButtonNode?.setPosition(294, -455 * verticalScale, 0)
-    this.startButtonNode?.setPosition(0, -655 * verticalScale, 0)
+    if (!this.homepageLayerNode) return
+    this.homeLayout.layout(cardWidth, cardHeight, {
+      homepageLayerNode: this.homepageLayerNode,
+      settingsButtonNode: this.settingsButtonNode,
+      coinResourceButtonNode: this.coinResourceButtonNode,
+      energyBarNode: this.energyBarNode,
+      profileButtonNode: this.profileButtonNode,
+      dailyRewardButtonNode: this.dailyRewardButtonNode,
+      rankButtonNode: this.rankButtonNode,
+      shopButtonNode: this.shopButtonNode,
+      shareButtonNode: this.shareButtonNode,
+      startButtonNode: this.startButtonNode
+    })
     this.renderPlayerResources(this.currentEnergy, this.currentMaxEnergy, this.currentCoins)
-  }
-
-  /**
-   * 顶部资源栏优先与微信胶囊共用水平中线；其他平台则避开系统安全区。
-   * 返回 HomepageArtwork 的局部坐标，避免前景缩放后安全距离被重复放大。
-   */
-  private getHomepageTopControlsY(cardHeight: number, foregroundScale: number, verticalScale: number) {
-    const safeScale = Math.max(0.001, foregroundScale)
-    const visibleLocalHeight = cardHeight / safeScale
-    const baseY = 705 * verticalScale
-    const menuMetrics = this.getWechatMenuMetrics()
-    if (menuMetrics) {
-      const sourceWindowHeight = menuMetrics.windowHeight > 0
-        ? menuMetrics.windowHeight
-        : screen.windowSize.height
-      const capsuleCenterFromTop = Math.max(
-        0,
-        (menuMetrics.menuRect.top + menuMetrics.menuRect.bottom) * 0.5 - menuMetrics.screenTop
-      )
-      const capsuleCenterLocal = capsuleCenterFromTop * cardHeight / Math.max(1, sourceWindowHeight) / safeScale
-      return Math.min(baseY, visibleLocalHeight * 0.5 - capsuleCenterLocal)
-    }
-
-    const safeTopLocal = this.getSystemSafeTopInset(cardHeight) / safeScale
-    const topControlHalfHeight = 79 * 0.5
-    const safeAreaY = visibleLocalHeight * 0.5 - safeTopLocal - TOP_SAFE_AREA_GAP - topControlHalfHeight
-    return Math.min(baseY, safeAreaY)
-  }
-
-  // 把 Cocos 返回的屏幕安全区换算为首页根节点坐标，Web/原生均可作为灵动岛兜底。
-  private getSystemSafeTopInset(rootHeight: number) {
-    const safeArea = sys.getSafeAreaRect(false)
-    const visibleHeight = Math.max(1, view.getVisibleSize().height)
-    if (!safeArea) {
-      return 0
-    }
-    const unsafeTop = Math.max(0, visibleHeight - safeArea.y - safeArea.height)
-    return unsafeTop / visibleHeight * rootHeight
   }
 
   /**
@@ -956,7 +863,7 @@ export class StartPageController extends Component {
    * 体力条放在左侧并共享同一条水平中线，不与右侧原生胶囊重叠。
    */
   private layoutAmountBars(cardHeight: number) {
-    const menuMetrics = this.getWechatMenuMetrics()
+    const menuMetrics = this.homeLayout.getWechatMenuMetrics()
     const amountBarHalfHeight = AMOUNT_BAR_SOURCE_HEIGHT * AMOUNT_BAR_SCALE * 0.5
     let centerTopInset = AMOUNT_BAR_DEFAULT_TOP_INSET
 
@@ -1017,41 +924,6 @@ export class StartPageController extends Component {
         )
       : defaultTitleY
     titleCard.setPosition(titleCard.position.x, titleY, titleCard.position.z)
-  }
-
-  // 微信小游戏的胶囊坐标需结合窗口高度和 screenTop，才能正确换算到 Creator 画布。
-  private getWechatMenuMetrics(): {
-    menuRect: WechatMenuButtonRect
-    windowHeight: number
-    screenTop: number
-  } | null {
-    const wxApi = (globalThis as {
-      wx?: {
-        getMenuButtonBoundingClientRect?: () => WechatMenuButtonRect
-        getWindowInfo?: () => WechatWindowInfo
-        getSystemInfoSync?: () => WechatWindowInfo
-      }
-    }).wx
-    if (!wxApi || typeof wxApi.getMenuButtonBoundingClientRect !== 'function') {
-      return null
-    }
-
-    const menuRect = wxApi.getMenuButtonBoundingClientRect()
-    if (!menuRect || menuRect.width <= 0 || menuRect.height <= 0) {
-      return null
-    }
-
-    const windowInfo = typeof wxApi.getWindowInfo === 'function'
-      ? wxApi.getWindowInfo()
-      : typeof wxApi.getSystemInfoSync === 'function'
-        ? wxApi.getSystemInfoSync()
-        : null
-
-    return {
-      menuRect,
-      windowHeight: windowInfo?.windowHeight ?? 0,
-      screenTop: windowInfo?.screenTop ?? 0
-    }
   }
 
   // 首页旧版 logo 是代码绘制的数字块标题；层级里的图片 logo 只留给加载页使用。

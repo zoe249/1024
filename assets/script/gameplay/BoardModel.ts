@@ -1,5 +1,4 @@
-import { PieceController } from './PieceController'
-import { Tween, UIOpacity } from 'cc'
+import type { PieceController } from './PieceController'
 
 export type BoardCell = PieceController | null
 
@@ -91,7 +90,7 @@ export class BoardModel {
   }
 
   // 清理棋盘内已经落地的棋子节点，返回首页和重新开始都复用这套收口逻辑。
-  destroyBoardPieces(board: BoardCell[][], rowCount: number, columnCount: number) {
+  destroyBoardPieces(board: BoardCell[][], rowCount: number, columnCount: number, destroyPiece: (piece: PieceController) => void) {
     for (let row = 0; row < rowCount; row++) {
       for (let column = 0; column < columnCount; column++) {
         const piece = board[row][column]
@@ -99,15 +98,7 @@ export class BoardModel {
           continue
         }
 
-        if (piece.node.isValid) {
-          // 销毁棋子前先停掉节点动画，避免场景切换后 tween 回调继续访问已销毁节点。
-          Tween.stopAllByTarget(piece.node)
-          const opacity = piece.node.getComponent(UIOpacity)
-          if (opacity) {
-            Tween.stopAllByTarget(opacity)
-          }
-          piece.node.destroy()
-        }
+        destroyPiece(piece)
         board[row][column] = null
       }
     }

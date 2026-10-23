@@ -1,4 +1,6 @@
-import { _decorator, AudioClip, CCInteger, Component, director, instantiate, Node, Prefab, resources, SpriteFrame, UITransform } from 'cc'
+import { appearanceRuntime } from '../appearance/AppearanceRuntime'
+import { HomePopupHost } from './HomePopupHost'
+import { _decorator, AudioClip, CCInteger, Component, director, Prefab, SpriteFrame } from 'cc'
 import { StartPageController } from './StartPageController'
 import { GameAudioManager } from '../platform/GameAudioManager'
 import { GameFeedbackAdapter } from '../platform/GameFeedbackAdapter'
@@ -8,10 +10,7 @@ import {
   WechatPrivacyAdapter,
   WechatPrivacyAuthorizationError
 } from '../platform/WechatPrivacyAdapter'
-import { PauseOverlayController } from '../settings/PauseOverlayController'
 import { ECONOMY_CONFIG, PlayerEconomyStore, type EnergyBarState } from '../economy/PlayerEconomyStore'
-import { SkillShopPopupController } from '../skill-shop/SkillShopPopupController'
-import { DailyRewardPopupController } from '../daily-reward/DailyRewardPopupController'
 import type { SkillKind } from '../economy/SkillStock'
 import { OngoingGameSession } from '../gameplay/OngoingGameSession'
 import { BOARD_CONFIG_LIMITS } from '../gameplay/BoardConfig'
@@ -19,7 +18,6 @@ import { ApiError, type LeaderboardBoardDto, type LeaderboardEntryDto } from '..
 import { PlayerSessionStore } from '../online/auth/PlayerSessionStore'
 import { PlayerCloudSyncStore } from '../online/sync/PlayerCloudSyncStore'
 import { PlayerSyncOutbox } from '../online/sync/PlayerSyncOutbox'
-import { LoginStatusController } from '../online/auth/LoginStatusController'
 import { PlayerProfileStore } from '../profile/PlayerProfileStore'
 import {
   ProfilePopupController,
@@ -31,7 +29,6 @@ const HOME_RESOURCE_REFRESH_INTERVAL_SECONDS = 1
 const UPDATE_PROMPT_CHECK_INTERVAL_SECONDS = 1
 // 切场景前给按钮 one-shot 留出起声时间，避免当前场景销毁时把点击反馈截断。
 const BUTTON_CLICK_SCENE_DELAY_SECONDS = 0.18
-const PROFILE_PREFAB_PATH = 'Profile/ProfilePopup'
 
 @ccclass('HomeSceneController')
 export class HomeSceneController extends Component {
@@ -103,13 +100,8 @@ export class HomeSceneController extends Component {
   @property({ type: Prefab, tooltip: 'Daily reward popup prefab' })
   dailyRewardPopupPrefab: Prefab | null = null
 
+  private popupHost!: HomePopupHost
   private startPageController: StartPageController | null = null
-  private skillShopNode: Node | null = null
-  private skillShopController: SkillShopPopupController | null = null
-  private dailyRewardNode: Node | null = null
-  private dailyRewardController: DailyRewardPopupController | null = null
-  private homeSettingsNode: Node | null = null
-  private homeSettingsController: PauseOverlayController | null = null
   private audioManager: GameAudioManager | null = null
   private readonly shareAdapter = new GameShareAdapter()
   private readonly feedbackAdapter = new GameFeedbackAdapter()
@@ -121,13 +113,8 @@ export class HomeSceneController extends Component {
   private readonly playerProfile = PlayerProfileStore.getInstance()
   private readonly cloudSync = PlayerCloudSyncStore.getInstance()
   private readonly syncOutbox = PlayerSyncOutbox.getInstance()
-  private loginStatusNode: Node | null = null
-  private loginStatusController: LoginStatusController | null = null
   private isOpeningLeaderboard = false
   private isOpeningProfile = false
-  private profileNode: Node | null = null
-  private profileController: ProfilePopupController | null = null
-  private profileLoadPromise: Promise<ProfilePopupController> | null = null
   private isLoadingGameScene = false
   private isConsumingEnergy = false
   private isAcquiringEnergy = false
@@ -138,6 +125,8 @@ export class HomeSceneController extends Component {
   private readonly updatePromptTick = () => this.updateAdapter.promptIfReady()
 
   onLoad() {
+    appearanceRuntime.discardPendingGame()
+    this.popupHost = new HomePopupHost(this.node, () => this.isValid && this.node.isValid)
     this.updateAdapter.initialize()
     this.shareAdapter.enableWechatShareMenu()
     this.audioManager = new GameAudioManager(this.node)
@@ -196,19 +185,19 @@ export class HomeSceneController extends Component {
       && !this.isLoadingGameScene && !OngoingGameSession.hasActiveGame()
       && !this.isOpeningLeaderboard && !this.isOpeningProfile
       && !this.startPageController?.isRankModalVisible()
-      && !this.skillShopNode?.active && !this.dailyRewardNode?.active
-      && !this.homeSettingsNode?.active && !this.profileNode?.active
-      && !this.loginStatusNode?.active
+      && !this.popupHost.skillShopVisible && !this.popupHost.dailyRewardVisible
+      && !this.popupHost.homeSettingsVisible && !this.popupHost.profileVisible
+      && !this.popupHost.loginStatusVisible
   }
 
   start() {
     // 首帧后再同步一次布局，兼容微信安全区和 Creator 预览尺寸变化。
     this.startPageController?.syncLayout()
     this.scheduleOnce(() => this.startPageController?.syncLayout(), 0)
-    this.skillShopController?.syncLayout()
-    this.dailyRewardController?.syncLayout()
-    this.homeSettingsController?.syncLayout()
-    this.profileController?.syncLayout()
+    this.popupHost.skillShop?.syncLayout()
+    this.popupHost.dailyReward?.syncLayout()
+    this.popupHost.homeSettings?.syncLayout()
+    this.popupHost.profile?.syncLayout()
     this.audioManager?.playStartPageBackgroundMusic(this.getHomeBgmClip())
     void this.restoreOnlineSession()
   }
@@ -217,17 +206,7 @@ export class HomeSceneController extends Component {
     this.onDisable()
     this.shareAdapter.disableWechatShareMenu()
     this.unschedule(this.refreshResourceTick)
-    this.skillShopController = null
-    this.skillShopNode = null
-    this.dailyRewardController = null
-    this.dailyRewardNode = null
-    this.homeSettingsController = null
-    this.homeSettingsNode = null
-    this.loginStatusController = null
-    this.loginStatusNode = null
-    this.profileController = null
-    this.profileNode = null
-    this.profileLoadPromise = null
+    this.popupHost.dispose()
   }
 
   /** 已有凭证只做静默恢复；游客启动时绝不调用 wx.login。 */
@@ -295,7 +274,7 @@ export class HomeSceneController extends Component {
   }
 
   private retryLeaderboard() {
-    this.loginStatusController?.hide()
+    this.popupHost.loginStatus?.hide()
     void this.openLeaderboard()
   }
 
@@ -329,7 +308,7 @@ export class HomeSceneController extends Component {
       this.refreshPlayerResources()
       controller.renderState(this.buildProfileViewState(profile))
       this.startPageController?.renderProfileAvatar(profile)
-      this.loginStatusController?.hide()
+      this.popupHost.loginStatus?.hide()
       controller.show()
     } catch (error) {
       if (!this.isValid || !this.node.isValid) {
@@ -347,55 +326,30 @@ export class HomeSceneController extends Component {
   }
 
   private retryProfile() {
-    this.loginStatusController?.hide()
+    this.popupHost.loginStatus?.hide()
     void this.openProfile()
   }
 
   private ensureProfilePopup(): Promise<ProfilePopupController> {
-    if (this.profileController?.isValid && this.profileNode?.isValid) {
-      this.profileController.syncLayout()
-      return Promise.resolve(this.profileController)
-    }
-    if (this.profileLoadPromise) {
-      return this.profileLoadPromise
-    }
-    this.profileLoadPromise = new Promise<ProfilePopupController>((resolve, reject) => {
-      resources.load(PROFILE_PREFAB_PATH, Prefab, (error, prefab) => {
-        this.profileLoadPromise = null
-        if (error || !prefab || !this.isValid || !this.node.isValid) {
-          reject(new Error('个人中心预制件加载失败'))
-          return
-        }
-        const node = instantiate(prefab)
-        node.setParent(this.node)
-        node.setPosition(0, 0, 0)
-        const controller = node.getComponent(ProfilePopupController)
-          ?? node.addComponent(ProfilePopupController)
-        controller.setup({
-          hostNode: this.node,
-          onClose: () => this.closeProfile(),
-          onWechatAvatarSelect: url => this.saveWechatAvatar(url),
-          onWechatAuthorizationChange: authorized => {
-            const profile = this.playerProfile.getSnapshot()
-            if (profile) this.startPageController?.renderProfileAvatar(authorized ? profile : { ...profile, avatarType: 'builtin' })
-          },
-          onAvatarSelect: avatarIndex => this.saveProfileAvatar(avatarIndex),
-          onDisplayNameSubmit: displayName => this.saveProfileDisplayName(displayName),
-          onButtonClick: () => this.playButtonClickFeedback()
-        })
-        this.profileNode = node
-        this.profileController = controller
-        resolve(controller)
-      })
+    return this.popupHost.ensureProfile({
+      hostNode: this.node,
+      onClose: () => this.closeProfile(),
+      onWechatAvatarSelect: url => this.saveWechatAvatar(url),
+      onWechatAuthorizationChange: authorized => {
+        const profile = this.playerProfile.getSnapshot()
+        if (profile) this.startPageController?.renderProfileAvatar(authorized ? profile : { ...profile, avatarType: 'builtin' })
+      },
+      onAvatarSelect: avatarIndex => this.saveProfileAvatar(avatarIndex),
+      onDisplayNameSubmit: displayName => this.saveProfileDisplayName(displayName),
+      onButtonClick: () => this.playButtonClickFeedback()
     })
-    return this.profileLoadPromise
   }
 
   private async saveProfileAvatar(avatarIndex: number) {
     try {
       const profile = await this.playerProfile.update({ avatarType: 'builtin', avatarIndex })
       if (!this.isValid) return
-      this.profileController?.renderState(this.buildProfileViewState(profile))
+      this.popupHost.profile?.renderState(this.buildProfileViewState(profile))
       this.startPageController?.renderProfileAvatar(profile)
     } catch (error) {
       throw new Error(this.describeOnlineError(error))
@@ -406,7 +360,7 @@ export class HomeSceneController extends Component {
     try {
       const profile = await this.playerProfile.update({ avatarType: 'wechat', wechatAvatarUrl })
       if (!this.isValid) return
-      this.profileController?.renderState(this.buildProfileViewState(profile))
+      this.popupHost.profile?.renderState(this.buildProfileViewState(profile))
       this.startPageController?.renderProfileAvatar(profile)
     } catch (error) { throw new Error(this.describeOnlineError(error)) }
   }
@@ -415,7 +369,7 @@ export class HomeSceneController extends Component {
     try {
       const profile = await this.playerProfile.update({ displayName })
       if (!this.isValid) return
-      this.profileController?.renderState(this.buildProfileViewState(profile))
+      this.popupHost.profile?.renderState(this.buildProfileViewState(profile))
     } catch (error) {
       throw new Error(this.describeOnlineError(error))
     }
@@ -432,24 +386,10 @@ export class HomeSceneController extends Component {
   }
 
   private closeProfile() {
-    this.profileController?.hide()
+    this.popupHost.profile?.hide()
   }
 
-  private ensureLoginStatus() {
-    if (this.loginStatusNode?.isValid && this.loginStatusController?.isValid) {
-      this.loginStatusController.syncLayout()
-      return this.loginStatusController
-    }
-    const node = new Node('LoginStatus')
-    node.setParent(this.node)
-    node.setPosition(0, 0, 0)
-    node.addComponent(UITransform)
-    const controller = node.addComponent(LoginStatusController)
-    controller.setup(() => controller.hide())
-    this.loginStatusNode = node
-    this.loginStatusController = controller
-    return controller
-  }
+  private ensureLoginStatus() { return this.popupHost.ensureLoginStatus() }
 
   private buildLeaderboardTab(board: LeaderboardBoardDto) {
     const isScore = board.metric === 'score'
@@ -518,18 +458,13 @@ export class HomeSceneController extends Component {
       return
     }
 
-    if (!this.skillShopNode?.isValid || !this.skillShopController?.isValid) {
+    if (!this.popupHost.skillShop) {
       if (!this.skillShopPopupPrefab) {
         this.startPageController?.showMessage('技能购买弹窗资源未配置')
         return
       }
 
-      this.skillShopNode = instantiate(this.skillShopPopupPrefab)
-      this.skillShopNode.setParent(this.node)
-      this.skillShopNode.setPosition(0, 0, 0)
-      this.skillShopController = this.skillShopNode.getComponent(SkillShopPopupController)
-        ?? this.skillShopNode.addComponent(SkillShopPopupController)
-      this.skillShopController.setup({
+      this.popupHost.ensureSkillShop(this.skillShopPopupPrefab, {
         hostNode: this.node,
         onPurchase: (skill) => this.purchaseSkill(skill),
         onClose: () => this.closeSkillShop(),
@@ -537,10 +472,10 @@ export class HomeSceneController extends Component {
       })
     }
 
-    this.skillShopController.renderState(this.economy.getSnapshot())
-    this.skillShopController.showMessage('点击价格即可购买')
-    this.skillShopController.syncLayout()
-    this.skillShopController.show()
+    this.popupHost.skillShop.renderState(this.economy.getSnapshot())
+    this.popupHost.skillShop.showMessage('点击价格即可购买')
+    this.popupHost.skillShop.syncLayout()
+    this.popupHost.skillShop.show()
   }
 
   // 购买后立即刷新首页和弹窗，避免顶部金币等待下一次定时刷新。
@@ -548,8 +483,8 @@ export class HomeSceneController extends Component {
     const result = this.economy.purchaseSkill(skill)
     this.refreshPlayerResources()
     const skillName = skill === 'bomb' ? '炸弹' : skill === 'hammer' ? '木槌' : '交换'
-    this.skillShopController?.renderState(this.economy.getSnapshot())
-    this.skillShopController?.showMessage(
+    this.popupHost.skillShop?.renderState(this.economy.getSnapshot())
+    this.popupHost.skillShop?.showMessage(
       result.purchased
         ? `购买成功：${skillName} +1`
         : result.reason === 'max-reached'
@@ -561,7 +496,7 @@ export class HomeSceneController extends Component {
   }
 
   private closeSkillShop() {
-    this.skillShopController?.hide()
+    this.popupHost.skillShop?.hide()
   }
 
   // 开始游戏前由经济层统一扣除体力，扣除失败时停留首页并给出补充入口提示。
@@ -588,7 +523,7 @@ export class HomeSceneController extends Component {
       rows: this.newGameRows
     })
     this.refreshPlayerResources()
-    this.skillShopController?.hide()
+    this.popupHost.skillShop?.hide()
     const sceneName = this.getStartTargetSceneName()
     this.loadSceneAfterButtonFeedback(sceneName)
   }
@@ -600,7 +535,7 @@ export class HomeSceneController extends Component {
     }
 
     this.isLoadingGameScene = true
-    this.skillShopController?.hide()
+    this.popupHost.skillShop?.hide()
     const sceneName = this.gameSceneName || this.getStartTargetSceneName()
     this.loadSceneAfterButtonFeedback(sceneName)
   }
@@ -684,35 +619,24 @@ export class HomeSceneController extends Component {
     }
     this.previousEnergyRender = { state: energyState, at: Date.now() }
     this.startPageController?.renderEnergyState(energyState)
-    if (this.dailyRewardNode?.active) {
+    if (this.popupHost.dailyRewardVisible) {
       this.refreshDailyRewardState()
     }
   }
 
   private openHomeSettings() {
-    if (!this.homeSettingsNode?.isValid || !this.homeSettingsController?.isValid) {
-      this.homeSettingsNode = new Node('HomeSettingsOverlay')
-      this.homeSettingsNode.setParent(this.node)
-      const hostTransform = this.node.getComponent(UITransform)
-      this.homeSettingsNode.addComponent(UITransform).setContentSize(
-        hostTransform?.width ?? 750,
-        hostTransform?.height ?? 1334
-      )
-      this.homeSettingsController = this.homeSettingsNode.addComponent(PauseOverlayController)
-      this.homeSettingsController.setup({
-        hostNode: this.node,
-        pauseHandler: () => this.homeSettingsController?.hide(),
-        replayHandler: null,
-        homeHandler: null,
-        shareHandler: () => this.shareGameFromStartPage(),
-        feedbackHandler: () => void this.openHomeFeedback(),
-        onButtonClick: () => this.playButtonClickFeedback(),
-        mode: 'home'
-      })
-    }
-
-    this.homeSettingsController.syncLayout()
-    this.homeSettingsController.show()
+    const controller = this.popupHost.ensureSettings({
+      hostNode: this.node,
+      pauseHandler: () => this.popupHost.homeSettings?.hide(),
+      replayHandler: null,
+      homeHandler: null,
+      shareHandler: () => this.shareGameFromStartPage(),
+      feedbackHandler: () => void this.openHomeFeedback(),
+      onButtonClick: () => this.playButtonClickFeedback(),
+      mode: 'home'
+    })
+    controller.syncLayout()
+    controller.show()
   }
 
   private async openHomeFeedback() {
@@ -730,18 +654,13 @@ export class HomeSceneController extends Component {
       return
     }
 
-    if (!this.dailyRewardNode?.isValid || !this.dailyRewardController?.isValid) {
+    if (!this.popupHost.dailyReward) {
       if (!this.dailyRewardPopupPrefab) {
         this.startPageController?.showMessage('每日奖励弹窗资源未配置')
         return
       }
 
-      this.dailyRewardNode = instantiate(this.dailyRewardPopupPrefab)
-      this.dailyRewardNode.setParent(this.node)
-      this.dailyRewardNode.setPosition(0, 0, 0)
-      this.dailyRewardController = this.dailyRewardNode.getComponent(DailyRewardPopupController)
-        ?? this.dailyRewardNode.addComponent(DailyRewardPopupController)
-      this.dailyRewardController.setup({
+      this.popupHost.ensureDailyReward(this.dailyRewardPopupPrefab, {
         hostNode: this.node,
         onClaim: () => this.claimDailyReward(),
         onClose: () => this.closeDailyReward(),
@@ -750,26 +669,26 @@ export class HomeSceneController extends Component {
     }
 
     this.refreshDailyRewardState(true)
-    this.dailyRewardController.syncLayout()
-    this.dailyRewardController.show()
+    this.popupHost.dailyReward.syncLayout()
+    this.popupHost.dailyReward.show()
   }
 
   private claimDailyReward() {
     const result = this.economy.claimDailyLogin()
     this.refreshDailyRewardState(true)
     if (!result.claimed) {
-      this.dailyRewardController?.showMessage(
+      this.popupHost.dailyReward?.showMessage(
         result.reason === 'storage-failed' ? '领取失败，请稍后重试' : '今日奖励已经领取'
       )
       return
     }
 
     this.refreshPlayerResources()
-    this.dailyRewardController?.showMessage(`领取成功：金币 +${result.amount}`, true)
+    this.popupHost.dailyReward?.showMessage(`领取成功：金币 +${result.amount}`, true)
   }
 
   private closeDailyReward() {
-    this.dailyRewardController?.hide()
+    this.popupHost.dailyReward?.hide()
   }
 
   /**
@@ -777,7 +696,7 @@ export class HomeSceneController extends Component {
    * 状态未变化时不重复 render，保留领取成功提示。
    */
   private refreshDailyRewardState(force = false) {
-    if (!this.dailyRewardController?.isValid) {
+    if (!this.popupHost.dailyReward?.isValid) {
       return
     }
 
@@ -788,7 +707,7 @@ export class HomeSceneController extends Component {
     }
 
     this.dailyRewardStateKey = stateKey
-    this.dailyRewardController.renderState(state)
+    this.popupHost.dailyReward.renderState(state)
   }
 
   // 首页分享还没有本局分数，使用邀请挑战文案更符合入口语境。

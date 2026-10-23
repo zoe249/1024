@@ -9,7 +9,11 @@ function load(file, dependencies, globals = {}) {
   const source = fs.readFileSync(path.join(root, file), 'utf8')
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2018, experimentalDecorators: true } }).outputText
   const module = { exports: {} }
-  vm.runInNewContext(output, { module, exports: module.exports, require: name => { assert.ok(name in dependencies, name); return dependencies[name] }, console, ...globals }, { filename: file })
+  vm.runInNewContext(output, { module, exports: module.exports, require: name => { if (!(name in dependencies) && (/appearance\//.test(name) || /(?:Appearance(?:Types|Catalog|Resolver|AssetLoader|Runtime)|BaseAppearance|(?:Game|Home|Loading)Appearance)$/.test(name))) {
+      const dependency = path.posix.normalize(path.posix.join(path.posix.dirname(file), name + '.ts'))
+      return load(dependency, { cc: dependencies.cc })
+    }
+    assert.ok(name in dependencies, name); return dependencies[name] }, console, ...globals }, { filename: file })
   return module.exports
 }
 const presentation = load('assets/script/settlement/SettlementPresentation.ts', {})
@@ -181,9 +185,10 @@ mc.renderState(true,4172,0,68);assert.equal(mc.highestIcon.node.active,false);
 mc.renderState(true,4172,512,68);assert.equal(mc.highestIcon.node.active,true);mc.onDestroy();
 
 const pieceCc={...cc,_decorator:{...cc._decorator,property:()=>()=>{}},ParticleSystem2D:class{},Vec2:class{}};
-const {PieceController}=load('assets/script/gameplay/PieceController.ts',{cc:pieceCc,'./PieceStyle':pieceStyles});
-const piece=new PieceController();piece.node=new Node('ActualPiece');piece.bodySprite=new Node('Body').addComponent(Sprite);
-piece.setValue(512);assert.equal(JSON.stringify(piece.bodySprite.color),JSON.stringify(cc.Color.fromHEX(new cc.Color(),'#6e55b8')));
+const pieceView=load('assets/script/gameplay/PieceAppearanceView.ts',{cc:pieceCc,'./PieceStyle':pieceStyles});
+const {PieceController}=load('assets/script/gameplay/PieceController.ts',{cc:pieceCc,'./PieceAppearanceView':pieceView});
+const piece=new PieceController();piece.node=new Node('ActualPiece');const pieceBody=new Node('Body');pieceBody.setParent(piece.node);pieceBody.addComponent(Sprite);piece.onLoad();
+piece.setValue(512);assert.equal(JSON.stringify(pieceBody.getComponent(Sprite).color),JSON.stringify(cc.Color.fromHEX(new cc.Color(),'#6e55b8')));
 const {ScoreManager}=load('assets/script/gameplay/ScoreManager.ts',{});const scoreManager=new ScoreManager();
 for(const value of [128,512,256])scoreManager.updateHighestPieceValue(value);
 assert.equal(scoreManager.getHighestPieceValue(),512);scoreManager.reset();assert.equal(scoreManager.getHighestPieceValue(),0);

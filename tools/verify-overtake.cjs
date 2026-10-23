@@ -20,6 +20,10 @@ function load(file, dependencies, globals = {}, cocosSpread = false) {
   }
   const module = { exports: {} }
   vm.runInNewContext(output, { module, exports: module.exports, require: name => {
+    if (!(name in dependencies) && (/appearance\//.test(name) || /(?:Appearance(?:Types|Catalog|Resolver|AssetLoader|Runtime)|BaseAppearance|(?:Game|Home|Loading)Appearance)$/.test(name))) {
+      const dependency = path.posix.normalize(path.posix.join(path.posix.dirname(file), name + '.ts'))
+      return load(dependency, { cc: dependencies.cc })
+    }
     assert.ok(name in dependencies, `未提供依赖 ${name}`)
     return dependencies[name]
   }, console, setTimeout, clearTimeout, setInterval, clearInterval, ...globals }, { filename: file })
@@ -297,13 +301,16 @@ async function verifyWidget() {
   console.log('HUD 组件：实际 Prefab 引用、昵称省略、500ms 阶段、入场前替换、暂停收敛、头像竞态、隐藏/减少动态效果和销毁清理通过（模拟引擎时钟）')
 
   const geometry = load('assets/script/gameplay/BoardGeometry.ts', { cc })
+  const pieceStyles=load('assets/script/gameplay/PieceStyle.ts',{});
+  const hudView=load('assets/script/gameplay/PlayHudView.ts',{cc,'./PieceStyle':pieceStyles});
+  const skillView=load('assets/script/gameplay/SkillBarView.ts',{cc});
   const { PlayUIController } = load('assets/script/gameplay/PlayUIController.ts', {
+    './PlayHudView':hudView,'./SkillBarView':skillView,
     cc, '../settings/PauseOverlayController': {}, '../settlement/GameOverOverlayController': {},
     './OvertakeTargetWidget': { OvertakeTargetWidget }, '../tutorial/FirstEntryTutorialController': {}, './BoardGeometry': geometry
   })
   const {PauseOverlayController}=load('assets/script/settings/PauseOverlayController.ts',{cc});
   const presentation=load('assets/script/settlement/SettlementPresentation.ts',{});
-  const pieceStyles=load('assets/script/gameplay/PieceStyle.ts',{});
   const {GameOverOverlayController}=load('assets/script/settlement/GameOverOverlayController.ts',{
     cc,'../profile/PlayerAvatarRenderer':{PlayerAvatarRenderer},'../gameplay/PieceStyle':pieceStyles,'./SettlementPresentation':presentation
   });

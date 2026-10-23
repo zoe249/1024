@@ -24,7 +24,12 @@ function load(file, dependencies = {}) {
   } }).outputText
   const module = { exports: {} }
   vm.runInNewContext(output, { module, exports: module.exports, console,
-    require: name => name === 'cc' ? cc : dependencies[name] || {} }, { filename: file })
+    require: name => {
+      if (name === 'cc') return cc
+      if (dependencies[name]) return dependencies[name]
+      if (/appearance\//.test(name) || /(?:Appearance(?:Types|Catalog|Resolver|AssetLoader|Runtime)|BaseAppearance|(?:Game|Home|Loading)Appearance)$/.test(name)) return load(path.posix.normalize(path.posix.join(path.posix.dirname(file), name + '.ts')))
+      return {}
+    } }, { filename: file })
   return module.exports
 }
 const boardConfig = load('assets/script/gameplay/BoardConfig.ts')
@@ -33,7 +38,10 @@ const { PlayController } = load('assets/script/gameplay/PlayController.ts', {
   './BoardConfig': boardConfig, './OngoingGameSession': { OngoingGameSession },
   '../online/leaderboard/OvertakeRivalStore': { OvertakeRivalStore: { getInstance: () => ({ resolveOvertake: () => null }) } }
 })
-const { PlayUIController } = load('assets/script/gameplay/PlayUIController.ts')
+const pieceStyles = load('assets/script/gameplay/PieceStyle.ts')
+const hudView = load('assets/script/gameplay/PlayHudView.ts', { './PieceStyle': pieceStyles })
+const skillView = load('assets/script/gameplay/SkillBarView.ts')
+const { PlayUIController } = load('assets/script/gameplay/PlayUIController.ts', { './PlayHudView': hudView, './SkillBarView': skillView })
 function harness(initialStock = 0) {
   const stocks = Object.fromEntries(skills.map(skill => [skill, initialStock]))
   const consumed = [], requests = [], states = []

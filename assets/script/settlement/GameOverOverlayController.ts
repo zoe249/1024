@@ -1,7 +1,11 @@
+import { BASE_APPEARANCE } from '../appearance/BaseAppearance'
+import type { PieceAppearance } from '../appearance/AppearanceTypes'
+import type { PieceAppearanceFrames } from '../gameplay/GameAppearance'
+import type { AppearanceLease } from '../appearance/AppearanceRuntime'
 import { _decorator, Color, Component, EventTouch, game, Game, Graphics, instantiate, Label, Node, Prefab, resources, Sprite, SpriteFrame, tween, Tween, UIOpacity, UITransform, Vec3 } from 'cc'
 import type { LeaderboardEntryDto, SettlementRank } from '../online/api/GameApiClient'
 import { PlayerAvatarRenderer } from '../profile/PlayerAvatarRenderer'
-import { getPieceStyle } from '../gameplay/PieceStyle'
+import { getPieceDisplayStyle } from '../gameplay/PieceStyle'
 import { buildSettlementTrack, formatSettlementScore, makeCelebration, particleFrame, settlementFrame, SETTLEMENT_LIST_HEIGHT, type CelebrationParticle, type SettlementTrack } from './SettlementPresentation'
 
 const { ccclass } = _decorator
@@ -29,6 +33,12 @@ type Row = { node: Node; rank: Label; medal: Sprite; name: Label; score: Label; 
 /** 固定层级由 Prefab 维护；单局数据、压缩冲榜和短时彩纸由此处渲染。 */
 @ccclass('GameOverOverlayController')
 export class GameOverOverlayController extends Component {
+  private pieceAppearance: PieceAppearance = BASE_APPEARANCE.piece
+  private pieceFrames: PieceAppearanceFrames = {}
+  private pieceLease: AppearanceLease | null = null
+  private baseHighestBody: SpriteFrame | null = null
+  private baseHighestOutline: SpriteFrame | null = null
+  private hasBoundHighestFrames = false
   private options: Options | null = null
   private mask: Node | null = null
   private panel: Node | null = null
@@ -76,6 +86,17 @@ export class GameOverOverlayController extends Component {
   private readonly homeTap = (event: EventTouch) => this.act(event, 0)
   private readonly replayTap = (event: EventTouch) => this.act(event, 1)
   private readonly shareTap = (event: EventTouch) => this.act(event, 2)
+
+  applyPieceAppearance(appearance: PieceAppearance, frames: PieceAppearanceFrames = {}, lease?: AppearanceLease) {
+    if (this.disposed) return
+    const previous = this.pieceLease
+    this.pieceLease = lease?.retain() ?? null
+    this.pieceAppearance = appearance
+    this.pieceFrames = frames
+    this.highestIconValue = -1
+    this.refreshHighestIcon()
+    previous?.release()
+  }
 
   setup(options: Options) {
     this.options = options
@@ -135,6 +156,12 @@ export class GameOverOverlayController extends Component {
 
   onDestroy() {
     this.disposed = true
+    const pieceLease = this.pieceLease
+    this.pieceLease = null
+    if (this.highestIcon?.isValid && this.highestIcon.node?.isValid && this.pieceFrames.body && this.highestIcon.spriteFrame === this.pieceFrames.body) this.highestIcon.spriteFrame = this.baseHighestBody?.isValid ? this.baseHighestBody : null
+    if (this.highestIconOutline?.isValid && this.highestIconOutline.node?.isValid && this.pieceFrames.outline && this.highestIconOutline.spriteFrame === this.pieceFrames.outline) this.highestIconOutline.spriteFrame = this.baseHighestOutline?.isValid ? this.baseHighestOutline : null
+    this.pieceFrames = {}
+    pieceLease?.release()
     this.entering = false
     game.off(Game.EVENT_HIDE, this.hideEvent, this)
     game.off(Game.EVENT_SHOW, this.showEvent, this)
@@ -322,8 +349,15 @@ export class GameOverOverlayController extends Component {
     const value = this.values.highest
     this.highestIconValue = value
     this.highestIcon.node.active = value > 0
-    const style = getPieceStyle(value)
+    const style = getPieceDisplayStyle(value, 'settlement', this.pieceAppearance)
     const color = (hex: string) => Color.fromHEX(new Color(), hex)
+    if (!this.hasBoundHighestFrames) {
+      this.hasBoundHighestFrames = true
+      this.baseHighestBody = this.highestIcon.spriteFrame
+      this.baseHighestOutline = this.highestIconOutline?.spriteFrame ?? null
+    }
+    this.highestIcon.spriteFrame = this.pieceFrames.body ?? this.baseHighestBody
+    if (this.highestIconOutline) this.highestIconOutline.spriteFrame = this.pieceFrames.outline ?? this.baseHighestOutline
     this.highestIcon.color = color(style.bodyColor)
     if (this.highestIconOutline) this.highestIconOutline.color = color(style.outlineColor ?? '#4b3528')
     if (this.highestIconLabel) {

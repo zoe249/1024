@@ -1,3 +1,5 @@
+import { appearanceRuntime, type AppearanceLease } from '../appearance/AppearanceRuntime'
+import { LoadingAppearance } from './LoadingAppearance'
 import {
   _decorator,
   Color,
@@ -16,18 +18,17 @@ import {
   Vec3
 } from 'cc'
 
+import { LoadingLeavesEffect } from './LoadingLeavesEffect'
+
 const { ccclass, property } = _decorator
 
 const DESIGN_WIDTH = 750
 const DESIGN_HEIGHT = 1334
 const PROGRESS_WIDTH = 440
 const PROGRESS_FILL_WIDTH = 428
-const LEAF_COUNT = 24
 
 const BROWN = new Color(74, 48, 28, 255)
 const CREAM = new Color(255, 246, 218, 255)
-const GREEN = new Color(126, 183, 54, 255)
-const TRACK = new Color(255, 239, 199, 255)
 
 const LOADING_TIPS: ReadonlyArray<string> = [
   '相同数字相邻后会自动合成',
@@ -39,26 +40,6 @@ const LOADING_TIPS: ReadonlyArray<string> = [
   '木槌可以精准敲碎一颗棋子',
   '交换技能只能作用于相邻棋子'
 ]
-
-type WindPath = {
-  start: Vec3
-  controlA: Vec3
-  controlB: Vec3
-  end: Vec3
-}
-
-type LeafParticle = {
-  node: Node
-  opacity: UIOpacity
-  pathIndex: number
-  progress: number
-  speed: number
-  sway: number
-  phase: number
-  baseScale: number
-  baseRotation: number
-  angularVelocity: number
-}
 
 // 模块级索引用于降低连续两次加载时出现同一句提示的概率。
 let previousTipIndex = -1
@@ -77,6 +58,8 @@ export class LoadingSceneController extends Component {
   @property({ type: SpriteFrame, tooltip: 'Shared hand-drawn leaf sprite frame' })
   leafSpriteFrame: SpriteFrame | null = null
 
+  private readonly appearance = new LoadingAppearance()
+  private gameAppearance: AppearanceLease | null = null
   private backgroundNode: Node | null = null
   private designRoot: Node | null = null
   private leafLayer: Node | null = null
@@ -84,29 +67,13 @@ export class LoadingSceneController extends Component {
   private windStreakNode: Node | null = null
   private progressFillNode: Node | null = null
   private percentLabel: Label | null = null
-  private readonly leafParticles: LeafParticle[] = []
+  private leavesEffect: LoadingLeavesEffect | null = null
   private activeTip = LOADING_TIPS[0]
   private hasRequestedLoadScene = false
   private loadingStartedAtMs = 0
-  private randomState = 1024
-  private elapsedSeconds = 0
-
-  private readonly windPaths: ReadonlyArray<WindPath> = [
-    {
-      start: new Vec3(430, 610, 0),
-      controlA: new Vec3(110, 500, 0),
-      controlB: new Vec3(70, -130, 0),
-      end: new Vec3(-430, -560, 0)
-    },
-    {
-      start: new Vec3(440, 330, 0),
-      controlA: new Vec3(160, 230, 0),
-      controlB: new Vec3(-130, -70, 0),
-      end: new Vec3(-430, -310, 0)
-    }
-  ]
 
   onLoad() {
+    this.gameAppearance = appearanceRuntime.acquireBase('game')
     this.selectRandomTip()
     this.ensureLoadingUi()
     this.renderProgress(0, false)
@@ -120,18 +87,19 @@ export class LoadingSceneController extends Component {
   }
 
   update(deltaTime: number) {
-    const safeDeltaTime = Math.min(deltaTime, 0.05)
-    this.elapsedSeconds += safeDeltaTime
-    this.updateLeafParticles(safeDeltaTime)
+    this.leavesEffect?.update(deltaTime)
   }
 
   onDestroy() {
+    this.gameAppearance?.release()
+    this.gameAppearance = null
+    this.appearance.dispose()
     this.unscheduleAllCallbacks()
     this.stopNodeTween(this.contentRoot)
     this.stopNodeTween(this.windStreakNode)
     this.stopNodeTween(this.progressFillNode)
-    this.leafParticles.forEach((particle) => this.stopNodeTween(particle.node))
-    this.leafParticles.length = 0
+    this.leavesEffect?.dispose()
+    this.leavesEffect = null
   }
 
   /**
@@ -162,7 +130,12 @@ export class LoadingSceneController extends Component {
         const remainingSeconds = Math.max(0, this.minimumDisplaySeconds - elapsedSeconds)
         this.scheduleOnce(() => {
           if (this.isValid) {
-            director.loadScene(this.targetSceneName)
+            const ticket = this.gameAppearance ? appearanceRuntime.handoffGame(this.gameAppearance, this.targetSceneName) : null
+            this.gameAppearance = null
+            const accepted = director.loadScene(this.targetSceneName, () => {
+              if (ticket !== null) appearanceRuntime.discardPendingGame(ticket)
+            })
+            if (accepted === false && ticket !== null) appearanceRuntime.discardPendingGame(ticket)
           }
         }, remainingSeconds)
       }
@@ -196,7 +169,8 @@ export class LoadingSceneController extends Component {
     this.windStreakNode = this.ensureWindStreaks(this.designRoot)
     this.leafLayer = this.ensureNode(this.designRoot, 'LeafLayer')
     this.leafLayer.getComponent(UITransform)?.setContentSize(DESIGN_WIDTH, DESIGN_HEIGHT)
-    this.createLeafParticles()
+    this.leavesEffect = new LoadingLeavesEffect(this.leafLayer, this.appearance.leaf(this.leafSpriteFrame))
+    this.leavesEffect.initialize()
 
     this.contentRoot = this.ensureNode(this.designRoot, 'LoadingContent')
     this.contentRoot.getComponent(UITransform)?.setContentSize(DESIGN_WIDTH, DESIGN_HEIGHT)
@@ -208,19 +182,20 @@ export class LoadingSceneController extends Component {
     const node = this.ensureNode(this.node, 'Background')
     node.setSiblingIndex(0)
     const sprite = node.getComponent(Sprite) ?? node.addComponent(Sprite)
-    sprite.spriteFrame = this.backgroundSpriteFrame
+    const backgroundFrame = this.appearance.background(this.backgroundSpriteFrame)
+    sprite.spriteFrame = backgroundFrame
     sprite.type = Sprite.Type.SIMPLE
     sprite.sizeMode = Sprite.SizeMode.CUSTOM
-    sprite.enabled = !!this.backgroundSpriteFrame
+    sprite.enabled = !!backgroundFrame
 
-    const sourceWidth = this.backgroundSpriteFrame?.originalSize.width || DESIGN_WIDTH
-    const sourceHeight = this.backgroundSpriteFrame?.originalSize.height || DESIGN_HEIGHT
+    const sourceWidth = backgroundFrame?.originalSize.width || DESIGN_WIDTH
+    const sourceHeight = backgroundFrame?.originalSize.height || DESIGN_HEIGHT
     node.getComponent(UITransform)?.setContentSize(sourceWidth, sourceHeight)
 
     const fallback = node.getComponent(Graphics) ?? node.addComponent(Graphics)
     fallback.clear()
-    fallback.enabled = !this.backgroundSpriteFrame
-    if (!this.backgroundSpriteFrame) {
+    fallback.enabled = !backgroundFrame
+    if (!backgroundFrame) {
       fallback.fillColor = new Color(54, 190, 227, 255)
       fallback.rect(-DESIGN_WIDTH / 2, -DESIGN_HEIGHT / 2, DESIGN_WIDTH, DESIGN_HEIGHT)
       fallback.fill()
@@ -251,117 +226,14 @@ export class LoadingSceneController extends Component {
     return node
   }
 
-  private createLeafParticles() {
-    if (!this.leafLayer || !this.leafSpriteFrame || this.leafParticles.length > 0) {
-      return
-    }
-
-    const leafColors = [
-      new Color(255, 255, 255, 255),
-      new Color(226, 255, 190, 255),
-      new Color(255, 242, 160, 255),
-      new Color(208, 238, 154, 255)
-    ]
-
-    for (let index = 0; index < LEAF_COUNT; index += 1) {
-      const node = new Node(`WindLeaf_${index}`)
-      node.setParent(this.leafLayer)
-      const transform = node.addComponent(UITransform)
-      transform.setContentSize(52, 56)
-      const sprite = node.addComponent(Sprite)
-      sprite.spriteFrame = this.leafSpriteFrame
-      sprite.type = Sprite.Type.SIMPLE
-      sprite.sizeMode = Sprite.SizeMode.CUSTOM
-      sprite.color = leafColors[index % leafColors.length]
-      const opacity = node.addComponent(UIOpacity)
-
-      const particle: LeafParticle = {
-        node,
-        opacity,
-        pathIndex: index % this.windPaths.length,
-        progress: (index / LEAF_COUNT + this.random() * 0.08) % 1,
-        speed: 0.13 + this.random() * 0.09,
-        sway: 8 + this.random() * 20,
-        phase: this.random() * Math.PI * 2,
-        baseScale: 0.5 + this.random() * 0.72,
-        baseRotation: this.random() * 360,
-        angularVelocity: (this.random() > 0.5 ? 1 : -1) * (70 + this.random() * 150)
-      }
-      this.leafParticles.push(particle)
-      this.placeLeafParticle(particle)
-    }
-  }
-
-  private updateLeafParticles(deltaTime: number) {
-    for (const particle of this.leafParticles) {
-      particle.progress += particle.speed * deltaTime
-      if (particle.progress >= 1) {
-        particle.progress -= 1
-        particle.pathIndex = (particle.pathIndex + 1) % this.windPaths.length
-      }
-      this.placeLeafParticle(particle)
-    }
-  }
-
-  private placeLeafParticle(particle: LeafParticle) {
-    const path = this.windPaths[particle.pathIndex]
-    const progress = particle.progress
-    const position = this.cubicBezier(path, progress)
-    const tangent = this.cubicBezierTangent(path, progress)
-    const tangentLength = Math.max(0.001, Math.hypot(tangent.x, tangent.y))
-    const normalX = -tangent.y / tangentLength
-    const normalY = tangent.x / tangentLength
-    const wave = Math.sin(progress * Math.PI * 5 + particle.phase) * particle.sway
-    particle.node.setPosition(position.x + normalX * wave, position.y + normalY * wave, 0)
-
-    const pulse = 1 + Math.sin(progress * Math.PI * 4 + particle.phase) * 0.08
-    const scale = particle.baseScale * pulse
-    particle.node.setScale(scale, scale, 1)
-    particle.node.angle = particle.baseRotation + this.elapsedSeconds * particle.angularVelocity
-
-    // 路径首尾淡入淡出，循环回到起点时不会产生跳闪。
-    const edgeFade = Math.min(1, progress * 10, (1 - progress) * 10)
-    particle.opacity.opacity = Math.round(255 * edgeFade)
-  }
-
-  private cubicBezier(path: WindPath, progress: number) {
-    const inverse = 1 - progress
-    const inverseSquared = inverse * inverse
-    const progressSquared = progress * progress
-    return new Vec3(
-      inverseSquared * inverse * path.start.x
-        + 3 * inverseSquared * progress * path.controlA.x
-        + 3 * inverse * progressSquared * path.controlB.x
-        + progressSquared * progress * path.end.x,
-      inverseSquared * inverse * path.start.y
-        + 3 * inverseSquared * progress * path.controlA.y
-        + 3 * inverse * progressSquared * path.controlB.y
-        + progressSquared * progress * path.end.y,
-      0
-    )
-  }
-
-  private cubicBezierTangent(path: WindPath, progress: number) {
-    const inverse = 1 - progress
-    return new Vec3(
-      3 * inverse * inverse * (path.controlA.x - path.start.x)
-        + 6 * inverse * progress * (path.controlB.x - path.controlA.x)
-        + 3 * progress * progress * (path.end.x - path.controlB.x),
-      3 * inverse * inverse * (path.controlA.y - path.start.y)
-        + 6 * inverse * progress * (path.controlB.y - path.controlA.y)
-        + 3 * progress * progress * (path.end.y - path.controlB.y),
-      0
-    )
-  }
-
   private ensureStatusCopy(parent: Node) {
     this.createLabel(parent, 'Title', '游戏准备中', 44, CREAM, new Vec3(0, 17, 0), 460, 62, true, BROWN, 4)
-    this.createLabel(parent, 'Subtitle', '正在整理棋盘与数字', 22, BROWN, new Vec3(0, -41, 0), 400, 40, false, CREAM, 2)
-    this.createLabel(parent, 'Tip', `小提示：${this.activeTip}`, 21, BROWN, new Vec3(0, -425, 0), 610, 44, false, CREAM, 2)
+    this.createLabel(parent, 'Subtitle', '正在整理棋盘与数字', 22, this.appearance.color('text'), new Vec3(0, -41, 0), 400, 40, false, CREAM, 2)
+    this.createLabel(parent, 'Tip', `小提示：${this.activeTip}`, 21, this.appearance.color('text'), new Vec3(0, -425, 0), 610, 44, false, CREAM, 2)
   }
 
   private ensureProgress(parent: Node) {
-    this.percentLabel = this.createLabel(parent, 'Percent', '0%', 22, BROWN, new Vec3(0, -318, 0), 140, 40, true, CREAM, 2)
+    this.percentLabel = this.createLabel(parent, 'Percent', '0%', 22, this.appearance.color('text'), new Vec3(0, -318, 0), 140, 40, true, CREAM, 2)
 
     const track = this.ensureNode(parent, 'ProgressTrack')
     track.setPosition(0, -366, 0)
@@ -371,7 +243,7 @@ export class LoadingSceneController extends Component {
     graphics.fillColor = new Color(62, 40, 25, 80)
     graphics.roundRect(-217, -20, PROGRESS_WIDTH, 30, 15)
     graphics.fill()
-    graphics.fillColor = TRACK
+    graphics.fillColor = this.appearance.color('track')
     graphics.roundRect(-220, -15, PROGRESS_WIDTH, 30, 15)
     graphics.fill()
     graphics.lineWidth = 3
@@ -386,7 +258,7 @@ export class LoadingSceneController extends Component {
     fillTransform.setAnchorPoint(0, 0.5)
     const fillGraphics = fill.getComponent(Graphics) ?? fill.addComponent(Graphics)
     fillGraphics.clear()
-    fillGraphics.fillColor = GREEN
+    fillGraphics.fillColor = this.appearance.color('fill')
     fillGraphics.roundRect(0, -9, PROGRESS_FILL_WIDTH, 18, 9)
     fillGraphics.fill()
     fillGraphics.strokeColor = new Color(76, 125, 35, 90)
@@ -505,11 +377,6 @@ export class LoadingSceneController extends Component {
     node.setParent(parent)
     node.addComponent(UITransform)
     return node
-  }
-
-  private random() {
-    this.randomState = (this.randomState * 1664525 + 1013904223) >>> 0
-    return this.randomState / 0x100000000
   }
 
   private stopNodeTween(node: Node | null) {
