@@ -83,7 +83,7 @@ const GAME_OVER_HIGHEST_BASE_POWER = 7
 const GAME_OVER_HIGHEST_POWER_COIN = 8
 const GAME_OVER_MIN_COIN_REWARD = 5
 const GAME_OVER_MAX_COIN_REWARD = 300
-const DEFAULT_GAME_OVER_AUDIO_RESOURCE = 'Settlement/Celebration/victory-suona'
+const DEFAULT_GAME_OVER_AUDIO_RESOURCE = 'base/Settlement/Celebration/victory-suona'
 // 引导完成标记只在第二颗棋子稳定合成为 4 后写入，未完成退出时下次仍会重新引导。
 const FIRST_ENTRY_TUTORIAL_STORAGE_KEY = 'number-garden-first-entry-drop-guide-v1'
 const FIRST_ENTRY_TUTORIAL_PIECE_VALUE = 2
@@ -123,11 +123,11 @@ export class PlayController extends Component {
   @property({ type: Prefab, tooltip: 'Piece prefab' })
   basePieceController: Prefab | null = null
 
-  // 锤子技能使用的贴图，场景里绑定 assets/images/Skills/Hammer.png 的 SpriteFrame。
+  // 锤子技能使用的贴图，场景里绑定 assets/resources/base/images/Skills/Hammer.png 的 SpriteFrame。
   @property({ type: SpriteFrame, tooltip: 'Hammer skill sprite frame' })
   hammerSkillSpriteFrame: SpriteFrame | null = null
 
-  // 炸弹技能使用的贴图，场景里绑定 assets/images/Skills/Bomb.png 的 SpriteFrame。
+  // 炸弹技能使用的贴图，场景里绑定 assets/resources/base/images/Skills/Bomb.png 的 SpriteFrame。
   @property({ type: SpriteFrame, tooltip: 'Bomb skill sprite frame' })
   bombSkillSpriteFrame: SpriteFrame | null = null
 

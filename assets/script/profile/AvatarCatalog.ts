@@ -31,7 +31,7 @@ export function getAvatarKey(index: number) {
 }
 
 export function getAvatarSpritePath(index: number) {
-  return `Leaderboard/Avatars/avatar-${getAvatarKey(index)}/spriteFrame`
+  return `base/Leaderboard/Avatars/avatar-${getAvatarKey(index)}/spriteFrame`
 }
 
 

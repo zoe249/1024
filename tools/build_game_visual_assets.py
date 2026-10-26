@@ -109,12 +109,12 @@ def main() -> None:
     project = args.project.resolve()
 
     build_background(
-        project / "assets/images/World/bg_flat_cartoon_spring_meadow_v1.png",
-        project / "assets/images/World/spring-meadow-game-v1.jpg",
+        project / "design/base/images/World/bg_flat_cartoon_spring_meadow_v1.png",
+        project / "assets/resources/base/images/World/spring-meadow-game-v1.jpg",
     )
-    build_settings_icon(project / "assets/images/Buttons/GameSettingsBtn.png")
+    build_settings_icon(project / "assets/resources/base/images/Buttons/GameSettingsBtn.png")
     build_swap_icon(
-        project / "assets/images/Skills/SwapIcon.png",
+        project / "assets/resources/base/images/Skills/SwapIcon.png",
         project / "assets/fonts/EazyChatR.ttf",
     )
 

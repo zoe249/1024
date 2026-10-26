@@ -86,7 +86,7 @@ const RANK_MASK_HOME_COLOR = new Color(23, 43, 46, 196)
 const RANK_MASK_PAUSE_COLOR = new Color(0, 0, 0, 0)
 const HOMEPAGE_DESIGN_WIDTH = 750
 const HOMEPAGE_DESIGN_HEIGHT = 1625
-const LEADERBOARD_PREFAB_PATH = 'Leaderboard/LeaderboardPopup'
+const LEADERBOARD_PREFAB_PATH = 'base/Leaderboard/LeaderboardPopup'
 
 const HomepageArtwork = {
   background: 'background',

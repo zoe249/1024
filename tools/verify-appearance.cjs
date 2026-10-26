@@ -196,6 +196,93 @@ async function verify() {
   PlayHudView.renderNextPiece(8192, previewLabel, previewTile); assert.equal(preview.getChildByName('AppearanceBody').active, false)
   console.log('视图：棋盘/预览/结算共用注入样式，布局和 setValue 不回默认；完整彩色图白色乘色与返回 Base 还原通过')
 
+  const numberedInput = theme({ piece: { imagesByValue: { 2: ref('numbered/2'), 4: ref('numbered/4'), 16384: ref('numbered/16384') } } })
+  const numbered = resolveAppearance(numberedInput)
+  numberedInput.overrides.piece.imagesByValue[2].path = 'changed'
+  assert.equal(numbered.piece.imagesByValue[2].path, 'numbered/2')
+  assert.ok(Object.isFrozen(numbered.piece.imagesByValue)); equal(base.piece.imagesByValue, {})
+  for (const imagesByValue of [null, { 3: ref('bad') }, { '02': ref('bad') }, { 0: ref('bad') }, { 4503599627370495: ref('bad') }, { 9007199254740992: ref('bad') }, { 2: null }, { 2: { ...ref('bad'), kind: 'prefab' } }, { 2: { source: 'binding', id: 'piece.body', kind: 'spriteFrame' } }, { 2: ref('https://remote') }]) {
+    assert.throws(() => resolveAppearance(theme({ piece: { imagesByValue } })))
+  }
+  assert.ok(!types.sceneAppearanceAssets(numbered, 'home').some(asset => asset.path?.startsWith('numbered/')))
+  assert.ok(!types.sceneAppearanceAssets(numbered, 'loading').some(asset => asset.path?.startsWith('numbered/')))
+  assert.equal(types.sceneAppearanceAssets(numbered, 'game').filter(asset => asset.path?.startsWith('numbered/')).length, 3)
+  const numberedBackend = backendHarness(), numberedRuntime = new AppearanceRuntime(numberedBackend.loader)
+  const numberedPreparing = numberedRuntime.prepareResolved('game', numbered)
+  assert.equal(numberedBackend.jobs.length, 8)
+  numberedBackend.finishAll()
+  const numberedReady = await numberedPreparing.ready
+  assert.equal(numberedReady.status, 'ready')
+  const { GameAppearance: NumberedGameAppearance } = load('assets/script/gameplay/GameAppearance.ts')
+  const numberedView = new NumberedGameAppearance(numberedReady.lease)
+  const frames = numberedView.frames(), jobCountBeforeRender = numberedBackend.jobs.length
+  assert.ok(Object.isFrozen(frames.imagesByValue)); assert.equal(numberedView.frames(), frames)
+  const bodySprite = piece.node.getChildByName('Body').getComponent(cc.Sprite)
+  label.enabled = true; previewLabel.enabled = true; settlement.highestIconLabel.enabled = true
+  settlement.highestIconLabel.node = new cc.Node('highest-number')
+  for (const value of [2, 4, 16384, 2]) {
+    piece.applyAppearance(numbered.piece, frames); piece.setValue(value); piece.syncLayout(true)
+    assert.equal(piece.getValue(), value); assert.equal(bodySprite.spriteFrame, frames.imagesByValue[value])
+    equal(bodySprite.color, new cc.Color(255, 255, 255, 255)); assert.equal(label.enabled, false)
+    assert.equal(piece.getSpriteFrame(), original, '技能碎片与临时特效仍取不带数字的底图')
+    equal(piece.getBackgroundColor(), cc.Color.fromHEX(new cc.Color(), numbered.piece.stylesByValue[value]?.bodyColor ?? numbered.piece.fallbackStyle.bodyColor))
+    PlayHudView.renderNextPiece(value, previewLabel, previewTile, numbered.piece, frames.body, frames.imagesByValue[value])
+    assert.equal(previewBody.spriteFrame, frames.imagesByValue[value]); assert.equal(previewLabel.enabled, false)
+    equal(previewBody.color, new cc.Color(255, 255, 255, 255))
+    settlement.values.highest = value; settlement.applyPieceAppearance(numbered.piece, frames)
+    assert.equal(settlement.highestIcon.spriteFrame, frames.imagesByValue[value]); assert.equal(settlement.highestIconLabel.enabled, false)
+    equal(settlement.highestIcon.color, new cc.Color(255, 255, 255, 255))
+  }
+  piece.setValue(32768)
+  assert.equal(bodySprite.spriteFrame, original); assert.equal(label.enabled, true); assert.equal(label.string, '32768')
+  PlayHudView.renderNextPiece(32768, previewLabel, previewTile, numbered.piece, frames.body)
+  assert.equal(previewBody.node.active, false); assert.equal(previewLabel.enabled, true); assert.equal(previewLabel.string, '32768')
+  settlement.values.highest = 32768; settlement.applyPieceAppearance(numbered.piece, frames)
+  assert.equal(settlement.highestIcon.spriteFrame, original); assert.equal(settlement.highestIconLabel.enabled, true)
+  const alternate = resolveAppearance(theme({ piece: { imagesByValue: { 2: ref('numbered/b/2') } } }, 'numbered_b'))
+  const alternateImage = new SpriteFrame('numbered-b-2')
+  piece.setValue(2); piece.applyAppearance(alternate.piece, { imagesByValue: { 2: alternateImage } })
+  assert.equal(bodySprite.spriteFrame, alternateImage); assert.equal(label.enabled, false)
+  piece.applyAppearance(base.piece)
+  assert.equal(bodySprite.spriteFrame, original); assert.equal(label.enabled, true)
+  assert.equal(piece.getValue(), 2); equal(bodySprite.color, cc.Color.fromHEX(new cc.Color(), '#f8ecdc'))
+  settlement.applyPieceAppearance(base.piece)
+  assert.equal(numberedBackend.jobs.length, jobCountBeforeRender, '切换数值和刷新布局不得发起逐落子加载')
+  const surviving = numberedReady.lease.retain()
+  numberedView.dispose(); assert.ok(numberedBackend.assets.every(asset => asset.refs === 1))
+  PlayHudView.renderNextPiece(2, previewLabel, previewTile, numbered.piece, undefined, frames.imagesByValue[2])
+  PlayHudView.restoreNextPieceLabel(previewLabel); assert.equal(previewLabel.enabled, true)
+  PlayHudView.renderNextPiece(2, previewLabel, previewTile)
+  const overlays = [false, true].map(destroyChildren => {
+    const overlay = new GameOverOverlayController()
+    const icon = new cc.Node('numbered-highest').addComponent(cc.Sprite); icon.spriteFrame = original
+    const number = new cc.Node('numbered-label').addComponent(cc.Label); number.enabled = true
+    Object.assign(overlay, { values: { highest: 2 }, highestIcon: icon, highestIconLabel: number })
+    overlay.applyPieceAppearance(numbered.piece, frames, surviving)
+    return { overlay, icon, number, destroyChildren }
+  })
+  surviving.release(); surviving.release(); assert.ok(numberedBackend.assets.every(asset => asset.refs === 1))
+  const previousGame = cc.game, previousGameType = cc.Game
+  cc.game = { off() {} }; cc.Game = { EVENT_HIDE: 'hide', EVENT_SHOW: 'show' }
+  for (const { overlay, icon, number, destroyChildren } of overlays) {
+    overlay.onDisable()
+    if (destroyChildren) {
+      for (const component of [icon, number]) {
+        component.node.isValid = false; component.isValid = false
+        for (const key of Object.keys(component)) if (typeof component[key] === 'object' || typeof component[key] === 'function') component[key] = null
+      }
+    }
+    overlay.onDestroy(); overlay.onDestroy()
+    if (!destroyChildren) { assert.equal(icon.spriteFrame, original); assert.equal(number.enabled, true); assert.ok(numberedBackend.assets.every(asset => asset.refs === 1)) }
+  }
+  cc.game = previousGame; cc.Game = previousGameType
+  assert.ok(numberedBackend.assets.every(asset => asset.refs === 0))
+  const numberedFailure = numberedRuntime.prepareResolved('game', numbered)
+  numberedBackend.finish(numberedBackend.jobs.length - 1, new Error('numbered image missing'))
+  assert.equal((await numberedFailure.ready).status, 'failed')
+  numberedBackend.finishAll(); assert.ok(numberedBackend.assets.every(asset => asset.refs === 0))
+  console.log('带数字底图预留：逐数值本地贴图、白色乘色、三个展示位置隐藏/恢复 Label、缺图高值回退、A→B→Base、碎片不含数字、无逐落子加载、共享引用与整套失败释放通过；默认配置为空')
+
   const uiFrames = [], allGame = await appearanceRuntime.prepare('game').ready
   const { GameAppearance } = load('assets/script/gameplay/GameAppearance.ts')
   const view = new GameAppearance(allGame.lease)
@@ -223,7 +310,7 @@ async function verify() {
   home.dispose(); assert.equal(homeSprite.spriteFrame, original)
   const blank = new cc.Node('blank'); blank.addComponent(cc.UITransform)
   const missing = new HomeAppearance(); missing.applyArtwork(blank, 'logo', 560, 322)
-  assert.equal(pending[0].key, 'Homepage/logo-1024-number-garden/spriteFrame')
+  assert.equal(pending[0].key, 'base/Homepage/logo-1024-number-garden/spriteFrame')
   missing.dispose(); const lateHome = new SpriteFrame('late-home'); pending.shift().done(null, lateHome); assert.equal(lateHome.refs, 0)
   const homeRequest = appearanceRuntime.prepareResolved('home', resolveAppearance(theme({ home: { artwork: { logo: ref('home/override') } } })))
   for (const job of pending.splice(0)) job.done(null, new SpriteFrame(job.key))

@@ -46,9 +46,11 @@ npm run postbuild:wechat
 
 ```text
 assets/prefab/                 棋子预制体
-assets/resources/Settings/     设置弹窗素材
-assets/resources/Leaderboard/  排行榜素材与 LeaderboardPopup Prefab
-assets/resources/Profile/      个人中心素材与 ProfilePopup Prefab
+assets/resources/base/         基础资源，内部按功能分类
+assets/resources/base/images/  方块、技能、背景等基础图片
+assets/resources/base/Settings/     设置弹窗素材
+assets/resources/base/Leaderboard/  排行榜素材与 LeaderboardPopup Prefab
+assets/resources/base/Profile/      个人中心素材与 ProfilePopup Prefab
 assets/scence/                 游戏场景
 assets/script/home/            首页流程与首页 UI
 assets/script/gameplay/        棋盘、玩法流程与玩法 UI
@@ -65,6 +67,8 @@ assets/script/online/          接口、登录、云同步与排行榜
 tools/wechat-startup-page/     微信构建后处理
 ```
 
+资源目录先按主题、再按功能分类；后续主题放在 `assets/resources/<主题名>/`，与 `base` 同级。原 `assets/images/` 的图片已统一迁至 `base/images/`，保留原 `.meta` 和 UUID；背景设计源稿保存在 `design/base/images/World/`，运行时继续使用压缩后的 JPG。当前仅有基础资源，未创建空主题或新增 Bundle。`fonts`、`sound` 目录保持原引用与打包归属。
+
 ## 核心模块
 
 - `PlayController`：玩法流程和单局状态。
@@ -77,7 +81,7 @@ tools/wechat-startup-page/     微信构建后处理
 - `PlayerCloudSyncStore`：首次游客导入、增量操作队列和云端修订号同步。
 - `PlayerProfileStore`：读取和保存昵称、头像编号与最高分；头像编号统一映射项目内置资源。
 
-设置弹窗使用 `resources/Settings` 中的手绘素材，整体按 86% 等比显示；游戏内提供分享、重玩和返回。
+设置弹窗使用 `resources/base/Settings` 中的手绘素材，整体按 86% 等比显示；游戏内提供分享、重玩和返回。
 
 ## 注意事项
 

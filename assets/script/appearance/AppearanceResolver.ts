@@ -80,8 +80,18 @@ function mergeGame(target: ResolvedAppearance['game'], patch: unknown) {
 
 function mergePiece(target: ResolvedAppearance['piece'], patch: unknown) {
   const p = object(patch)
-  keys(p, ['layers', 'bodyMode', 'stylesByValue', 'fallbackStyle', 'preview'])
+  keys(p, ['layers', 'imagesByValue', 'bodyMode', 'stylesByValue', 'fallbackStyle', 'preview'])
   if (p.layers !== undefined) refs(target.layers, p.layers)
+  if (p.imagesByValue !== undefined) {
+    const images = object(p.imagesByValue)
+    for (const key of Object.keys(images)) {
+      const value = Number(key)
+      if (String(value) !== key || !Number.isSafeInteger(value) || value < 2 || 2 ** Math.round(Math.log2(value)) !== value) throw new Error('方块图片数值必须是安全整数范围内的二次幂')
+      const ref = asset(images[key])
+      if (ref.kind !== 'spriteFrame' || ref.source === 'binding') throw new Error('带数字的方块图片必须明确提供本地 SpriteFrame')
+      target.imagesByValue[value] = ref
+    }
+  }
   if (p.bodyMode !== undefined) {
     if (p.bodyMode !== 'tinted' && p.bodyMode !== 'fullColor') throw new Error('棋子染色模式无效')
     target.bodyMode = p.bodyMode

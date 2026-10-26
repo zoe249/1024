@@ -61,7 +61,7 @@ const PAUSE_SLIDER_DEFAULT_KNOB_X =
   PAUSE_SLIDER_TRACK_CENTER_X + PAUSE_SLIDER_TRACK_WIDTH * 0.5 - PAUSE_SLIDER_KNOB_VISIBLE_WIDTH * 0.5
 const PAUSE_TEXT_COLOR = new Color(81, 55, 37, 255)
 const GENERATED_BACKGROUND_NAME = 'GeneratedBackground'
-const SETTINGS_ART_ROOT = 'Settings/'
+const SETTINGS_ART_ROOT = 'base/Settings/'
 
 const SettingsArtwork = {
   panel: 'panel-background',
@@ -727,7 +727,7 @@ export class PauseOverlayController extends Component {
   }
 
   /**
-   * 从 resources/Settings 异步加载单张轻量 SpriteFrame。
+   * 从 resources/base/Settings 异步加载单张轻量 SpriteFrame。
    * 节点的点击区域先按定稿尺寸落位，因此首次加载素材时不会产生布局跳动。
    */
   private applyArtwork(node: Node, artwork: string, width: number, height: number) {

@@ -10,6 +10,8 @@ export type PieceStyle = { bodyColor: string; textColor?: string; outlineColor?:
 export type PieceLayer = 'shadow' | 'body' | 'outline' | 'highlight' | 'sparkle' | 'crown'
 export type PieceAppearance = {
   layers: Record<PieceLayer, AppearanceAssetRef>
+  // 可选皮肤按数值提供自带数字的底图；缺少的数值沿用图层与 Label。
+  imagesByValue: Record<number, AppearanceAssetRef>
   bodyMode: 'tinted' | 'fullColor'
   stylesByValue: Record<number, PieceStyle>
   fallbackStyle: PieceStyle
@@ -32,7 +34,7 @@ export type AppearanceOverrides = {
   home?: { artwork?: Partial<ResolvedAppearance['home']['artwork']> }
   loading?: { background?: AppearanceAssetRef; leaf?: Partial<ResolvedAppearance['loading']['leaf']>; progress?: Partial<ResolvedAppearance['loading']['progress']> }
   game?: { background?: AppearanceAssetRef; settings?: AppearanceAssetRef; skills?: Partial<ResolvedAppearance['game']['skills']>; board?: Partial<Record<BoardColorKey, Partial<{ color: string; opacity: number }>>> }
-  piece?: { layers?: Partial<PieceAppearance['layers']>; bodyMode?: PieceAppearance['bodyMode']; stylesByValue?: Record<number, Partial<PieceStyle>>; fallbackStyle?: Partial<PieceStyle>; preview?: Partial<PieceAppearance['preview']> }
+  piece?: { layers?: Partial<PieceAppearance['layers']>; imagesByValue?: PieceAppearance['imagesByValue']; bodyMode?: PieceAppearance['bodyMode']; stylesByValue?: Record<number, Partial<PieceStyle>>; fallbackStyle?: Partial<PieceStyle>; preview?: Partial<PieceAppearance['preview']> }
 }
 export type AppearanceTheme = { themeId: string; version: number; overrides: AppearanceOverrides }
 
@@ -48,5 +50,5 @@ export function appearanceAssetKey(ref: AppearanceAssetRef) {
 export function sceneAppearanceAssets(appearance: ResolvedAppearance, scene: AppearanceScene): AppearanceAssetRef[] {
   if (scene === 'home') return Object.keys(appearance.home.artwork).map(key => appearance.home.artwork[key as HomeArtworkKey])
   if (scene === 'loading') return [appearance.loading.background, ...(appearance.loading.leaf.enabled ? [appearance.loading.leaf.asset] : [])]
-  return [appearance.game.background, appearance.game.settings, ...Object.keys(appearance.game.skills).map(key => appearance.game.skills[key as 'bomb' | 'hammer' | 'swap']), ...Object.keys(appearance.piece.layers).map(key => appearance.piece.layers[key as PieceLayer])]
+  return [appearance.game.background, appearance.game.settings, ...Object.keys(appearance.game.skills).map(key => appearance.game.skills[key as 'bomb' | 'hammer' | 'swap']), ...Object.keys(appearance.piece.layers).map(key => appearance.piece.layers[key as PieceLayer]), ...Object.keys(appearance.piece.imagesByValue).map(key => appearance.piece.imagesByValue[Number(key)])]
 }

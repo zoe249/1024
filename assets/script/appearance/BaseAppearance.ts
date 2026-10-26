@@ -10,7 +10,7 @@ const homePaths: Record<HomeArtworkKey, string> = {
   logo: 'logo-1024-number-garden', coin: 'resource-coin', avatarFrame: 'avatar-frame', settings: 'ui-settings'
 }
 const artwork = {} as ResolvedAppearance['home']['artwork']
-for (const key of Object.keys(homePaths) as HomeArtworkKey[]) artwork[key] = { source: 'resources', path: `Homepage/${homePaths[key]}/spriteFrame`, kind: 'spriteFrame' }
+for (const key of Object.keys(homePaths) as HomeArtworkKey[]) artwork[key] = { source: 'resources', path: `base/Homepage/${homePaths[key]}/spriteFrame`, kind: 'spriteFrame' }
 
 export const BASE_APPEARANCE: ResolvedAppearance = {
   themeId: 'base', version: 1,
@@ -26,6 +26,7 @@ export const BASE_APPEARANCE: ResolvedAppearance = {
     board: { shadow: { color: '#4b3720', opacity: 18 }, tint: { color: '#fff8dc', opacity: 8 }, inner: { color: '#fff8dc', opacity: 0 }, columnTint: { color: '#ffffff', opacity: 0 }, columnEdge: { color: '#ffffff', opacity: 0 }, dash: { color: '#ffffff', opacity: 0 } }
   },
   piece: {
+    imagesByValue: {},
     layers: { shadow: binding('piece.shadow'), body: binding('piece.body'), outline: binding('piece.outline'), highlight: binding('piece.highlight'), sparkle: binding('piece.sparkle'), crown: binding('piece.crown') },
     bodyMode: 'tinted', fallbackStyle: { bodyColor: '#cf586d' },
     stylesByValue: {

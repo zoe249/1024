@@ -24,6 +24,8 @@ description: Cocos Creator 3.8.8 下落式数字合成项目
 
 - 优先做最小且完整的改动，保持玩法、数据与渲染职责边界，不覆盖用户已有修改。
 - 静态 UI 优先在 Creator 层级中维护；运行时布局、安全区和动态表现放在脚本中。
+- `assets/resources/` 按主题分组，基础资源放在 `base/<功能>/`；后续主题与 `base` 同级，内部继续按功能分类。移动资源时连同原 `.meta` 一起移动并更新加载路径，保留 UUID。
+- 原 `assets/images/` 图片已归入 `assets/resources/base/images/<功能>/`；设计源稿放在 `design/`，不得重新把大源图放入运行资源目录。
 - 棋盘装饰只由 `PlayUIController.ensureBoardDecorations()` 绘制，不在场景中重复摆放。
 - 技能栏需兼容 `SkliisController` 与 `SkillsController` 两个节点名。
 - 不破坏场景层级、Prefab、序列化属性、资源 UUID 和动态加载路径；非资源重映射任务不要修改 `.meta` 文件。

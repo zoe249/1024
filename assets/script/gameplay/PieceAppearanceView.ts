@@ -18,7 +18,8 @@ import { getPieceDisplayStyle, type PieceDecoration, type PieceStyle } from './P
 export class PieceAppearanceView {
   private appearance: PieceAppearance = BASE_APPEARANCE.piece
   private frames: PieceAppearanceFrames = {}
-  private readonly baseFrames: Partial<Record<keyof PieceAppearanceFrames, SpriteFrame | null>> = {}
+  private readonly baseFrames: Partial<Record<'shadow' | 'body' | 'outline' | 'highlight', SpriteFrame | null>> = {}
+  private imageLabelEnabled: boolean | null = null
   private value = 2
   private shadowSprite: Sprite | null = null
   private bodySprite: Sprite | null = null
@@ -51,7 +52,8 @@ export class PieceAppearanceView {
     for (const [key, sprite] of [['shadow', this.shadowSprite], ['body', this.bodySprite], ['outline', this.outlineSprite], ['highlight', this.highlightSprite]] as const) {
       if (!sprite) continue
       if (!Object.prototype.hasOwnProperty.call(this.baseFrames, key)) this.baseFrames[key] = sprite.spriteFrame
-      const frame = this.frames[key] ?? this.baseFrames[key] ?? null
+      const image = key === 'body' ? this.frames.imagesByValue?.[this.value] : undefined
+      const frame = image ?? this.frames[key] ?? this.baseFrames[key] ?? null
       if (sprite.spriteFrame !== frame && (sprite.spriteFrame || frame)) sprite.spriteFrame = frame
     }
   }
@@ -109,6 +111,7 @@ export class PieceAppearanceView {
 
   // 技能碎片和合并临时棋子只复制主体图，不复制数字、描边和皇冠。
   getSpriteFrame(): SpriteFrame | null {
+    if (this.frames.imagesByValue?.[this.value]) return this.frames.body ?? this.baseFrames.body ?? null
     return this.bodySprite?.spriteFrame ?? null
   }
 
@@ -168,12 +171,14 @@ export class PieceAppearanceView {
   }
 
   private refreshView() {
+    this.applyLayerFrames()
+    const image = this.bodySprite ? this.frames.imagesByValue?.[this.value] : undefined
     const style = getPieceDisplayStyle(this.value, 'board', this.appearance)
     this.currentBgColor = this.fromHex(style.bodyColor)
     this.currentTextColor = this.fromHex(style.textColor ?? '#fff9ea')
 
     if (this.bodySprite) {
-      this.bodySprite.color = this.currentBgColor
+      this.bodySprite.color = image ? new Color(255, 255, 255, 255) : this.currentBgColor
     }
     if (this.outlineSprite) {
       this.outlineSprite.color = this.fromHex(style.outlineColor ?? '#4b3528')
@@ -181,6 +186,15 @@ export class PieceAppearanceView {
 
     this.refreshDecoration(style.decoration ?? 'none')
     this.refreshValueLabel(style)
+    if (this.valueLabel) {
+      if (image) {
+        if (this.imageLabelEnabled === null) this.imageLabelEnabled = this.valueLabel.enabled
+        this.valueLabel.enabled = false
+      } else if (this.imageLabelEnabled !== null) {
+        this.valueLabel.enabled = this.imageLabelEnabled
+        this.imageLabelEnabled = null
+      }
+    }
     this.lastTrailColorValue = -1
   }
 

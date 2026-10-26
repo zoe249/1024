@@ -275,9 +275,24 @@ const methods = before => {
 const changed = new Set(['onLoad', 'onDestroy', 'clearBoardPieces', 'spawnSkillShatterParticles', 'spawnBombShockwave', 'spawnUpgradeImpact', 'spawnMergeFlash', 'spawnMergeBurst', 'createFxPiece', 'instantiateSnapshotPiece', 'spawnPiece', 'restartGame'])
 const oldMethods = methods(true), newMethods = methods(false)
 for (const [name, text] of oldMethods) if (!changed.has(name)) assert.equal(newMethods.get(name), text, `玩法方法 ${name} 必须保持原实现`)
-const changedAssets = execFileSync('git', ['-c', 'core.safecrlf=false', 'diff', '--name-only', baseline, '--', 'assets'], { cwd: root, encoding: 'utf8' }).trim().split('\n')
-const existingAssets = new Set(execFileSync('git', ['ls-tree', '-r', '--name-only', baseline, 'assets'], { cwd: root, encoding: 'utf8' }).trim().split('\n'))
-assert.ok(!changedAssets.some(f => existingAssets.has(f) && /\.(scene|prefab|meta)$/.test(f)), '既有序列化资源不得变化')
+// 目录迁移只允许路径变化；批量读取 Git 原始内容，继续核对资源与序列化契约。
+const existingAssets = execFileSync('git', ['ls-tree', '-r', baseline, '--', 'assets'], { cwd: root, encoding: 'utf8' }).trim().split('\n')
+  .map(line => { const [info, file] = line.split('\t'); return { hash: info.split(' ')[2], file } })
+  .filter(({ file }) => /^assets\/(resources|images)\//.test(file) || /\.(scene|prefab|meta)$/.test(file))
+const originalBlobs = execFileSync('git', ['cat-file', '--batch'], { cwd: root, input: existingAssets.map(asset => asset.hash).join('\n') + '\n', maxBuffer: 32e6 })
+let blobOffset = 0
+for (const { file } of existingAssets) {
+  const headerEnd = originalBlobs.indexOf(10, blobOffset)
+  const length = Number(originalBlobs.subarray(blobOffset, headerEnd).toString().split(' ')[2])
+  const original = originalBlobs.subarray(headerEnd + 1, headerEnd + 1 + length)
+  blobOffset = headerEnd + length + 2
+  let currentFile = file.replace(/^assets\/resources\//, 'assets/resources/base/').replace(/^assets\/images(?=\/|\.meta$)/, 'assets/resources/base/images')
+  const backgroundSource = 'assets/images/World/bg_flat_cartoon_spring_meadow_v1.png'
+  if (file === backgroundSource || file === `${backgroundSource}.meta`) currentFile = file.replace('assets/images/World/', 'design/base/images/World/')
+  const actual = fs.readFileSync(path.join(root, currentFile))
+  if (/\.(scene|prefab|meta)$/.test(file)) assert.equal(actual.toString().replace(/\r\n/g, '\n'), original.toString().replace(/\r\n/g, '\n'), `序列化资源 ${file}`)
+  else assert.ok(actual.equals(original), `资源内容 ${file}`)
+}
 for (const file of ['gameplay/PieceController', 'gameplay/PlayController', 'gameplay/PlayUIController', 'home/HomeSceneController', 'home/StartPageController', 'loading/LoadingSceneController', 'settlement/GameOverOverlayController']) {
   const declarations = before => {
     const ast = ts.createSourceFile(file, source(`assets/script/${file}.ts`, before), ts.ScriptTarget.Latest, true)
@@ -291,7 +306,7 @@ for (const name of ['instantiateSnapshotPiece', 'spawnPiece', 'restartGame']) {
   const strip = text => text.replace(/^    if \(this\.gameAppearance\) pieceController\.applyAppearance[^\n]+\n/gm, '').replace(/^    const previousAppearance = this\.gameAppearance\n    this\.gameAppearance = new GameAppearance\(previousAppearance\?\.lease\.retain\(\) \?\? appearanceRuntime\.acquireBase\('game'\)\)\n    previousAppearance\?\.dispose\(\)\n/gm, '')
   assert.equal(strip(newMethods.get(name)), oldMethods.get(name), name + ' 的原玩法必须保留')
 }
-console.log('玩法方法及既有 Scene/Prefab/meta 保持基线；Creator/微信实际渲染、声音和触摸尚需运行验收')
+console.log('玩法方法、既有资源内容与 Scene/Prefab/meta 保持基线；资源归入 base、背景源稿保留在 design；Creator/微信实际渲染、声音和触摸尚需运行验收')
 
 async function verifyPopupOwnership() {
   const env = environment(false), { Node, Component } = env.cc

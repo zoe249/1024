@@ -37,9 +37,9 @@ export type FirstEntryTutorialLayout = {
   spacing: number
 }
 
-const HAND_RESOURCE = 'Tutorial/tutorial-hand-tap/spriteFrame'
-const TAP_RINGS_RESOURCE = 'Tutorial/tutorial-tap-rings/spriteFrame'
-const SPEECH_BUBBLE_RESOURCE = 'Tutorial/tutorial-speech-bubble/spriteFrame'
+const HAND_RESOURCE = 'base/Tutorial/tutorial-hand-tap/spriteFrame'
+const TAP_RINGS_RESOURCE = 'base/Tutorial/tutorial-tap-rings/spriteFrame'
+const SPEECH_BUBBLE_RESOURCE = 'base/Tutorial/tutorial-speech-bubble/spriteFrame'
 
 const MASK_COLOR = new Color(20, 18, 16, 158)
 const GUIDE_GLOW_COLOR = new Color(255, 224, 70, 68)

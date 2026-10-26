@@ -93,31 +93,31 @@ const DEFAULT_TABS: LeaderboardViewTab[] = [
 
 // 先一次性载入弹窗会用到的全部贴图，再显示内容，避免首开和切榜时出现白色头像占位。
 const LEADERBOARD_SPRITE_PATHS = [
-  'Leaderboard/panel-background/spriteFrame',
-  'Leaderboard/row-gold/spriteFrame',
-  'Leaderboard/row-silver/spriteFrame',
-  'Leaderboard/row-bronze/spriteFrame',
-  'Leaderboard/row-default/spriteFrame',
-  'Leaderboard/row-self/spriteFrame',
-  'Leaderboard/medal-gold/spriteFrame',
-  'Leaderboard/medal-silver/spriteFrame',
-  'Leaderboard/medal-bronze/spriteFrame',
-  'Leaderboard/avatar-frame/spriteFrame',
-  'Leaderboard/button-invite/spriteFrame',
-  'Leaderboard/button-invite-pressed/spriteFrame',
-  'Settings/button-close/spriteFrame',
-  'Leaderboard/Avatars/avatar-rabbit/spriteFrame',
-  'Leaderboard/Avatars/avatar-fox/spriteFrame',
-  'Leaderboard/Avatars/avatar-blue-bird/spriteFrame',
-  'Leaderboard/Avatars/avatar-orange-cat/spriteFrame',
-  'Leaderboard/Avatars/avatar-chick/spriteFrame',
-  'Leaderboard/Avatars/avatar-turtle/spriteFrame',
-  'Leaderboard/Avatars/avatar-deer/spriteFrame',
-  'Leaderboard/Avatars/avatar-alpaca/spriteFrame',
-  'Leaderboard/Avatars/avatar-squirrel/spriteFrame',
-  'Leaderboard/Avatars/avatar-frog/spriteFrame',
-  'Leaderboard/Avatars/avatar-hedgehog/spriteFrame',
-  'Leaderboard/Avatars/avatar-raccoon/spriteFrame'
+  'base/Leaderboard/panel-background/spriteFrame',
+  'base/Leaderboard/row-gold/spriteFrame',
+  'base/Leaderboard/row-silver/spriteFrame',
+  'base/Leaderboard/row-bronze/spriteFrame',
+  'base/Leaderboard/row-default/spriteFrame',
+  'base/Leaderboard/row-self/spriteFrame',
+  'base/Leaderboard/medal-gold/spriteFrame',
+  'base/Leaderboard/medal-silver/spriteFrame',
+  'base/Leaderboard/medal-bronze/spriteFrame',
+  'base/Leaderboard/avatar-frame/spriteFrame',
+  'base/Leaderboard/button-invite/spriteFrame',
+  'base/Leaderboard/button-invite-pressed/spriteFrame',
+  'base/Settings/button-close/spriteFrame',
+  'base/Leaderboard/Avatars/avatar-rabbit/spriteFrame',
+  'base/Leaderboard/Avatars/avatar-fox/spriteFrame',
+  'base/Leaderboard/Avatars/avatar-blue-bird/spriteFrame',
+  'base/Leaderboard/Avatars/avatar-orange-cat/spriteFrame',
+  'base/Leaderboard/Avatars/avatar-chick/spriteFrame',
+  'base/Leaderboard/Avatars/avatar-turtle/spriteFrame',
+  'base/Leaderboard/Avatars/avatar-deer/spriteFrame',
+  'base/Leaderboard/Avatars/avatar-alpaca/spriteFrame',
+  'base/Leaderboard/Avatars/avatar-squirrel/spriteFrame',
+  'base/Leaderboard/Avatars/avatar-frog/spriteFrame',
+  'base/Leaderboard/Avatars/avatar-hedgehog/spriteFrame',
+  'base/Leaderboard/Avatars/avatar-raccoon/spriteFrame'
 ] as const
 
 /**
@@ -347,7 +347,7 @@ export class LeaderboardPopupController extends Component {
     this.createSpriteNode(
       this.node,
       'PanelBackground',
-      'Leaderboard/panel-background/spriteFrame',
+      'base/Leaderboard/panel-background/spriteFrame',
       720,
       1160,
       0,
@@ -402,13 +402,13 @@ export class LeaderboardPopupController extends Component {
     const background = this.createSpriteNode(
       row,
       'Background',
-      `Leaderboard/${isSelf ? 'row-self' : 'row-default'}/spriteFrame`,
+      `base/Leaderboard/${isSelf ? 'row-self' : 'row-default'}/spriteFrame`,
       ROW_WIDTH,
       ROW_HEIGHT,
       0,
       0
     ).sprite
-    const medal = this.createSpriteNode(row, 'Medal', 'Leaderboard/medal-gold/spriteFrame', 55, 60, -268, 1).sprite
+    const medal = this.createSpriteNode(row, 'Medal', 'base/Leaderboard/medal-gold/spriteFrame', 55, 60, -268, 1).sprite
     medal.node.active = false
 
     const rankLabel = this.createLabel(
@@ -437,7 +437,7 @@ export class LeaderboardPopupController extends Component {
     this.createSpriteNode(
       row,
       'AvatarFrame',
-      'Leaderboard/avatar-frame/spriteFrame',
+      'base/Leaderboard/avatar-frame/spriteFrame',
       60,
       60,
       -210,
@@ -478,7 +478,7 @@ export class LeaderboardPopupController extends Component {
     const result = this.createSpriteNode(
       this.node,
       'InviteButton',
-      'Leaderboard/button-invite/spriteFrame',
+      'base/Leaderboard/button-invite/spriteFrame',
       420,
       96,
       0,
@@ -497,7 +497,7 @@ export class LeaderboardPopupController extends Component {
     const result = this.createSpriteNode(
       this.node,
       'CloseButton',
-      'Settings/button-close/spriteFrame',
+      'base/Settings/button-close/spriteFrame',
       86,
       88,
       285,
@@ -556,10 +556,10 @@ export class LeaderboardPopupController extends Component {
     view.entry = entry
     const medalColor = entry.rank === 1 ? 'gold' : entry.rank === 2 ? 'silver' : entry.rank === 3 ? 'bronze' : ''
     const showMedal = !view.isSelf && !!medalColor
-    this.applySpriteFrame(view.background, `Leaderboard/row-${view.isSelf ? 'self' : medalColor || 'default'}/spriteFrame`)
+    this.applySpriteFrame(view.background, `base/Leaderboard/row-${view.isSelf ? 'self' : medalColor || 'default'}/spriteFrame`)
     view.medal.node.active = showMedal
     if (showMedal) {
-      this.applySpriteFrame(view.medal, `Leaderboard/medal-${medalColor}/spriteFrame`)
+      this.applySpriteFrame(view.medal, `base/Leaderboard/medal-${medalColor}/spriteFrame`)
     }
     view.rank.string = showMedal ? '' : entry.rank === null ? '—' : `${entry.rank}`
     view.name.string = entry.name
@@ -748,7 +748,7 @@ export class LeaderboardPopupController extends Component {
     if (this.inviteButtonSprite) {
       this.applySpriteFrame(
         this.inviteButtonSprite,
-        'Leaderboard/button-invite-pressed/spriteFrame'
+        'base/Leaderboard/button-invite-pressed/spriteFrame'
       )
     }
   }
@@ -756,7 +756,7 @@ export class LeaderboardPopupController extends Component {
   private handleInvitePressCancel(event: EventTouch) {
     this.handlePressCancel(event)
     if (this.inviteButtonSprite) {
-      this.applySpriteFrame(this.inviteButtonSprite, 'Leaderboard/button-invite/spriteFrame')
+      this.applySpriteFrame(this.inviteButtonSprite, 'base/Leaderboard/button-invite/spriteFrame')
     }
   }
 
@@ -764,7 +764,7 @@ export class LeaderboardPopupController extends Component {
     event.propagationStopped = true
     this.inviteButtonNode?.setScale(Vec3.ONE)
     if (this.inviteButtonSprite) {
-      this.applySpriteFrame(this.inviteButtonSprite, 'Leaderboard/button-invite/spriteFrame')
+      this.applySpriteFrame(this.inviteButtonSprite, 'base/Leaderboard/button-invite/spriteFrame')
     }
     this.buttonClickHandler?.()
     this.inviteHandler?.()

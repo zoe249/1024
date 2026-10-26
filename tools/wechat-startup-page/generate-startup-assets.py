@@ -17,7 +17,7 @@ PROJECT_ROOT = SCRIPT_DIRECTORY.parent.parent
 DESIGN_DIRECTORY = PROJECT_ROOT / "design/startup"
 SOURCE_BACKGROUND = DESIGN_DIRECTORY / "first-entry-background-v2-source.png"
 SOURCE_LOGO = (
-    PROJECT_ROOT / "assets/resources/Homepage/logo-1024-number-garden.png"
+    PROJECT_ROOT / "assets/resources/base/Homepage/logo-1024-number-garden.png"
 )
 DAY_BACKGROUND_SOURCE = SOURCE_BACKGROUND
 NIGHT_BACKGROUND_SOURCE = DESIGN_DIRECTORY / "first-entry-night-v2-source.png"

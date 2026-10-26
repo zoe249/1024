@@ -3,10 +3,10 @@ import { ImageAsset, resources } from 'cc'
 export type ShareResult = 'shared' | 'cancelled' | 'unsupported'
 
 const WECHAT_SHARE_CARDS = [
-  { resourcePath: 'Share/share-card-rabbit', title: '摸鱼呢，来合一局？' },
-  { resourcePath: 'Share/share-card-fox', title: '摸个鱼，还得算数。' },
+  { resourcePath: 'base/Share/share-card-rabbit', title: '摸鱼呢，来合一局？' },
+  { resourcePath: 'base/Share/share-card-fox', title: '摸个鱼，还得算数。' },
   // 沿用旧文件名，图片内容已更新为数字进阶卡。
-  { resourcePath: 'Share/share-card-bear', title: '说好只玩一局的……' },
+  { resourcePath: 'base/Share/share-card-bear', title: '说好只玩一局的……' },
 ] as const
 
 type LoadedShareCard = {

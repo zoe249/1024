@@ -7,7 +7,15 @@ import { getPieceDisplayStyle } from './PieceStyle'
 const HUD_CARD_BORDER_COLOR = new Color(75, 53, 40, 255)
 
 export class PlayHudView {
-  static renderNextPiece(value: number, nextValueLabel: Label | null, nextValueTile: Graphics | null, appearance: PieceAppearance = BASE_APPEARANCE.piece, bodyFrame?: SpriteFrame): Sprite | null {
+  private static readonly imageLabels = new WeakMap<Label, boolean>()
+
+  static restoreNextPieceLabel(label: Label | null) {
+    if (!label || !this.imageLabels.has(label)) return
+    if (label.isValid && label.node?.isValid) label.enabled = this.imageLabels.get(label)!
+    this.imageLabels.delete(label)
+  }
+
+  static renderNextPiece(value: number, nextValueLabel: Label | null, nextValueTile: Graphics | null, appearance: PieceAppearance = BASE_APPEARANCE.piece, bodyFrame?: SpriteFrame, valueImage?: SpriteFrame): Sprite | null {
     if (!nextValueLabel || !nextValueTile) {
       return null
     }
@@ -26,11 +34,13 @@ export class PlayHudView {
     nextValueLabel.enableOutline = true
     nextValueLabel.outlineColor = Color.fromHEX(new Color(), appearance.preview.outlineColor)
     nextValueLabel.outlineWidth = 2
+    if (!valueImage) this.restoreNextPieceLabel(nextValueLabel)
     // 只有已准备的贴图覆盖才需要轻量缩略图；默认预览仍使用原 Graphics，层级不变。
     const parent = nextValueTile.node
     if (!parent?.isValid) return null
     let body = parent.getChildByName('AppearanceBody')
-    if (!bodyFrame) {
+    const frame = valueImage ?? bodyFrame
+    if (!frame) {
       if (body) { body.active = false; const sprite = body.getComponent(Sprite); if (sprite) sprite.spriteFrame = null }
       return body?.getComponent(Sprite) ?? null
     }
@@ -40,10 +50,14 @@ export class PlayHudView {
     body.getComponent(UITransform)!.setContentSize(46, 46)
     body.setSiblingIndex(0)
     const sprite = body.getComponent(Sprite)!
-    sprite.spriteFrame = bodyFrame
+    sprite.spriteFrame = frame
     sprite.sizeMode = Sprite.SizeMode.CUSTOM
     sprite.trim = false
-    sprite.color = bodyColor
+    sprite.color = valueImage ? new Color(255, 255, 255, 255) : bodyColor
+    if (valueImage) {
+      if (!this.imageLabels.has(nextValueLabel)) this.imageLabels.set(nextValueLabel, nextValueLabel.enabled)
+      nextValueLabel.enabled = false
+    }
     return sprite
   }
 

@@ -491,6 +491,7 @@ export class PlayUIController extends Component {
       this.nextPieceBody.node.active = false
     }
     this.nextPieceBody = null
+    PlayHudView.restoreNextPieceLabel(this.nextValueLabel)
     this.gameAppearance?.dispose()
     this.gameAppearance = null
     this.overtakeLoadGeneration += 1
@@ -1103,7 +1104,7 @@ export class PlayUIController extends Component {
   // 当前分数统一由新版 HUD 显示，不再回退到旧分数条。
   private ensureOvertakeWidget() {
     const generation = ++this.overtakeLoadGeneration
-    resources.load('Gameplay/ScoreTargetHUD', Prefab, (error, prefab) => {
+    resources.load('base/Gameplay/ScoreTargetHUD', Prefab, (error, prefab) => {
       if (error || !prefab || this.isUiDestroyed || !this.isValid || !this.node.isValid || generation !== this.overtakeLoadGeneration) return
       const content = this.node.getChildByName('Status')?.getChildByName('Content')
       if (!content) return
@@ -1383,7 +1384,9 @@ export class PlayUIController extends Component {
   }
 
   private refreshNextPieceDisplay() {
-    this.nextPieceBody = PlayHudView.renderNextPiece(this.currentState.nextValue ?? 2, this.nextValueLabel, this.nextValueTile, this.gameAppearance?.piece, this.gameAppearance?.frames().body)
+    const value = this.currentState.nextValue ?? 2
+    const frames = this.gameAppearance?.frames()
+    this.nextPieceBody = PlayHudView.renderNextPiece(value, this.nextValueLabel, this.nextValueTile, this.gameAppearance?.piece, frames?.body, frames?.imagesByValue?.[value])
   }
 
   // 游戏内不再展示金币余额；金币仍由经济仓库维护，首页和购买弹窗按需展示。
@@ -1990,7 +1993,7 @@ export class PlayUIController extends Component {
     }
     this.isLoadingRewardedAdIcon = true
     // 直接读取图片，避免新资源尚未配置为 SpriteFrame 时角标加载失败。
-    resources.load('Skills/RewardedAdIcon', ImageAsset, (error, imageAsset) => {
+    resources.load('base/Skills/RewardedAdIcon', ImageAsset, (error, imageAsset) => {
       this.isLoadingRewardedAdIcon = false
       // 异步加载可能晚于返回首页，旧 UI 不再创建贴图或访问已销毁的技能节点。
       if (this.isUiDestroyed || !this.canUseNode(this.node)) {

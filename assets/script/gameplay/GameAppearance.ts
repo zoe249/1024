@@ -4,7 +4,7 @@ import { appearanceAssetLoader, type AppearanceAssetLease } from '../appearance/
 import { appearanceRuntime, type AppearanceLease } from '../appearance/AppearanceRuntime'
 import { appearanceAssetKey, type AppearanceAssetRef, type BoardColorKey, type PieceLayer } from '../appearance/AppearanceTypes'
 
-export type PieceAppearanceFrames = Partial<Record<PieceLayer, SpriteFrame>>
+export type PieceAppearanceFrames = Partial<Record<PieceLayer, SpriteFrame>> & { imagesByValue?: Readonly<Record<number, SpriteFrame>> }
 export class GameAppearance {
   private disposed = false
   private pieceFrames: PieceAppearanceFrames | null = null
@@ -24,6 +24,13 @@ export class GameAppearance {
       if (!(frame instanceof SpriteFrame)) throw new Error('方块候选外观尚未准备完成')
       result[key] = frame
     }
+    const images: Record<number, SpriteFrame> = {}
+    for (const key of Object.keys(this.piece.imagesByValue)) {
+      const frame = this.lease.asset(this.piece.imagesByValue[Number(key)])
+      if (!(frame instanceof SpriteFrame)) throw new Error('带数字的方块图片尚未准备完成')
+      images[Number(key)] = frame
+    }
+    if (Object.keys(images).length) result.imagesByValue = Object.freeze(images)
     this.pieceFrames = Object.freeze(result)
     return this.pieceFrames
   }

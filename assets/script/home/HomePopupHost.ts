@@ -69,7 +69,7 @@ export class HomePopupHost {
     if (this.profileLoadPromise) return this.profileLoadPromise
     this.profileLoadPromise = new Promise((resolve, reject) => {
       this.rejectProfileLoad = reject
-      resources.load('Profile/ProfilePopup', Prefab, (error, prefab) => {
+      resources.load('base/Profile/ProfilePopup', Prefab, (error, prefab) => {
         if (this.disposed || !this.isHostValid()) {
           reject(new Error('个人中心预制件加载失败'))
           return

@@ -55,17 +55,17 @@ description: 为 1024 Cocos Creator 项目生成、替换或优化统一奶油�
 2. 新的位图素材使用 ImageGen，并在提示词中明确：用途、单个对象、透明背景、奶油配色、哑光、无高光、无文字、目标像素和小尺寸可读性。每个独立素材使用独立生成调用。
 3. 生成后剪掉无效空白，根据运行时目标有效尺寸反推素材包围盒，再按上表缩放和光学居中。不直接把 1K/2K 原图放入项目。
 4. 优先 PNG-8 调色板压缩，但必须复查 Alpha。如调色板把原本不透明的面板变成半透明，立即改用 RGBA PNG，并将白色内区强制为 Alpha `255`。
-5. 替换已有素材时保持原文件名、相对路径和 `.meta`；非资源重映射任务不编辑、删除或重建 `.meta`。新素材放到实际加载的 `assets/resources/<Feature>/` 目录。
+5. 替换已有素材时保持原文件名、相对路径和 `.meta`；非资源重映射任务不编辑、删除或重建 `.meta`。基础素材放到实际加载的 `assets/resources/base/<Feature>/`；新主题与 `base` 同级，内部按功能分类。
 6. 用 `scripts/check_asset.py` 检查像素、Alpha 和硬上限；另外记录 Alpha 有效包围盒和换算后的运行时有效宽高，然后在深色底和奶油色底上都查看原尺寸及运行时缩放效果。
 7. 资源更改后在 Cocos Creator 3.8.8 中触发重新导入，检查引用、普通屏、长屏安全区和按下态。无法启动 Creator 时必须明确列为待人工检查。
 
 ## 校验命令
 
 ```bash
-python3 Skills/cocos-cream-ui-assets/scripts/check_asset.py --profile rank-icon assets/resources/Leaderboard/medal-gold.png
-python3 Skills/cocos-cream-ui-assets/scripts/check_asset.py --profile ui-icon assets/resources/Skills/hammer.png
-python3 Skills/cocos-cream-ui-assets/scripts/check_asset.py --profile button assets/resources/Leaderboard/button-invite.png
-python3 Skills/cocos-cream-ui-assets/scripts/check_asset.py --profile panel assets/resources/Leaderboard/panel-background.png
+python3 Skills/cocos-cream-ui-assets/scripts/check_asset.py --profile rank-icon assets/resources/base/Leaderboard/medal-gold.png
+python3 Skills/cocos-cream-ui-assets/scripts/check_asset.py --profile ui-icon assets/resources/base/Skills/hammer.png
+python3 Skills/cocos-cream-ui-assets/scripts/check_asset.py --profile button assets/resources/base/Leaderboard/button-invite.png
+python3 Skills/cocos-cream-ui-assets/scripts/check_asset.py --profile panel assets/resources/base/Leaderboard/panel-background.png
 ```
 
 交付时报告最终路径、画布像素、Alpha 有效包围盒、运行时有效宽高、文件体积、生成提示词摘要、校验结果和待 Creator/真机检查项。

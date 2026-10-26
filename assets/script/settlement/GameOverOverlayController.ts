@@ -55,6 +55,7 @@ export class GameOverOverlayController extends Component {
   private highestIcon: Sprite | null = null
   private highestIconOutline: Sprite | null = null
   private highestIconLabel: Label | null = null
+  private imageLabelEnabled: boolean | null = null
   private highestIconValue = -1
   private coinsLabel: Label | null = null
   private rankLabel: Label | null = null
@@ -114,7 +115,7 @@ export class GameOverOverlayController extends Component {
     this.syncLayout()
     if (this.panel || this.loading) return
     this.loading = true
-    resources.load('Settlement/SettlementPopup', Prefab, (error, prefab) => {
+    resources.load('base/Settlement/SettlementPopup', Prefab, (error, prefab) => {
       this.loading = false
       if (this.disposed || !this.node.isValid) return
       if (error || !prefab) {
@@ -158,8 +159,11 @@ export class GameOverOverlayController extends Component {
     this.disposed = true
     const pieceLease = this.pieceLease
     this.pieceLease = null
-    if (this.highestIcon?.isValid && this.highestIcon.node?.isValid && this.pieceFrames.body && this.highestIcon.spriteFrame === this.pieceFrames.body) this.highestIcon.spriteFrame = this.baseHighestBody?.isValid ? this.baseHighestBody : null
+    const appliedBody = this.pieceFrames.imagesByValue?.[this.highestIconValue] ?? this.pieceFrames.body
+    if (this.highestIcon?.isValid && this.highestIcon.node?.isValid && appliedBody && this.highestIcon.spriteFrame === appliedBody) this.highestIcon.spriteFrame = this.baseHighestBody?.isValid ? this.baseHighestBody : null
     if (this.highestIconOutline?.isValid && this.highestIconOutline.node?.isValid && this.pieceFrames.outline && this.highestIconOutline.spriteFrame === this.pieceFrames.outline) this.highestIconOutline.spriteFrame = this.baseHighestOutline?.isValid ? this.baseHighestOutline : null
+    if (this.imageLabelEnabled !== null && this.highestIconLabel?.isValid && this.highestIconLabel.node?.isValid) this.highestIconLabel.enabled = this.imageLabelEnabled
+    this.imageLabelEnabled = null
     this.pieceFrames = {}
     pieceLease?.release()
     this.entering = false
@@ -356,14 +360,22 @@ export class GameOverOverlayController extends Component {
       this.baseHighestBody = this.highestIcon.spriteFrame
       this.baseHighestOutline = this.highestIconOutline?.spriteFrame ?? null
     }
-    this.highestIcon.spriteFrame = this.pieceFrames.body ?? this.baseHighestBody
+    const image = this.pieceFrames.imagesByValue?.[value]
+    this.highestIcon.spriteFrame = image ?? this.pieceFrames.body ?? this.baseHighestBody
     if (this.highestIconOutline) this.highestIconOutline.spriteFrame = this.pieceFrames.outline ?? this.baseHighestOutline
-    this.highestIcon.color = color(style.bodyColor)
+    this.highestIcon.color = color(image ? '#ffffff' : style.bodyColor)
     if (this.highestIconOutline) this.highestIconOutline.color = color(style.outlineColor ?? '#4b3528')
     if (this.highestIconLabel) {
       this.highestIconLabel.string = `${value}`
       this.highestIconLabel.color = color(style.textColor ?? '#fff9ea')
       this.highestIconLabel.outlineColor = color('#4a3125')
+      if (image) {
+        if (this.imageLabelEnabled === null) this.imageLabelEnabled = this.highestIconLabel.enabled
+        this.highestIconLabel.enabled = false
+      } else if (this.imageLabelEnabled !== null) {
+        this.highestIconLabel.enabled = this.imageLabelEnabled
+        this.imageLabelEnabled = null
+      }
     }
   }
 

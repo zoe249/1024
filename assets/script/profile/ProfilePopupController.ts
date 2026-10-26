@@ -416,10 +416,10 @@ export class ProfilePopupController extends Component {
     closeSprite: Sprite | null
   ) {
     const [panelFrame, closeFrame, editPencilFrame, selectedFrame, ...avatarFrames] = await Promise.all([
-      this.loadSpriteFrame('Profile/profile-panel-background/spriteFrame'),
-      this.loadSpriteFrame('Settings/button-close/spriteFrame'),
-      this.loadSpriteFrame('Profile/icon-edit-pencil/spriteFrame'),
-      this.loadSpriteFrame('Profile/avatar-selected-overlay/spriteFrame'),
+      this.loadSpriteFrame('base/Profile/profile-panel-background/spriteFrame'),
+      this.loadSpriteFrame('base/Settings/button-close/spriteFrame'),
+      this.loadSpriteFrame('base/Profile/icon-edit-pencil/spriteFrame'),
+      this.loadSpriteFrame('base/Profile/avatar-selected-overlay/spriteFrame'),
       ...Array.from({ length: PLAYER_AVATAR_COUNT }, (_, index) => this.loadSpriteFrame(getAvatarSpritePath(index)))
     ])
     if (!this.node.isValid) {

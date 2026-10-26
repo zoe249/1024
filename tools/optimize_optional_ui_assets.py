@@ -7,14 +7,15 @@ from PIL import Image
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SHARE_CARD = PROJECT_ROOT / "assets" / "resources" / "Share" / "share-card-rabbit.png"
-VICTORY_HEADER = PROJECT_ROOT / "assets" / "resources" / "Settlement" / "victory-header.png"
-LEADERBOARD_DIR = PROJECT_ROOT / "assets" / "resources" / "Leaderboard"
+SHARE_CARD = PROJECT_ROOT / "assets" / "resources" / "base" / "Share" / "share-card-rabbit.png"
+VICTORY_HEADER = PROJECT_ROOT / "assets" / "resources" / "base" / "Settlement" / "victory-header.png"
+LEADERBOARD_DIR = PROJECT_ROOT / "assets" / "resources" / "base" / "Leaderboard"
 SPLASH_BACKGROUND = PROJECT_ROOT / "settings" / "first-entry-splash-v2.jpg"
 SWING_BACKGROUND = (
     PROJECT_ROOT
     / "assets"
     / "resources"
+    / "base"
     / "Homepage"
     / "SwingV14"
     / "background-tree-branch.jpg"

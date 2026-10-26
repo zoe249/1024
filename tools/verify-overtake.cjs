@@ -221,7 +221,7 @@ async function verifyWidget() {
   const game={on(event,fn,owner){const list=events.get(event)||[];list.push({fn,owner});events.set(event,list)},off(event,fn,owner){events.set(event,(events.get(event)||[]).filter(x=>x.fn!==fn||x.owner!==owner))}};
   const cc = { _decorator: { ccclass: () => type => type, property: () => () => {} }, Color: class {}, Component, Node, UITransform, Label, Sprite, Graphics, UIOpacity, Vec3, tween, Tween, game, Game: {EVENT_HIDE:'hide',EVENT_SHOW:'show'} }
   const { OvertakeTargetWidget } = load('assets/script/gameplay/OvertakeTargetWidget.ts', { cc, '../profile/PlayerAvatarRenderer': { PlayerAvatarRenderer } })
-  const serialized = JSON.parse(fs.readFileSync(path.join(root, 'assets/resources/Gameplay/ScoreTargetHUD.prefab')))
+  const serialized = JSON.parse(fs.readFileSync(path.join(root, 'assets/resources/base/Gameplay/ScoreTargetHUD.prefab')))
   function createWidget() {
     const objects = serialized.map(item => item.__type__ === 'cc.Node' ? new Node() : cc[item.__type__.slice(3)] ? new cc[item.__type__.slice(3)]() : null)
     serialized.forEach((item, i) => {

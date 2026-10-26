@@ -30,7 +30,7 @@
 
 白天、夜间母版分别为 `design/startup/first-entry-background-v2-source.png` 与
 `design/startup/first-entry-night-v2-source.png`。Logo 位于
-`assets/resources/Homepage/logo-1024-number-garden.png`。更新母版或首页 Logo 后执行：
+`assets/resources/base/Homepage/logo-1024-number-garden.png`。更新母版或首页 Logo 后执行：
 
 ```bash
 python tools/wechat-startup-page/generate-startup-assets.py
