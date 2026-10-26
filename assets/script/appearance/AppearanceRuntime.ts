@@ -64,7 +64,8 @@ export class AppearanceRuntime {
       lease.release()
       resolve(result)
     })
-    Promise.all([...assets.values()].map(asset => asset.ready)).then(results => {
+    // Creator 的 loose 展开不会迭代 Map，必须先转数组再等待全部资源。
+    Promise.all(Array.from(assets.values(), asset => asset.ready)).then(results => {
       if (finished) return
       finished = true
       const failed = results.find(result => result.status !== 'ready')

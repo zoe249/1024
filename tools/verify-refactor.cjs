@@ -13,7 +13,7 @@ const source = (file, before) => before
 const plain = value => JSON.parse(JSON.stringify(value))
 const equal = (actual, expected, message) => assert.deepEqual(plain(actual), plain(expected), message)
 
-function environment(before) {
+function environment(before, transformOutput = output => output) {
   const trace = []
   let randomState = 1024, randomCalls = 0, wx
   const math = Object.create(Math)
@@ -90,7 +90,7 @@ function environment(before) {
   function load(file) {
     if (cache.has(file)) return cache.get(file)
     const module = { exports: {} }; cache.set(file, module.exports)
-    const output = ts.transpileModule(source(file, before), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, experimentalDecorators: true } }).outputText
+    const output = transformOutput(ts.transpileModule(source(file, before), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, experimentalDecorators: true } }).outputText)
     const globals = { module, exports: module.exports, console, Math: math, require: name => {
       if (name === 'cc') return cc
       const dependency = path.posix.normalize(`${path.posix.dirname(file)}/${name}.ts`)

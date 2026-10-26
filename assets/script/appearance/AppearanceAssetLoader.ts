@@ -84,11 +84,12 @@ export class AppearanceAssetLoader {
         if (asset) { current.asset = asset; asset.addRef() }
         if (error || !asset) {
           if (this.entries.get(key) === current) this.entries.delete(key)
-          const failed = [...current.leases]
+          // Creator 的 loose 展开不会迭代 Set；显式快照也避免释放时改变遍历集合。
+          const failed = Array.from(current.leases)
           for (const owner of failed) owner.finish(error ?? new Error('外观资源为空'), null)
           for (const owner of failed) owner.release()
         } else {
-          for (const owner of [...current.leases]) owner.finish(null, asset)
+          for (const owner of Array.from(current.leases)) owner.finish(null, asset)
         }
         if (!current.leases.size) this.releaseEntry(current)
       }

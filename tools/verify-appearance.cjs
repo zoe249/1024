@@ -5,7 +5,18 @@ const path = require('node:path')
 const vm = require('node:vm')
 const ts = require(process.argv[2] || 'typescript')
 const { environment } = require('./verify-refactor.cjs')
-const env = environment(false)
+
+async function verifyMode(cocosSpread) {
+  let transformOutput = output => output
+  if (cocosSpread) {
+    // 同时验证 Creator 的 loose 展开，避免 Node 原生迭代掩盖 Set/Map 兼容问题。
+    const typescriptRoot = path.dirname(require.resolve(`${process.argv[2] || 'typescript'}/package.json`))
+    const engineModules = path.resolve(typescriptRoot, '../../../resources/3d/engine/node_modules')
+    const babel = require(path.join(engineModules, '@babel/core'))
+    const spread = require(path.join(engineModules, '@babel/plugin-transform-spread'))
+    transformOutput = output => babel.transformSync(output, { babelrc: false, configFile: false, plugins: [[spread, { loose: true }]] }).code
+  }
+const env = environment(false, transformOutput)
 const { cc, load, child } = env
 const plain = value => JSON.parse(JSON.stringify(value))
 const equal = (a, b) => assert.deepEqual(plain(a), plain(b))
@@ -68,20 +79,28 @@ async function verify() {
   console.log('解析：缺省继承、零透明度、隐藏、逐值合并、Base→A→B→Base、非法字段/资源/关联约束及输入隔离通过')
 
   const h = backendHarness(), shared = new SpriteFrame('shared')
-  const first = h.loader.acquire(ref('same')), second = h.loader.acquire(ref('same'))
+  let loadedCallbacks = 0
+  const onLoaded = (error, asset) => { assert.equal(error, null); assert.equal(asset, shared); loadedCallbacks++ }
+  const first = h.loader.acquire(ref('same'), onLoaded), second = h.loader.acquire(ref('same'), onLoaded)
   assert.equal(h.jobs.length, 1); h.finish(0, null, shared)
   assert.equal((await first.ready).status, 'ready'); assert.equal((await second.ready).status, 'ready')
+  assert.equal(loadedCallbacks, 2, '共享资源必须通知每个租约的回调')
   assert.equal(shared.refs, 1)
   first.release(); first.release(); assert.equal(shared.refs, 1)
   second.release(); second.release(); assert.equal(shared.refs, 0)
-  const late = h.loader.acquire(ref('late')); late.release()
+  const late = h.loader.acquire(ref('late'), () => assert.fail('取消后不得调用资源回调')); late.release()
   assert.equal((await late.ready).status, 'cancelled')
   const lateAsset = h.finish(1); assert.equal(lateAsset.refs, 0); assert.equal(lateAsset.adds, lateAsset.releases)
   const cancelled = h.loader.acquire(ref('rejoin')); cancelled.release()
   const rejoined = h.loader.acquire(ref('rejoin')); assert.equal(h.jobs.length, 3)
   const rejoinedAsset = h.finish(2); assert.equal((await rejoined.ready).status, 'ready'); assert.equal(rejoinedAsset.refs, 1); rejoined.release()
-  const errored = h.loader.acquire(ref('error')), errorAsset = h.finish(3, new Error('fixture'))
+  let failedCallbacks = 0
+  const onFailed = (error, asset) => { assert.equal(error.message, 'fixture'); assert.equal(asset, null); failedCallbacks++ }
+  const errored = h.loader.acquire(ref('error'), onFailed), alsoErrored = h.loader.acquire(ref('error'), onFailed)
+  const errorAsset = h.finish(3, new Error('fixture'))
   assert.equal((await errored.ready).status, 'failed'); assert.equal(errorAsset.refs, 0)
+  assert.equal((await alsoErrored.ready).status, 'failed'); assert.equal(failedCallbacks, 2)
+  assert.equal(errored.isReleased, true); assert.equal(alsoErrored.isReleased, true)
   const retry = h.loader.acquire(ref('error')); assert.equal(h.jobs.length, 5); h.finish(4); retry.release()
   const aliases = [h.loader.acquire(ref('alias')), h.loader.acquire({ source: 'uuid', kind: 'spriteFrame', uuid: 'alias-uuid' })]
   const aliasAsset = new SpriteFrame('one asset two identifiers'); h.finish(5, null, aliasAsset); h.finish(6, null, aliasAsset)
@@ -116,6 +135,10 @@ async function verify() {
   const owned = backendHarness(), runtime = new AppearanceRuntime(owned.loader)
   const preparing = runtime.prepareResolved('game', gameFixture)
   assert.equal(owned.jobs.length, 6, '游戏只准备五个游戏资源与一个方块覆盖，不加载首页/加载页')
+  let delivered = false
+  preparing.ready.then(() => { delivered = true })
+  owned.finish(0); owned.jobs[0].finished = true; await flush()
+  assert.equal(delivered, false, '一个资源完成不能提前交付整套外观')
   owned.finishAll(); const prepared = await preparing.ready; assert.equal(prepared.status, 'ready')
   const transferred = prepared.lease
   const ticket = runtime.handoffGame(transferred, 'game')
@@ -216,7 +239,7 @@ async function verify() {
 
 function evaluate(file, overrides) {
   const module = { exports: {} }
-  const output = ts.transpileModule(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, experimentalDecorators: true } }).outputText
+  const output = transformOutput(ts.transpileModule(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, experimentalDecorators: true } }).outputText)
   vm.runInNewContext(output, { module, exports: module.exports, console, require: name => {
     if (name === 'cc') return cc
     if (Object.prototype.hasOwnProperty.call(overrides, name)) return overrides[name]
@@ -356,4 +379,11 @@ async function verifySceneEntries() {
   homeOngoing.startGameFromHome(); assert.equal(consumeCount, before); assert.equal(events[events.length - 1], 'game')
   console.log('实际入口：新局只扣一次、续局直达、空 loading 兜底、game/loading 直接预览、生成/恢复注入、最低时长、交接失败/离场、重开失败/成功及子组件字段清空后父销毁通过')
 }
-verify().catch(error => { console.error(error); process.exitCode = 1 })
+await verify()
+console.log(`外观验证（${cocosSpread ? 'Creator loose 展开编译' : 'Node 原生迭代'}）通过`)
+}
+
+const timeout = setTimeout(() => { console.error('外观验证超时，存在未结束的资源等待'); process.exitCode = 1 }, 30000)
+;(async () => { await verifyMode(false); await verifyMode(true) })()
+  .catch(error => { console.error(error); process.exitCode = 1 })
+  .finally(() => clearTimeout(timeout))
