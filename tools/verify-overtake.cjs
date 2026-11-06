@@ -237,6 +237,9 @@ async function verifyWidget() {
     widget.onEnable();return widget;
   }
   const widget=createWidget()
+  assert.doesNotThrow(()=>widget.setTargetFits(false),'无排行榜目标时切到短屏不能读取空 prepared')
+  assert.equal(widget.targetViewport.active,false)
+  widget.setTargetFits(true)
   const target = (value, revision, animate = true) => ({ kind: 'rival', key: String(value), name: '一个超过宽度的很长很长的昵称', value, avatar: { avatarIndex: revision }, revision, animate })
   const a = target(100, 1, false), b = target(200, 2), c = target(300, 3)
   widget.render(a, 100); await flush()
@@ -304,8 +307,11 @@ async function verifyWidget() {
   const pieceStyles=load('assets/script/gameplay/PieceStyle.ts',{});
   const hudView=load('assets/script/gameplay/PlayHudView.ts',{cc,'./PieceStyle':pieceStyles});
   const skillView=load('assets/script/gameplay/SkillBarView.ts',{cc});
+  const boardConfig=load('assets/script/gameplay/BoardConfig.ts',{});
+  const progression=load('assets/script/gameplay/EndlessProgression.ts',{'./BoardConfig':boardConfig});
   const { PlayUIController } = load('assets/script/gameplay/PlayUIController.ts', {
     './PlayHudView':hudView,'./SkillBarView':skillView,
+    './StageChoicePopupController':{},'./EndlessProgression':progression,
     cc, '../settings/PauseOverlayController': {}, '../settlement/GameOverOverlayController': {},
     './OvertakeTargetWidget': { OvertakeTargetWidget }, '../tutorial/FirstEntryTutorialController': {}, './BoardGeometry': geometry
   })

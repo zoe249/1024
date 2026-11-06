@@ -1,9 +1,15 @@
 // 执行临时棋子、碎片与冲击波，不读写棋盘、分数或技能次数。
-import { Color, Node, Sprite, tween, Tween, UIOpacity, UITransform, Vec3 } from 'cc'
+import { Color, Graphics, Node, Sprite, tween, Tween, UIOpacity, UITransform, Vec3 } from 'cc'
 import type { PieceController } from './PieceController'
 import { TransientFxRegistry } from './TransientFxRegistry'
 
+export type ShuffleFeedbackCue = 'gather' | 'shuffle' | 'deal' | 'land'
+
 export class PlayEffects {
+  private shuffleClock: { time: number } | null = null
+  private shuffleDone: ((completed: boolean) => void) | null = null
+  private shuffleTrail: Node | null = null
+
   static destroyPiece(piece: PieceController) {
     if (!piece.isValid || !piece.node?.isValid) return
     Tween.stopAllByTarget(piece.node)
@@ -14,9 +20,238 @@ export class PlayEffects {
 
   constructor(
     private readonly transientFx: TransientFxRegistry,
-    private readonly pieceSize: number,
+    private pieceSize: number,
     private readonly getFxLayer: () => Node
   ) {}
+
+  setPieceSize(size: number) { this.pieceSize = size }
+
+  /** 停止自身时间轴；棋盘由已提交的阶段快照恢复，不在表现层改写或销毁棋子。 */
+  cancelShuffleRedeal() {
+    if (this.shuffleClock) Tween.stopAllByTarget(this.shuffleClock)
+    this.shuffleClock = null
+    if (this.shuffleTrail?.isValid) this.transientFx.destroy(this.shuffleTrail)
+    this.shuffleTrail = null
+    const done = this.shuffleDone; this.shuffleDone = null; done?.(false)
+  }
+
+  /**
+   * 收成牌叠、左右交错洗牌，再逐张发出并高速落回；牌在整个过程中保持可见。
+   * 这里只移动原节点，不创建新棋子、抽取位置或触发合并，最终结算由玩法层统一执行。
+   */
+  playShuffleRedeal(
+    targets: { node: Node; position: Vec3 }[], gather: Vec3,
+    isAlive: () => boolean, onFeedback?: (cue: ShuffleFeedbackCue) => void
+  ): Promise<boolean> {
+    this.cancelShuffleRedeal()
+    if (!targets.length || !isAlive()) return Promise.resolve(false)
+    const entries = targets.map((target, i) => {
+      Tween.stopAllByTarget(target.node)
+      const opacity = target.node.getComponent(UIOpacity) ?? target.node.addComponent(UIOpacity)
+      Tween.stopAllByTarget(opacity)
+      const body = target.node.getChildByName('Body')?.getComponent(Sprite) ?? null
+      const slot = targets.length > 1 ? i / (targets.length - 1) - 0.5 : 0
+      return {
+        ...target, origin: target.node.position.clone(), opacity, alpha: opacity.opacity, launched: false, landed: false,
+        body, bodyColor: body?.color.clone() ?? null,
+        deck: gather.clone().add3f(slot * this.pieceSize * 0.24, slot * this.pieceSize * 0.14, 0),
+        tilt: slot * 9, side: i % 2 === 0 ? -1 : 1, sibling: target.node.getSiblingIndex()
+      }
+    })
+    const clock = { time: 0 }
+    this.shuffleClock = clock
+    let speedLines: Graphics | null = null
+    if (this.transientFx.canRegister(1)) {
+      const trail = new Node('ShuffleSpeedLines')
+      trail.addComponent(UITransform)
+      trail.setParent(this.getFxLayer())
+      speedLines = trail.addComponent(Graphics)
+      speedLines.lineWidth = Math.max(2, this.pieceSize * 0.035)
+      this.transientFx.register(trail)
+      this.shuffleTrail = trail
+    }
+    const gatherHold = 0.09, gatherMove = 0.42, gatherStagger = Math.min(0.10, (entries.length - 1) * 0.004)
+    const gatherEnd = gatherHold + gatherMove + gatherStagger
+    const shuffleSeconds = 0.78, shuffleCycle = 0.26, shuffleEnd = gatherEnd + shuffleSeconds
+    const squareSeconds = 0.10, firstDropSeconds = shuffleEnd + squareSeconds
+    const dropInterval = 0.085, launchSeconds = 0.065, fallSeconds = 0.115, landSeconds = 0.10, impactSeconds = 0.16
+    const startY = gather.y + this.pieceSize * 1.5
+    const duration = firstDropSeconds + (entries.length - 1) * dropInterval + launchSeconds + fallSeconds + impactSeconds
+    const baseSibling = Math.min(...entries.map(entry => entry.sibling))
+    let deckOrder = entries.slice(), lastRiffle = 0, gatherCued = false
+    const emitCue = (cue: ShuffleFeedbackCue) => {
+      onFeedback?.(cue)
+      return this.shuffleClock === clock && isAlive()
+    }
+    const render = () => {
+      if (this.shuffleClock !== clock || !isAlive()) return
+      const lines = speedLines?.isValid && this.shuffleTrail?.isValid ? speedLines : null
+      lines?.clear()
+      let dealt = false, landed = false
+      if (!gatherCued && clock.time >= gatherHold) {
+        gatherCued = true
+        if (!emitCue('gather')) return
+      }
+      if (clock.time >= gatherEnd && clock.time < shuffleEnd) {
+        const beat = Math.floor((clock.time - gatherEnd) / (shuffleCycle / 2))
+        if (beat > lastRiffle) {
+          // 两叠经过中线时交换前后层并交错插入，避免只左右摇晃而没有洗牌感。
+          while (lastRiffle < beat) {
+            const half = Math.ceil(deckOrder.length / 2), interleaved: typeof entries = []
+            for (let j = 0; j < half; j++) {
+              if (j + half < deckOrder.length) interleaved.push(deckOrder[j + half])
+              interleaved.push(deckOrder[j])
+            }
+            deckOrder = interleaved; lastRiffle++
+          }
+          deckOrder.forEach((entry, rank) => { if (entry.node.isValid) entry.node.setSiblingIndex(baseSibling + rank) })
+          if (!emitCue('shuffle')) return
+        }
+        const hitAge = (clock.time - gatherEnd) % (shuffleCycle / 2)
+        if (beat > 0) this.drawShuffleImpact(lines, gather.x, gather.y, hitAge / 0.09, this.pieceSize * 1.05, 0.8)
+      }
+      this.drawShuffleImpact(lines, gather.x, gather.y, (clock.time - firstDropSeconds) / 0.15, this.pieceSize * 1.15, 0.75)
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i], node = entry.node
+        if (!node.isValid || !entry.opacity.isValid) continue
+        entry.opacity.opacity = entry.alpha
+        if (clock.time < gatherEnd) {
+          const delay = entries.length > 1 ? i / (entries.length - 1) * gatherStagger : 0
+          if (clock.time < gatherHold + delay) {
+            const charge = Math.sin(Math.min(1, clock.time / gatherHold) * Math.PI / 2)
+            node.setPosition(entry.origin.x, entry.origin.y - this.pieceSize * 0.04 * charge, 0)
+            node.setScale(1 + 0.10 * charge, 1 - 0.12 * charge, 1); node.angle = 0
+            continue
+          }
+          const p = Math.max(0, Math.min(1, (clock.time - gatherHold - delay) / gatherMove))
+          const move = 1 - Math.pow(1 - p, 3), inverse = 1 - move
+          const controlX = (entry.origin.x + entry.deck.x) / 2 + entry.side * this.pieceSize * 0.60
+          const controlY = Math.max(entry.origin.y, entry.deck.y) + this.pieceSize * 0.65
+          node.setPosition(
+            inverse * inverse * entry.origin.x + 2 * inverse * move * controlX + move * move * entry.deck.x,
+            inverse * inverse * (entry.origin.y - this.pieceSize * 0.04) + 2 * inverse * move * controlY + move * move * entry.deck.y, 0
+          )
+          node.angle = entry.tilt * move + entry.side * 12 * Math.sin(Math.PI * p)
+          const release = Math.sin(Math.PI * Math.min(1, p / 0.20))
+          node.setScale(1.10 - 0.18 * move - 0.08 * release, 0.88 + 0.04 * move + 0.22 * release, 1)
+          continue
+        }
+        if (clock.time < shuffleEnd) {
+          const elapsed = clock.time - gatherEnd
+          const envelope = Math.min(1, elapsed / 0.07, (shuffleSeconds - elapsed) / 0.07)
+          const halfCycle = shuffleCycle / 2, beat = Math.floor(elapsed / halfCycle), local = elapsed % halfCycle
+          // 交错点只停留 18ms，停的是牌叠姿态，不暂停引擎或其他动画。
+          const hold = beat > 0 ? 0.018 : 0
+          const phase = (beat + Math.max(0, (local - hold) / (halfCycle - hold))) * Math.PI
+          const wave = Math.sin(phase) * envelope, lift = (1 - Math.cos(phase)) * 0.5 * envelope
+          const hit = beat > 0 ? Math.max(0, 1 - local / 0.07) : 0
+          node.setPosition(entry.deck.x + entry.side * this.pieceSize * 0.95 * wave, entry.deck.y + entry.side * this.pieceSize * 0.22 * lift, 0)
+          node.angle = entry.tilt + entry.side * 13 * wave
+          node.setScale(0.92 + 0.02 * lift + 0.10 * hit, 0.92 + 0.02 * lift - 0.10 * hit, 1)
+          continue
+        }
+        const square = Math.min(1, (clock.time - shuffleEnd) / squareSeconds)
+        const tighten = square * square * (3 - 2 * square)
+        const deckX = gather.x + (entry.deck.x - gather.x) * (1 - 0.7 * tighten)
+        const deckY = gather.y + (entry.deck.y - gather.y) * (1 - 0.7 * tighten)
+        const elapsed = clock.time - firstDropSeconds - i * dropInterval
+        if (elapsed < 0) {
+          const charge = Math.sin(Math.PI * square)
+          node.setPosition(deckX, deckY, 0); node.setScale(0.92 + 0.10 * charge, 0.92 - 0.14 * charge, 1); node.angle = entry.tilt * (1 - tighten)
+          continue
+        }
+        if (!entry.launched) {
+          entry.launched = true
+          if (node.parent?.isValid) node.setSiblingIndex(node.parent.children.length - 1)
+          // 同帧跨过多个时刻时只触发一份反馈，方便后续接音效而不突然叠响。
+          if (!dealt) { dealt = true; if (!emitCue('deal')) return }
+        }
+        if (elapsed < launchSeconds) {
+          const p = elapsed / launchSeconds, inverse = 1 - p
+          node.setPosition(
+            inverse * inverse * deckX + (1 - inverse * inverse) * entry.position.x,
+            inverse * inverse * deckY + 2 * inverse * p * (startY + this.pieceSize * 0.8) + p * p * startY, 0
+          )
+          node.angle = (entry.position.x < gather.x ? -1 : 1) * 12 * Math.sin(Math.PI * p)
+          node.setScale(0.92 - 0.20 * p, 0.92 + 0.58 * p, 1)
+          continue
+        }
+        const fallTime = elapsed - launchSeconds
+        const p = Math.min(1, fallTime / fallSeconds)
+        const y = startY + (entry.position.y - startY) * p
+        node.setPosition(entry.position.x, y, 0)
+        node.angle = 0
+        if (p < 1) {
+          node.setScale(0.72, 1.5, 1)
+          if (lines) {
+            lines.lineWidth = Math.max(2, this.pieceSize * 0.035)
+            lines.strokeColor = new Color(255, 249, 227, Math.round(190 * (1 - p * 0.6)))
+            for (let lane = -1; lane <= 1; lane++) {
+              const x = entry.position.x + lane * this.pieceSize * 0.23
+              lines.moveTo(x, y + this.pieceSize * 0.65)
+              lines.lineTo(x, y + this.pieceSize * (lane === 0 ? 2.25 : 1.65))
+            }
+            lines.stroke()
+          }
+        } else {
+          if (!entry.landed) {
+            entry.landed = true
+            if (!landed) { landed = true; if (!emitCue('land')) return }
+          }
+          const age = fallTime - fallSeconds, p = Math.min(1, age / landSeconds)
+          const scaleX = p < 0.4 ? 1.24 - 0.30 * (p / 0.4) : 0.94 + 0.06 * ((p - 0.4) / 0.6)
+          const scaleY = p < 0.4 ? 0.72 + 0.36 * (p / 0.4) : 1.08 - 0.08 * ((p - 0.4) / 0.6)
+          node.setPosition(entry.position.x, entry.position.y + this.pieceSize * (scaleY - 1) / 2, 0)
+          node.setScale(scaleX, scaleY, 1)
+          if (entry.body?.isValid && entry.bodyColor) {
+            const flash = Math.max(0, 1 - age / 0.065) * 0.72, base = entry.bodyColor
+            entry.body.color = new Color(base.r + (255 - base.r) * flash, base.g + (249 - base.g) * flash, base.b + (227 - base.b) * flash, base.a)
+          }
+          this.drawShuffleImpact(lines, entry.position.x, entry.position.y - this.pieceSize / 2, age / impactSeconds, this.pieceSize * 1.1, 0.28)
+        }
+      }
+    }
+    return new Promise(resolve => {
+      this.shuffleDone = resolve
+      render()
+      tween(clock).to(duration, { time: duration }, { onUpdate: render }).call(() => {
+        if (this.shuffleClock !== clock) return
+        const completed = isAlive()
+        if (completed) { clock.time = duration; render() }
+        this.shuffleClock = null
+        if (this.shuffleTrail?.isValid) this.transientFx.destroy(this.shuffleTrail)
+        this.shuffleTrail = null
+        const done = this.shuffleDone; this.shuffleDone = null; done?.(completed)
+      }).start()
+    })
+  }
+
+  /** 动作碰点共用的扩散圈、短射线和碎点；重绘自身 Alpha，不依赖 Graphics 的 UIOpacity。 */
+  private drawShuffleImpact(graphics: Graphics | null, x: number, y: number, p: number, size: number, flat: number) {
+    if (!graphics || p < 0 || p >= 1) return
+    const alpha = Math.round(230 * (1 - p)), radius = size * (0.22 + 0.75 * p)
+    graphics.lineWidth = Math.max(2, size * 0.085 * (1 - p * 0.6))
+    graphics.strokeColor = new Color(98, 57, 31, Math.round(alpha * 0.65))
+    graphics.ellipse(x, y, radius, radius * flat); graphics.stroke()
+    graphics.lineWidth = Math.max(1, size * 0.05 * (1 - p * 0.6))
+    graphics.strokeColor = new Color(255, 202, 77, alpha)
+    graphics.ellipse(x, y, radius, radius * flat); graphics.stroke()
+    graphics.strokeColor = new Color(255, 249, 227, alpha)
+    for (let i = 0; i < 8; i++) {
+      const angle = i * Math.PI / 4 + 0.2, distance = size * (0.40 + 0.75 * p)
+      const dx = Math.cos(angle), dy = Math.sin(angle) * flat
+      graphics.moveTo(x + dx * distance, y + dy * distance)
+      graphics.lineTo(x + dx * (distance + size * 0.20 * (1 - p)), y + dy * (distance + size * 0.20 * (1 - p)))
+    }
+    graphics.stroke()
+    for (let i = 0; i < 6; i++) {
+      const angle = i * Math.PI / 3, distance = size * (0.45 + p)
+      const side = size * 0.055 * (1 - p)
+      graphics.fillColor = i % 2 ? new Color(255, 129, 88, alpha) : new Color(164, 207, 83, alpha)
+      graphics.roundRect(x + Math.cos(angle) * distance - side, y + Math.sin(angle) * distance * flat - side, side * 2, side * 2, side * 0.5)
+      graphics.fill()
+    }
+  }
 
 
   /**

@@ -135,6 +135,7 @@ export class PauseOverlayController extends Component {
   private buttonClickHandler: (() => void) | null = null
   // 回首页会销毁当前游戏场景，点击后只派发一次，避免连续触摸重复触发解绑和切场景。
   private isReturningHome = false
+  private disposed = false
   // 关闭弹窗的按钮
   @property({ type: Node, tooltip: '关闭按钮节点' })
   private closeButtonNode: Node | null = null
@@ -222,6 +223,13 @@ export class PauseOverlayController extends Component {
   }
 
   onDestroy() {
+    this.dispose()
+  }
+
+  /** 宿主组件单独移除时也能释放监听；不依赖父子节点的销毁先后。 */
+  dispose() {
+    if (this.disposed) return
+    this.disposed = true
     this.unscheduleAllCallbacks()
     this.stopPauseOverlayTweens()
     this.safeOff(this.pauseOverlayMask, Node.EventType.TOUCH_START, this.swallowOverlayTouch)
@@ -239,6 +247,13 @@ export class PauseOverlayController extends Component {
     this.unbindPauseActionButton(this.homeButtonNode, this.onHomeButtonTap)
     this.unbindPauseActionButton(this.shareButtonNode, this.onShareButtonTap)
     this.unbindPauseActionButton(this.feedbackButtonNode, this.onFeedbackButtonTap)
+    this.pauseHandler = null
+    this.replayHandler = null
+    this.homeHandler = null
+    this.shareHandler = null
+    this.feedbackHandler = null
+    this.buttonClickHandler = null
+    if (this.canUseNode(this.node)) this.node.active = false
   }
 
   // PauseOverlay 节点优先复用 scene 中现成的 Mask 和 Panel，缺失时再补最小结构。

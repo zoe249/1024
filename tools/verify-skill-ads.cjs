@@ -27,7 +27,7 @@ function load(file, dependencies = {}) {
     require: name => {
       if (name === 'cc') return cc
       if (dependencies[name]) return dependencies[name]
-      if (/appearance\//.test(name) || /(?:Appearance(?:Types|Catalog|Resolver|AssetLoader|Runtime)|BaseAppearance|(?:Game|Home|Loading)Appearance)$/.test(name)) return load(path.posix.normalize(path.posix.join(path.posix.dirname(file), name + '.ts')))
+      if (/appearance\//.test(name) || /(?:EndlessProgression|BoardConfig|Appearance(?:Types|Catalog|Resolver|AssetLoader|Runtime)|BaseAppearance|(?:Game|Home|Loading)Appearance)$/.test(name)) return load(path.posix.normalize(path.posix.join(path.posix.dirname(file), name + '.ts')))
       return {}
     } }, { filename: file })
   return module.exports

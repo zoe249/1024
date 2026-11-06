@@ -1,4 +1,6 @@
 import { GameAppearance } from './GameAppearance'
+import { StageChoicePopupController } from './StageChoicePopupController'
+import { STAGE_CHOICE_NAMES, type StageChoice } from './EndlessProgression'
 import type { AppearanceLease } from '../appearance/AppearanceRuntime'
 import { PlayHudView } from './PlayHudView'
 import { SkillBarView } from './SkillBarView'
@@ -53,6 +55,11 @@ type PlaySkillKind = 'bomb' | 'hammer' | 'swap'
 
 // UI 层只关心界面展示所需的最小状态，不参与棋盘运算和合并逻辑。
 export type PlayUIState = {
+  stage?: {
+    phase: 1 | 2; target: number; highestMergeValue: number; choice: StageChoice | null
+    pendingChoice: boolean; canShuffle: boolean; wildcardInterval: number; spawnedSinceChoice: number
+  }
+  nextIsWildcard?: boolean
   currentValue: number | null
   nextValue: number | null
   currentColumn: number
@@ -83,6 +90,7 @@ export type PlayUIState = {
 }
 
 export type PlayUILayout = {
+  boardY?: number
   boardwidth: number
   boardheight: number
   pieceSize: number
@@ -92,6 +100,7 @@ export type PlayUILayout = {
 
 // 所有 UI 操作统一通过回调回到玩法层，UI 组件不直接修改棋盘、经济或场景状态。
 export type PlayUIActions = {
+  chooseStage?: (choice: StageChoice) => void
   pause: () => void
   restart: () => void
   homeFromPause: () => void
@@ -233,6 +242,13 @@ export class PlayUIController extends Component {
   // 格子之间的间距，方便后续继续扩展 UI 布局时保持同一套棋盘参数。
   private spacing = 10
   private spawnOffsetY = 0
+  private boardY = GAME_BOARD_Y
+  private stageStatusLabel: Label | null = null
+  private stagePopup: StageChoicePopupController | null = null
+  private stagePopupAsset: Prefab | null = null
+  private stagePopupLoading = false
+  private stagePopupGeneration = 0
+  private chooseStageHandler: ((choice: StageChoice) => void) | null = null
   private overtakeWidget: OvertakeTargetWidget | null = null
   private overtakeLoadGeneration = 0
   // 由逻辑层注入的暂停切换回调，按钮点击后只通知逻辑，不直接改游戏状态。
@@ -366,6 +382,8 @@ export class PlayUIController extends Component {
     this.pieceSize = layout.pieceSize
     this.spacing = layout.spacing
     this.spawnOffsetY = layout.spawnOffsetY
+    this.boardY = layout.boardY ?? GAME_BOARD_Y
+    this.chooseStageHandler = actions.chooseStage ?? null
     this.pauseHandler = actions.pause
     this.pauseReplayHandler = actions.restart
     this.pauseHomeHandler = actions.homeFromPause
@@ -390,6 +408,9 @@ export class PlayUIController extends Component {
     this.hideCoinBar()
     this.ensureBoardDecorations()
     this.ensureHudDisplay()
+    this.stageStatusLabel = this.node.getChildByName('Status')?.getChildByName('Content')?.getChildByName('StageStatus')?.getComponent(Label) ?? null
+    this.stageStatusLabel?.node.on(Node.EventType.TOUCH_END, this.retryStagePopup, this)
+    this.ensureStagePopup()
     this.ensureOvertakeWidget()
     this.ensureSkillButtons()
     this.ensureFeedbackLayer()
@@ -424,6 +445,67 @@ export class PlayUIController extends Component {
     this.pauseOverlayController?.syncLayout()
     this.gameOverOverlayController?.syncLayout()
     this.firstEntryTutorialController?.syncLayout()
+    if (this.stagePopup?.isValid) this.stagePopup.syncLayout()
+  }
+
+  /** 同步缩放中的实时尺寸；几何与静态列占位仍只有这一套数据。 */
+  updateBoardLayout(layout: PlayUILayout) {
+    this.boardwidth = layout.boardwidth; this.boardheight = layout.boardheight
+    this.pieceSize = layout.pieceSize; this.spacing = layout.spacing
+    this.spawnOffsetY = layout.spawnOffsetY; this.boardY = layout.boardY ?? GAME_BOARD_Y
+    this.ensureGamePageLayout()
+    this.ensureBoardDecorations()
+  }
+
+  closeStageChoice(): Promise<boolean> {
+    return this.stagePopup?.isValid ? this.stagePopup.hide() : Promise.resolve(true)
+  }
+
+  suspendStagePresentation() {
+    if (!this.isUiDestroyed && this.stagePopup?.isValid) this.stagePopup.suspend()
+  }
+
+  private retryStagePopup() {
+    if (this.currentState.stage?.pendingChoice) this.ensureStagePopup()
+  }
+
+  private ensureStagePopup() {
+    if (this.stagePopup?.isValid || this.stagePopupLoading || this.isUiDestroyed || !this.chooseStageHandler) return
+    this.stagePopupLoading = true
+    const generation = ++this.stagePopupGeneration
+    resources.load('base/Stage/StageChoicePopup', Prefab, (error, prefab) => {
+      if (this.isUiDestroyed || !this.isValid || !this.node?.isValid || generation !== this.stagePopupGeneration) return
+      this.stagePopupLoading = false
+      if (error || !prefab) {
+        console.warn('[阶段晋级] 弹窗预制件加载失败', error)
+        this.showTransientMessage('成长弹窗加载失败，点击顶部成长提示重试')
+        return
+      }
+      const node = instantiate(prefab)
+      const popup = node.getComponent(StageChoicePopupController)
+      if (!popup) { node.destroy(); console.warn('[阶段晋级] 弹窗缺少控制组件'); return }
+      prefab.addRef()
+      this.stagePopupAsset = prefab
+      node.setParent(this.node.getChildByName('OverlayLayer') ?? this.node)
+      this.stagePopup = popup
+      popup.setup(choice => this.chooseStageHandler?.(choice))
+      this.renderStageState()
+    })
+  }
+
+  private renderStageState() {
+    const stage = this.currentState.stage
+    if (!stage) return
+    if (this.stageStatusLabel?.isValid) {
+      this.stageStatusLabel.string = stage.phase === 1 ? `合出 ${stage.target} · 解锁成长`
+        : !stage.choice ? '第二阶段 · 选择成长效果'
+          : stage.choice === 'wildcard' ? `万能来客 · 还有 ${stage.wildcardInterval - stage.spawnedSinceChoice % stage.wildcardInterval} 颗`
+            : `第二阶段 · ${STAGE_CHOICE_NAMES[stage.choice]}${stage.choice === 'shuffle' ? '已生效' : ''}`
+    }
+    if (stage.pendingChoice) {
+      if (this.stagePopup?.isValid) this.stagePopup.show(stage.canShuffle)
+      else this.ensureStagePopup()
+    }
   }
 
   // 逻辑层每次状态变化后只需要把结果喂给 UI 层即可。
@@ -444,6 +526,7 @@ export class PlayUIController extends Component {
     )
     this.gameOverOverlayController?.renderRank(state.settlementRank, state.settlementRankPending)
     this.firstEntryTutorialController?.renderState(this.currentState.tutorial)
+    this.renderStageState()
   }
   private skillVisualKeys: Record<PlaySkillKind, string> = {
     bomb: '',
@@ -486,6 +569,19 @@ export class PlayUIController extends Component {
   }
 
   onDestroy() {
+    if (this.isUiDestroyed) return
+    this.isUiDestroyed = true
+    this.stagePopupGeneration++
+    if (this.stagePopup?.isValid) {
+      this.stagePopup.dispose()
+      if (this.stagePopup.node?.isValid) this.stagePopup.node.destroy()
+    }
+    this.stagePopup = null
+    if (this.stagePopupAsset?.isValid) this.stagePopupAsset.decRef()
+    this.stagePopupAsset = null
+    this.chooseStageHandler = null
+    if (this.stageStatusLabel?.isValid && this.stageStatusLabel.node?.isValid) this.stageStatusLabel.node.off(Node.EventType.TOUCH_END, this.retryStagePopup, this)
+    this.stageStatusLabel = null
     if (this.nextPieceBody?.isValid && this.nextPieceBody.node?.isValid) {
       this.nextPieceBody.spriteFrame = null
       this.nextPieceBody.node.active = false
@@ -498,7 +594,6 @@ export class PlayUIController extends Component {
     // 子 HUD 可能已完成 onDestroy 并被引擎清空字段，只清理仍存活的组件。
     if (this.overtakeWidget?.isValid) this.overtakeWidget.dispose()
     this.overtakeWidget = null
-    this.isUiDestroyed = true
     // Cocos 先销毁子节点再调用本组件的 onDestroy，清理只能使用缓存引用，不能重新查找层级。
     this.safeOff(this.pauseButtonNode, Node.EventType.TOUCH_END, this.onPauseButtonTap)
     this.safeOff(this.settingsButtonNode, Node.EventType.TOUCH_END, this.onPauseButtonTap)
@@ -648,7 +743,7 @@ export class PlayUIController extends Component {
     const boardNode = this.node.getChildByName('board')
     if (boardNode) {
       const gridSize = this.getExpectedBoardGridSize()
-      boardNode.setPosition(0, GAME_BOARD_Y, 0)
+      boardNode.setPosition(0, this.boardY, 0)
       // 先同步内区，再同步外框，避免动态行列首次布局时仍读取 scene 中的 5×7 旧尺寸。
       boardNode.getChildByName('BoardFill')?.getComponent(UITransform)?.setContentSize(gridSize.width, gridSize.height)
       boardNode.getComponent(UITransform)?.setContentSize(
@@ -1386,7 +1481,7 @@ export class PlayUIController extends Component {
   private refreshNextPieceDisplay() {
     const value = this.currentState.nextValue ?? 2
     const frames = this.gameAppearance?.frames()
-    this.nextPieceBody = PlayHudView.renderNextPiece(value, this.nextValueLabel, this.nextValueTile, this.gameAppearance?.piece, frames?.body, frames?.imagesByValue?.[value])
+    this.nextPieceBody = PlayHudView.renderNextPiece(value, this.nextValueLabel, this.nextValueTile, this.gameAppearance?.piece, frames?.body, frames?.imagesByValue?.[value], this.currentState.nextIsWildcard)
   }
 
   // 游戏内不再展示金币余额；金币仍由经济仓库维护，首页和购买弹窗按需展示。

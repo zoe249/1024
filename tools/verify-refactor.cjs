@@ -7,9 +7,9 @@ const { execFileSync } = require('node:child_process')
 const ts = require(process.argv[2] || 'typescript')
 const root = path.resolve(__dirname, '..')
 const baseline = process.argv[3] || 'b005a5ff247d7a6a8ad8ee03a7e0bcfee6aee826'
-const source = (file, before) => before
+const source = (file, before) => (before
   ? execFileSync('git', ['show', `${baseline}:${file}`], { cwd: root, encoding: 'utf8', maxBuffer: 4e6 })
-  : fs.readFileSync(path.join(root, file), 'utf8')
+  : fs.readFileSync(path.join(root, file), 'utf8')).replace(/\r\n/g, '\n')
 const plain = value => JSON.parse(JSON.stringify(value))
 const equal = (actual, expected, message) => assert.deepEqual(plain(actual), plain(expected), message)
 
@@ -53,6 +53,7 @@ function environment(before, transformOutput = output => output) {
     roundRect(...args) { this.ops.push(['roundRect', ...args]) }
     fill() { this.ops.push(['fill', plain(this.fillColor)]) }
     rect(...args) { this.ops.push(['rect', ...args]) }
+    ellipse(...args) { this.ops.push(['ellipse', ...args]) }
     moveTo(...args) { this.ops.push(['moveTo', ...args]) }
     lineTo(...args) { this.ops.push(['lineTo', ...args]) }
     bezierCurveTo(...args) { this.ops.push(['bezierCurveTo', ...args]) }
@@ -82,11 +83,12 @@ function environment(before, transformOutput = output => output) {
     return chain
   }
   const cc = { _decorator: { ccclass: () => c => c, property: () => () => {} }, Color, Vec3, Vec2: Vec3, Component,
+    Game: { EVENT_HIDE: 'game_hide' }, game: { on() {}, off() {} },
     Node, Sprite, Label, LabelOutline, UIOpacity, ParticleSystem2D, UITransform, Graphics, SpriteFrame: class {}, Prefab: class {}, tween,
     Tween: { stopAllByTarget: target => trace.push(['stop', target?.name ?? target?.node?.name ?? '']) },
     screen: { windowSize: { height: 1625 } }, sys: { getSafeAreaRect: () => ({ y: 0, height: 1580 }) }, view: { getVisibleSize: () => ({ height: 1625 }) } }
   const cache = new Map()
-  const enabled = /(?:BaseAppearance|Appearance(?:Types|Catalog|Resolver|AssetLoader|Runtime)|(?:Game|Home|Loading)Appearance|Piece(?:Style|Controller|AppearanceView)|Play(?:Controller|UIController|HudView|Effects)|SkillBarView|HomeLayout|Loading(?:SceneController|LeavesEffect)|Board(?:Model|Geometry|Config)|ScoreManager|TransientFxRegistry)\.ts$/
+  const enabled = /(?:BaseAppearance|Appearance(?:Types|Catalog|Resolver|AssetLoader|Runtime)|(?:Game|Home|Loading)Appearance|Piece(?:Style|Controller|AppearanceView)|Play(?:Controller|UIController|HudView|Effects)|SkillBarView|HomeLayout|Loading(?:SceneController|LeavesEffect)|Board(?:Model|Geometry|Config)|ScoreManager|TransientFxRegistry|EndlessProgression|StageChoicePopupController|OngoingGameSession)\.ts$/
   function load(file) {
     if (cache.has(file)) return cache.get(file)
     const module = { exports: {} }; cache.set(file, module.exports)
@@ -272,7 +274,11 @@ const methods = before => {
   const ast = ts.createSourceFile(playFile, source(playFile, before), ts.ScriptTarget.Latest, true)
   return new Map(ast.statements.find(n => ts.isClassDeclaration(n) && n.name.text === 'PlayController').members.filter(ts.isMethodDeclaration).map(n => [n.name.getText(ast), n.getText(ast)]))
 }
-const changed = new Set(['onLoad', 'onDestroy', 'clearBoardPieces', 'spawnSkillShatterParticles', 'spawnBombShockwave', 'spawnUpgradeImpact', 'spawnMergeFlash', 'spawnMergeBurst', 'createFxPiece', 'instantiateSnapshotPiece', 'spawnPiece', 'restartGame'])
+const changed = new Set(['onLoad', 'onDestroy', 'clearBoardPieces', 'spawnSkillShatterParticles', 'spawnBombShockwave', 'spawnUpgradeImpact', 'spawnMergeFlash', 'spawnMergeBurst', 'createFxPiece', 'instantiateSnapshotPiece', 'spawnPiece', 'restartGame',
+  // 晋级相关方法由 verify-stage.cjs 验证；其他玩法方法仍逐字保留旧基线断言。
+  'onEnable', 'onDisable', 'start', 'update', 'handleTouchStart', 'resetBoard', 'buildOngoingGameSnapshot', 'restoreOngoingGame', 'clearTransientEffects',
+  'landPiece', 'settleBoard', 'executeSwapSkill', 'executeHammerSkill', 'executeBombSkill', 'resolveLandingChain', 'mergeLandingComponent', 'collectComponent', 'playMergeGroups',
+  'buildUiState', 'applyScoreRewards', 'togglePauseFromUi', 'toggleSwapSkillFromUi', 'toggleHammerSkillFromUi', 'toggleBombSkillFromUi'])
 const oldMethods = methods(true), newMethods = methods(false)
 for (const [name, text] of oldMethods) if (!changed.has(name)) assert.equal(newMethods.get(name), text, `玩法方法 ${name} 必须保持原实现`)
 // 目录迁移只允许路径变化；批量读取 Git 原始内容，继续核对资源与序列化契约。
@@ -290,7 +296,29 @@ for (const { file } of existingAssets) {
   const backgroundSource = 'assets/images/World/bg_flat_cartoon_spring_meadow_v1.png'
   if (file === backgroundSource || file === `${backgroundSource}.meta`) currentFile = file.replace('assets/images/World/', 'design/base/images/World/')
   const actual = fs.readFileSync(path.join(root, currentFile))
-  if (/\.(scene|prefab|meta)$/.test(file)) assert.equal(actual.toString().replace(/\r\n/g, '\n'), original.toString().replace(/\r\n/g, '\n'), `序列化资源 ${file}`)
+  if (file === 'assets/scence/home.scene' || file === 'assets/scence/game.scene') {
+    // 闯关只追加入口子树；原有首页对象、序列化属性和 UUID 仍逐项比较。
+    const previous = JSON.parse(original), current = JSON.parse(actual)
+    const entryName = file === 'assets/scence/home.scene' ? 'LevelEntryButton' : 'StageStatus'
+    const entry = current.findIndex(node => node.__type__ === 'cc.Node' && node._name === entryName)
+    assert.ok(entry >= previous.length, '闯关入口必须追加，不能替换原有首页对象')
+    const parent = current[entry]._parent.__id__
+    assert.equal(previous[parent]._name, file === 'assets/scence/home.scene' ? 'HomepageArtwork' : 'Content')
+    const preserved = plain(current.slice(0, previous.length))
+    assert.equal(preserved[parent]._children.filter(child => child.__id__ === entry).length, 1)
+    preserved[parent]._children = preserved[parent]._children.filter(child => child.__id__ !== entry)
+    equal(preserved, previous, '原有首页层级与序列化契约保持不变')
+    const added = new Set()
+    const visit = value => {
+      if (!value || typeof value !== 'object') return
+      if (value.__id__ !== undefined) {
+        const id = value.__id__
+        if (id >= previous.length && !added.has(id)) { assert.ok(current[id]); added.add(id); visit(current[id]) }
+      } else Object.values(value).forEach(visit)
+    }
+    visit({ __id__: entry })
+    assert.equal(added.size, current.length - previous.length, '新增对象必须全部归属闯关入口子树')
+  } else if (/\.(scene|prefab|meta)$/.test(file)) assert.equal(actual.toString().replace(/\r\n/g, '\n'), original.toString().replace(/\r\n/g, '\n'), `序列化资源 ${file}`)
   else assert.ok(actual.equals(original), `资源内容 ${file}`)
 }
 for (const file of ['gameplay/PieceController', 'gameplay/PlayController', 'gameplay/PlayUIController', 'home/HomeSceneController', 'home/StartPageController', 'loading/LoadingSceneController', 'settlement/GameOverOverlayController']) {
@@ -300,13 +328,20 @@ for (const file of ['gameplay/PieceController', 'gameplay/PlayController', 'game
       decorators: c.modifiers?.filter(ts.isDecorator).map(d => d.getText(ast)) ?? [],
       properties: c.members.filter(m => ts.isPropertyDeclaration(m) && m.modifiers?.some(ts.isDecorator)).map(m => m.getText(ast)) }))
   }
-  equal(declarations(false), declarations(true), `${file} 的序列化契约`)
+  const currentDeclarations = declarations(false)
+  if (file === 'gameplay/PlayController') {
+    const controller = currentDeclarations.find(value => value.name === 'PlayController')
+    const added = controller.properties.filter(text => /\b(stageTargetValue|wildcardInterval)\s*=/.test(text))
+    assert.equal(added.length, 2, '仅增加晋级阈值和万能间隔两个 Inspector 字段')
+    controller.properties = controller.properties.filter(text => !added.includes(text))
+  }
+  equal(currentDeclarations, declarations(true), `${file} 的原有序列化契约`)
 }
-for (const name of ['instantiateSnapshotPiece', 'spawnPiece', 'restartGame']) {
+for (const name of ['instantiateSnapshotPiece']) {
   const strip = text => text.replace(/^    if \(this\.gameAppearance\) pieceController\.applyAppearance[^\n]+\n/gm, '').replace(/^    const previousAppearance = this\.gameAppearance\n    this\.gameAppearance = new GameAppearance\(previousAppearance\?\.lease\.retain\(\) \?\? appearanceRuntime\.acquireBase\('game'\)\)\n    previousAppearance\?\.dispose\(\)\n/gm, '')
   assert.equal(strip(newMethods.get(name)), oldMethods.get(name), name + ' 的原玩法必须保留')
 }
-console.log('玩法方法、既有资源内容与 Scene/Prefab/meta 保持基线；资源归入 base、背景源稿保留在 design；Creator/微信实际渲染、声音和触摸尚需运行验收')
+console.log('玩法方法、既有资源内容与 Scene/Prefab/meta 保持基线，首页仅追加独立闯关入口；Creator/微信实际渲染、声音和触摸尚需运行验收')
 
 async function verifyPopupOwnership() {
   const env = environment(false), { Node, Component } = env.cc

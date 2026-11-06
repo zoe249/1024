@@ -33,6 +33,8 @@ export class PieceController extends Component {
     this.getAppearanceView().setValue(value)
   }
 
+  setWildcard(enabled: boolean) { this.getAppearanceView().setWildcard(enabled) }
+
   syncLayout(force = false) { this.getAppearanceView().syncLayout(force) }
   syncTrailEffect(force = false) { this.syncLayout(force) }
   stopParticle() { this.getAppearanceView().stopParticle() }

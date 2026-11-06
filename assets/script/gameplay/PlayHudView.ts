@@ -15,12 +15,12 @@ export class PlayHudView {
     this.imageLabels.delete(label)
   }
 
-  static renderNextPiece(value: number, nextValueLabel: Label | null, nextValueTile: Graphics | null, appearance: PieceAppearance = BASE_APPEARANCE.piece, bodyFrame?: SpriteFrame, valueImage?: SpriteFrame): Sprite | null {
+  static renderNextPiece(value: number, nextValueLabel: Label | null, nextValueTile: Graphics | null, appearance: PieceAppearance = BASE_APPEARANCE.piece, bodyFrame?: SpriteFrame, valueImage?: SpriteFrame, wildcard = false): Sprite | null {
     if (!nextValueLabel || !nextValueTile) {
       return null
     }
 
-    const bodyColor = Color.fromHEX(new Color(), getPieceDisplayStyle(value, 'preview', appearance).bodyColor)
+    const bodyColor = wildcard ? new Color(255, 122, 86, 255) : Color.fromHEX(new Color(), getPieceDisplayStyle(value, 'preview', appearance).bodyColor)
     nextValueTile.clear()
     nextValueTile.fillColor = HUD_CARD_BORDER_COLOR
     nextValueTile.roundRect(-26, -26, 52, 52, 9)
@@ -28,12 +28,13 @@ export class PlayHudView {
     nextValueTile.fillColor = bodyColor
     nextValueTile.roundRect(-23, -23, 46, 46, 7)
     nextValueTile.fill()
-    nextValueLabel.string = `${value}`
-    nextValueLabel.fontSize = value >= 100 ? 19 : value >= 10 ? 21 : 24
+    nextValueLabel.string = wildcard ? '万能' : `${value}`
+    nextValueLabel.fontSize = wildcard ? 16 : value >= 100 ? 19 : value >= 10 ? 21 : 24
     nextValueLabel.color = Color.fromHEX(new Color(), appearance.preview.textColor)
     nextValueLabel.enableOutline = true
     nextValueLabel.outlineColor = Color.fromHEX(new Color(), appearance.preview.outlineColor)
     nextValueLabel.outlineWidth = 2
+    if (wildcard) { bodyFrame = undefined; valueImage = undefined }
     if (!valueImage) this.restoreNextPieceLabel(nextValueLabel)
     // 只有已准备的贴图覆盖才需要轻量缩略图；默认预览仍使用原 Graphics，层级不变。
     const parent = nextValueTile.node

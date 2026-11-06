@@ -1,4 +1,5 @@
 import type { SkillAdRewardState, SkillKind } from '../economy/SkillStock'
+import { cloneProgression, isValidProgression, type EndlessProgression, type PieceKind } from './EndlessProgression'
 import {
   areBoardConfigsEqual,
   cloneBoardConfig,
@@ -18,6 +19,9 @@ export type OngoingGameSnapshot = {
   nextPieceValue?: number | null
   currentPieceY: number | null
   currentColumn: number
+  progression?: EndlessProgression
+  currentPieceKind?: PieceKind
+  nextPieceKind?: PieceKind
   bonusScore: number
   highestPieceValue: number
   usedSkillsThisGame: Record<SkillKind, boolean>
@@ -34,6 +38,7 @@ function cloneSnapshot(snapshot: OngoingGameSnapshot, boardConfig: BoardConfig):
     ...snapshot,
     boardConfig: cloneBoardConfig(boardConfig),
     boardValues: cloneBoardValues(snapshot.boardValues),
+    progression: snapshot.progression ? cloneProgression(snapshot.progression) : undefined,
     usedSkillsThisGame: { ...snapshot.usedSkillsThisGame },
     skillAdRewards: snapshot.skillAdRewards ? { ...snapshot.skillAdRewards } : undefined
   }
@@ -68,6 +73,14 @@ export const OngoingGameSession = {
     return cloneBoardConfig(this.boardConfig)
   },
 
+  /** 晋级时同步会话尺寸，不走新开局，不重置经济和道具状态。 */
+  resizeBoard(config: BoardConfig) {
+    if (!this.active || !isValidBoardConfig(config)) return false
+    this.boardConfig = cloneBoardConfig(config)
+    this.snapshot = null
+    return true
+  },
+
   /**
    * 保存续局数据前同时校验配置与矩阵形状。
    *
@@ -85,7 +98,8 @@ export const OngoingGameSession = {
     if (
       !snapshotConfig ||
       !areBoardConfigsEqual(snapshotConfig, sessionConfig) ||
-      !isBoardMatrixCompatible(snapshot.boardValues, snapshotConfig)
+      !isBoardMatrixCompatible(snapshot.boardValues, snapshotConfig) ||
+      (snapshot.progression !== undefined && !isValidProgression(snapshot.progression, snapshotConfig))
     ) {
       this.finishGame()
       return false
@@ -118,7 +132,8 @@ export const OngoingGameSession = {
     if (
       !snapshotConfig ||
       !areBoardConfigsEqual(snapshotConfig, sessionConfig) ||
-      !isBoardMatrixCompatible(snapshot.boardValues, snapshotConfig)
+      !isBoardMatrixCompatible(snapshot.boardValues, snapshotConfig) ||
+      (snapshot.progression !== undefined && !isValidProgression(snapshot.progression, snapshotConfig))
     ) {
       // 快照损坏时只丢弃快照，仍保留玩家正在进入的关卡尺寸并从空棋盘开始。
       this.beginNewGame(sessionConfig)

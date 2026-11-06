@@ -21,6 +21,7 @@ export class PieceAppearanceView {
   private readonly baseFrames: Partial<Record<'shadow' | 'body' | 'outline' | 'highlight', SpriteFrame | null>> = {}
   private imageLabelEnabled: boolean | null = null
   private value = 2
+  private wildcard = false
   private shadowSprite: Sprite | null = null
   private bodySprite: Sprite | null = null
   private outlineSprite: Sprite | null = null
@@ -52,7 +53,7 @@ export class PieceAppearanceView {
     for (const [key, sprite] of [['shadow', this.shadowSprite], ['body', this.bodySprite], ['outline', this.outlineSprite], ['highlight', this.highlightSprite]] as const) {
       if (!sprite) continue
       if (!Object.prototype.hasOwnProperty.call(this.baseFrames, key)) this.baseFrames[key] = sprite.spriteFrame
-      const image = key === 'body' ? this.frames.imagesByValue?.[this.value] : undefined
+      const image = key === 'body' && !this.wildcard ? this.frames.imagesByValue?.[this.value] : undefined
       const frame = image ?? this.frames[key] ?? this.baseFrames[key] ?? null
       if (sprite.spriteFrame !== frame && (sprite.spriteFrame || frame)) sprite.spriteFrame = frame
     }
@@ -69,6 +70,13 @@ export class PieceAppearanceView {
   /** 数值是棋子表现的唯一入口，颜色、文字、装饰和拖尾在同一帧完成刷新。 */
   setValue(value: number) {
     this.value = value
+    this.refreshView()
+    this.syncLayout(true)
+  }
+
+  setWildcard(enabled: boolean) {
+    if (this.wildcard === enabled) return
+    this.wildcard = enabled
     this.refreshView()
     this.syncLayout(true)
   }
@@ -172,10 +180,11 @@ export class PieceAppearanceView {
 
   private refreshView() {
     this.applyLayerFrames()
-    const image = this.bodySprite ? this.frames.imagesByValue?.[this.value] : undefined
+    const image = this.bodySprite && !this.wildcard ? this.frames.imagesByValue?.[this.value] : undefined
     const style = getPieceDisplayStyle(this.value, 'board', this.appearance)
     this.currentBgColor = this.fromHex(style.bodyColor)
     this.currentTextColor = this.fromHex(style.textColor ?? '#fff9ea')
+    if (this.wildcard) this.currentBgColor = new Color(255, 122, 86, 255)
 
     if (this.bodySprite) {
       this.bodySprite.color = image ? new Color(255, 255, 255, 255) : this.currentBgColor
@@ -184,7 +193,7 @@ export class PieceAppearanceView {
       this.outlineSprite.color = this.fromHex(style.outlineColor ?? '#4b3528')
     }
 
-    this.refreshDecoration(style.decoration ?? 'none')
+    this.refreshDecoration(this.wildcard ? 'none' : style.decoration ?? 'none')
     this.refreshValueLabel(style)
     if (this.valueLabel) {
       if (image) {
@@ -219,7 +228,7 @@ export class PieceAppearanceView {
       return
     }
 
-    this.valueLabel.string = `${this.value}`
+    this.valueLabel.string = this.wildcard ? '万能' : `${this.value}`
     this.valueLabel.color = this.currentTextColor
     const usesDarkText = (style.textColor ?? '').toLowerCase() === '#3d2b24'
     this.valueLabel.outlineColor = usesDarkText
@@ -236,7 +245,7 @@ export class PieceAppearanceView {
     const digits = `${this.value}`.length
     const style = getPieceDisplayStyle(this.value, 'board', this.appearance)
     const scale = Math.min(width, height) / 120
-    const baseFontSize = digits >= 5 ? 32 : digits === 4 ? 37 : digits === 3 ? 46 : 56
+    const baseFontSize = this.wildcard ? 38 : digits >= 5 ? 32 : digits === 4 ? 37 : digits === 3 ? 46 : 56
     const decorationOffset = style.decoration === 'crown' ? -height * 0.08 : 0
     this.valueLabel.node.setPosition(0, decorationOffset, 0)
     this.valueLabel.fontSize = Math.max(18, Math.round(baseFontSize * scale * (style.textScale ?? 1)))

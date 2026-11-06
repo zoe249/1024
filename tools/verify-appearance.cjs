@@ -331,7 +331,7 @@ function evaluate(file, overrides) {
     if (name === 'cc') return cc
     if (Object.prototype.hasOwnProperty.call(overrides, name)) return overrides[name]
     const local = path.posix.normalize(path.posix.join(path.posix.dirname(file), `${name}.ts`))
-    if (local.startsWith('assets/script/appearance/') || /(?:PieceController|(?:Game|Home|Loading)Appearance|LoadingLeavesEffect|PlayEffects|HomePopupHost|BoardConfig|BoardModel|BoardGeometry|TransientFxRegistry)\.ts$/.test(local)) return load(local)
+    if (local.startsWith('assets/script/appearance/') || /(?:EndlessProgression|PieceController|(?:Game|Home|Loading)Appearance|LoadingLeavesEffect|PlayEffects|HomePopupHost|BoardConfig|BoardModel|BoardGeometry|TransientFxRegistry)\.ts$/.test(local)) return load(local)
     return {}
   } }, { filename: file })
   return module.exports
@@ -357,7 +357,7 @@ async function verifySceneEntries() {
     Object.assign(controller, { node: root, isValid: true, boardwidth: 3, boardheight: 7, pieceSize: 120, spacing: 10, spawnOffsetY: 260,
       shareAdapter: { enableWechatShareMenu() {}, disableWechatShareMenu() {} }, rewardedAdAdapter: { initialize() {}, dispose() {} },
       hasCompletedFirstEntryTutorial: () => true, ensureGameplayLayers: () => {}, preloadDefaultGameOverAudio: () => {}, bindInput: () => {},
-      resetBoard() { events.push('reset'); this.board = Array.from({ length: this.boardheight }, () => Array(this.boardwidth).fill(null)) },
+      resetBoard() { events.push('reset'); this.board = Array.from({ length: this.boardheight }, () => Array(this.boardwidth).fill(null)); this.progression = load('assets/script/gameplay/EndlessProgression.ts').createProgression({columns:this.boardwidth,rows:this.boardheight}) },
       boardModel: new (load('assets/script/gameplay/BoardModel.ts').BoardModel)(), comboFeedback: { clear() {} }, transientFx: { clear() {} },
       currentPiece: null, unschedule() {}, settlementGeneration: 0, getComponent: () => ({ showTransientMessage() {}, setup: options => { events.push('ui'); assert.equal(options.layout.boardwidth, 3); assert.ok(!options.appearance.isReleased) } }),
       restoreOngoingGame: () => events.push('restore') })

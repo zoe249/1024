@@ -19,14 +19,14 @@ export const DEFAULT_BOARD_CONFIG: Readonly<BoardConfig> = Object.freeze({
 /**
  * 当前 750×1334 玩法布局可完整容纳的棋盘范围。
  *
- * 六列的外框宽度为 748，七行的内区高度为 854；继续增大会遮挡 HUD 或技能栏。
+ * 第二阶段通过统一缩小格子容纳七列八行，初始布局仍使用默认五列七行。
  * 小于默认尺寸的关卡（例如 3×7）则保持原棋子尺寸并自动居中。
  */
 export const BOARD_CONFIG_LIMITS = Object.freeze({
   minColumns: 1,
-  maxColumns: 6,
+  maxColumns: 7,
   minRows: 1,
-  maxRows: 7
+  maxRows: 8
 })
 
 // 棋盘尺寸会参与数组分配，必须排除小数、NaN、Infinity 和非正数。

@@ -138,7 +138,7 @@ export class OvertakeTargetWidget extends Component {
     Tween.stopAllByTarget(this.counter)
     this.counter.value = Math.max(0, this.score)
     if (this.currentScoreLabel?.isValid) this.currentScoreLabel.string = `${this.counter.value}`
-    if (this.prepared?.target.key === this.desired?.key) this.showDirect(this.prepared.target, this.prepared.index)
+    if (this.prepared && this.prepared.target.key === this.desired?.key) this.showDirect(this.prepared.target, this.prepared.index)
     else if (this.displayed) this.showDirect(this.displayed, this.currentSlot)
     this.refreshTarget(false)
   }

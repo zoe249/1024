@@ -3,7 +3,7 @@ import { appearanceRuntime } from '../appearance/AppearanceRuntime'
 import { PlayEffects } from './PlayEffects'
 import { _decorator, Component, EventTouch, instantiate, Node, Prefab, Sprite, SpriteFrame, tween, Tween, UITransform, UIOpacity, Vec2, Vec3 } from 'cc'
 import { PieceController } from './PieceController'
-import { AudioClip, director, resources, sys } from 'cc'
+import { AudioClip, director, game, Game, resources, sys } from 'cc'
 import { PlayUIController, type PlayUIState } from './PlayUIController'
 import { GameAudioManager } from '../platform/GameAudioManager'
 import { GameShareAdapter } from '../platform/GameShareAdapter'
@@ -27,6 +27,7 @@ import { PlayerSyncOutbox } from '../online/sync/PlayerSyncOutbox'
 import { PlayerCloudSyncStore } from '../online/sync/PlayerCloudSyncStore'
 import { OvertakeRivalStore } from '../online/leaderboard/OvertakeRivalStore'
 import type { SettlementRank } from '../online/api/GameApiClient'
+import { canShuffle, cloneProgression, createProgression, mergeNeighbors, nextPieceKind, shouldPromote, shuffleBoard, type EndlessProgression, type PieceKind, type StageChoice } from './EndlessProgression'
 
 // 保留原有导入路径，避免首页和后续关卡入口因会话模块拆分而立即迁移。
 export { OngoingGameSession } from './OngoingGameSession'
@@ -118,6 +119,12 @@ export class PlayController extends Component {
   // 棋盘行数；场景序列化值保留为 7，进入关卡时会先被会话配置覆盖。
   @property({ tooltip: 'Board rows' })
   boardheight = 7
+
+  @property({ tooltip: '无尽模式首次晋级所需合成数字' })
+  stageTargetValue = 1024
+
+  @property({ tooltip: '选择万能后，每多少颗出子出现一次万能' })
+  wildcardInterval = 6
 
   // 棋子预制体，运行时会从这里实例化新的下落棋子。
   @property({ type: Prefab, tooltip: 'Piece prefab' })
@@ -224,6 +231,19 @@ export class PlayController extends Component {
   private currentColumn = 0
   // 下一枚棋子预先抽取，仅用于设计稿的左侧预览卡。
   private nextPieceValue = 2
+  private currentPieceKind: PieceKind = 'normal'
+  private nextKind: PieceKind = 'normal'
+  private progression: EndlessProgression = createProgression({ columns: 5, rows: 7 })
+  private originalPieceSize = 120
+  private originalSpacing = 10
+  private originalSpawnOffset = 260
+  private stageRevision = 0
+  private stageDisposed = false
+  private zoomState: { progress: number } | null = null
+  private zoomDone: ((completed: boolean) => void) | null = null
+  // 首次效果动画期间保存操作起点；恢复后从固定结果结算，避免重复抽牌或重复加分。
+  private stageCheckpoint: OngoingGameSnapshot | null = null
+  private zoomCurrentHeight: number | null = null
   // 0 表示已完成或无需引导；1、2 分别表示正在引导第一颗和第二颗棋子。
   private firstEntryTutorialStep: FirstEntryTutorialStep = 0
   // 引导棋子悬停时为 true；只有触摸当前高亮列后才允许继续下落。
@@ -290,9 +310,24 @@ export class PlayController extends Component {
       if (event.message) this.uiController?.showTransientMessage(event.message)
     })
     this.refreshUiState()
+    if (this.uiController?.isValid && this.stageCheckpoint && this.hasStartedSession) {
+      const checkpoint = this.stageCheckpoint
+      this.stageCheckpoint = null
+      this.clearBoardPieces()
+      this.restoreOngoingGame(checkpoint)
+      this.applyStageLayout(1)
+      const revision = this.stageRevision
+      void this.uiController.closeStageChoice().then(() => {
+        if (this.stageIsAlive(revision)) void this.resumeStageOrSpawn()
+      })
+    }
   }
 
   onDisable() {
+    this.stageRevision++
+    this.cancelStageZoom()
+    this.playEffects?.cancelShuffleRedeal()
+    if (this.uiController?.isValid) this.uiController.suspendStagePresentation()
     this.releaseEconomySync?.()
     this.releaseEconomySync = null
     OvertakeRivalStore.getInstance().end()
@@ -319,6 +354,9 @@ export class PlayController extends Component {
   }
   // 生命周期入口：先准备棋盘数据，再把界面初始化交给独立的 UI 组件。
   onLoad() {
+    this.originalPieceSize = this.pieceSize
+    this.originalSpacing = this.spacing
+    this.originalSpawnOffset = this.spawnOffsetY
     const sceneName = director.getScene()?.name ?? 'game'
     const ticket = appearanceRuntime.getGameTicket(sceneName)
     const lease = ticket === null ? null : appearanceRuntime.takeGame(ticket, sceneName)
@@ -339,6 +377,10 @@ export class PlayController extends Component {
     // 必须在 resetBoard、BoardGeometry 和 UI setup 之前应用本局尺寸，三者才能共享同一份配置。
     this.applyBoardConfig(OngoingGameSession.getBoardConfig())
     this.resetBoard()
+    if (ongoingSnapshot?.progression) {
+      this.progression = cloneProgression(ongoingSnapshot.progression)
+      if (this.progression.phase === 2) this.applyStageLayout(1)
+    }
     this.ensureGameplayLayers()
     this.playEffects = new PlayEffects(this.transientFx, this.pieceSize, () => this.getFxLayer())
     this.boardGeometry = new BoardGeometry(this.node, this.buildBoardGeometryOptions())
@@ -354,7 +396,8 @@ export class PlayController extends Component {
         boardheight: this.boardheight,
         pieceSize: this.pieceSize,
         spacing: this.spacing,
-        spawnOffsetY: this.spawnOffsetY
+        spawnOffsetY: this.spawnOffsetY,
+        boardY: this.getStageBoardY()
       },
       actions: {
         pause: () => this.togglePauseFromUi(),
@@ -379,7 +422,8 @@ export class PlayController extends Component {
         coinRewardShare: () => {
           void this.shareForCoinReward()
         },
-        tutorialTap: (event) => this.handleFirstEntryTutorialTap(event)
+        tutorialTap: (event) => this.handleFirstEntryTutorialTap(event),
+        chooseStage: choice => { void this.chooseStageEffect(choice) }
       },
       resources: {
         coinBarPrefab: this.coinBarPrefab,
@@ -394,6 +438,7 @@ export class PlayController extends Component {
       this.restoreOngoingGame(ongoingSnapshot)
     }
     this.bindInput()
+    game.on(Game.EVENT_HIDE, this.saveStageOnBackground, this)
   }
   // 等场景节点初始化完成后再生成第一颗棋子，避免引用未准备好的节点。
   start() {
@@ -402,14 +447,16 @@ export class PlayController extends Component {
     this.scheduleOnce(() => this.uiController?.syncLayout(), 0)
     this.audioManager?.playGameplayBackgroundMusic(this.gameplayBgmClip)
     this.refreshUiState()
-    if (!this.currentPiece && !this.isGameOver) {
-      this.spawnPiece()
-    }
+    void this.resumeStageOrSpawn()
     // 玩法期间提前预加载首页，减少暂停返回首页时的场景切换等待。
     director.preloadScene(this.homeSceneName)
   }
 
   onDestroy() {
+    this.stageDisposed = true
+    this.stageRevision++
+    this.cancelStageZoom()
+    game.off(Game.EVENT_HIDE, this.saveStageOnBackground, this)
     this.onDisable()
     this.shareAdapter.disableWechatShareMenu()
     this.skillAdRequestVersion += 1
@@ -462,6 +509,7 @@ export class PlayController extends Component {
   }
 
   private clearTransientEffects() {
+    this.playEffects?.cancelShuffleRedeal()
     this.comboFeedback.clear()
     this.transientFx.clear()
   }
@@ -542,7 +590,7 @@ export class PlayController extends Component {
       return
     }
 
-    if (!this.currentPiece || this.isGameOver || this.isResolving || this.isPaused || this.skillAdLoading) {
+    if (!this.currentPiece || this.isGameOver || this.isResolving || this.isPaused || this.skillAdLoading || this.isWaitingForStageChoice()) {
       return
     }
 
@@ -567,7 +615,7 @@ export class PlayController extends Component {
       return
     }
 
-    const speed = this.isFastDropping ? this.fastFallSpeed : this.fallSpeed
+    const speed = (this.isFastDropping ? this.fastFallSpeed : this.fallSpeed) * this.pieceSize / this.originalPieceSize
     const targetPosition = this.getCellPosition(dropRow, this.currentColumn)
     const currentPosition = this.currentPiece.node.position.clone()
     const nextY = Math.max(targetPosition.y, currentPosition.y - speed * dt)
@@ -590,6 +638,7 @@ export class PlayController extends Component {
   }
   // 触摸按下时确定列并开启快速下落
   private handleTouchStart(event: EventTouch) {
+    if (this.isWaitingForStageChoice()) return
     if (this.skillAdLoading) {
       return
     }
@@ -802,6 +851,10 @@ export class PlayController extends Component {
     this.skillAdRewards = this.createEmptySkillAdRewards()
     this.skillAdRequestVersion += 1
     this.skillAdLoading = null
+    this.progression = createProgression(this.buildBoardConfig(), this.stageTargetValue, this.wildcardInterval)
+    this.currentPieceKind = 'normal'
+    this.nextKind = 'normal'
+    this.stageCheckpoint = null
     this.currentColumn = Math.floor(this.boardwidth / 2)
     this.nextPieceValue = this.firstEntryTutorialStep > 0
       ? FIRST_ENTRY_TUTORIAL_PIECE_VALUE
@@ -811,6 +864,7 @@ export class PlayController extends Component {
 
   // 返回首页前生成纯数据快照，节点和组件不会跨场景泄漏。
   private buildOngoingGameSnapshot(): OngoingGameSnapshot {
+    if (this.stageCheckpoint) return this.stageCheckpoint
     return {
       boardConfig: this.buildBoardConfig(),
       boardValues: this.board.map((row) => row.map((piece) => piece?.getValue() ?? null)),
@@ -818,6 +872,9 @@ export class PlayController extends Component {
       nextPieceValue: this.nextPieceValue,
       currentPieceY: this.currentPiece?.node.position.y ?? null,
       currentColumn: this.currentColumn,
+      progression: cloneProgression(this.progression),
+      currentPieceKind: this.currentPieceKind,
+      nextPieceKind: this.nextKind,
       bonusScore: this.scoreManager.getBonusScore(),
       highestPieceValue: this.scoreManager.getHighestPieceValue(),
       usedSkillsThisGame: { ...this.usedSkillsThisGame },
@@ -867,7 +924,11 @@ export class PlayController extends Component {
     }
 
     this.scoreManager.restore(snapshot.bonusScore, snapshot.highestPieceValue)
+    if (snapshot.progression) this.progression = cloneProgression(snapshot.progression)
+    else this.progression.highestMergeValue = snapshot.highestPieceValue
     this.nextPieceValue = snapshot.nextPieceValue ?? this.randomBasePieceValue()
+    this.currentPieceKind = snapshot.currentPieceKind === 'wildcard' ? 'wildcard' : 'normal'
+    this.nextKind = snapshot.nextPieceKind === 'wildcard' ? 'wildcard' : 'normal'
     this.usedSkillsThisGame = {
       bomb: !!snapshot.usedSkillsThisGame?.bomb,
       hammer: !!snapshot.usedSkillsThisGame?.hammer,
@@ -894,6 +955,7 @@ export class PlayController extends Component {
         piece.node.setPosition(spawnPosition.x, restoredY, spawnPosition.z)
         this.currentColumn = availableColumn
         this.currentPiece = piece
+        piece.setWildcard(this.currentPieceKind === 'wildcard')
       }
     }
 
@@ -946,6 +1008,7 @@ export class PlayController extends Component {
    * 如果当前棋盘已经没有可落子列，会直接进入游戏结束流程。
    */
   private spawnPiece() {
+    if (this.isWaitingForStageChoice() || this.stageDisposed) return
     if (this.isBoardFull() || !this.basePieceController) {
       this.endGame()
       return
@@ -970,18 +1033,22 @@ export class PlayController extends Component {
     }
     const isTutorialPiece = this.firstEntryTutorialStep > 0
     const value = isTutorialPiece ? FIRST_ENTRY_TUTORIAL_PIECE_VALUE : this.nextPieceValue
+    this.currentPieceKind = isTutorialPiece ? 'normal' : this.nextKind
+    if (this.progression.choice === 'wildcard') this.progression.spawnedSinceChoice++
     // 第一步的预览固定为第二颗 2；第二颗生成后才提前抽取正常游戏的第三颗。
     this.nextPieceValue = this.firstEntryTutorialStep === 1
       ? FIRST_ENTRY_TUTORIAL_PIECE_VALUE
       : this.randomBasePieceValue()
+    this.nextKind = nextPieceKind(this.progression)
     this.currentColumn = column
     this.isFastDropping = false
     this.trailTimer = 0
     if (this.gameAppearance) pieceController.applyAppearance(this.gameAppearance.piece, this.gameAppearance.frames(), false)
     pieceController.setValue(value)
+    pieceController.setWildcard(this.currentPieceKind === 'wildcard')
     // 棋子尺寸由棋盘动态决定，主体、装饰、数字和拖尾在设值后统一校准。
     pieceController.syncLayout(true)
-    this.scoreManager.updateHighestPieceValue(value)
+    if (this.currentPieceKind !== 'wildcard') this.scoreManager.updateHighestPieceValue(value)
     pieceNode.setScale(Vec3.ONE)
     pieceNode.setPosition(isTutorialPiece
       ? this.getFirstEntryTutorialHoverPosition(column)
@@ -1003,6 +1070,7 @@ export class PlayController extends Component {
    * @param column 落地列，column 从左向右递增。
    */
   private async landPiece(row: number, column: number) {
+    const revision = this.stageRevision
 
     if (!this.currentPiece || this.isResolving) {
       return
@@ -1011,6 +1079,13 @@ export class PlayController extends Component {
     this.currentPiece.stopParticle()
     this.isResolving = true
     const landedPiece = this.currentPiece
+    if (this.currentPieceKind === 'wildcard') {
+      const value = row > 0 ? this.board[row - 1][column]?.getValue() ?? 2 : 2
+      landedPiece.setWildcard(false)
+      landedPiece.setValue(value)
+      this.scoreManager.updateHighestPieceValue(value)
+      this.currentPieceKind = 'normal'
+    }
     this.currentPiece = null
     this.clearTransientEffects()
     this.board[row][column] = landedPiece
@@ -1023,11 +1098,14 @@ export class PlayController extends Component {
     }
 
     const directedResult = await this.resolveLandingChain(landedPiece)
+    if (!this.stageIsAlive(revision)) return
     await this.settleBoard(directedResult.anchor, directedResult.nextChainDepth)
+    if (!this.stageIsAlive(revision)) return
 
     this.advanceFirstEntryTutorialAfterLanding(tutorialStepAtLanding)
     this.isResolving = false
     this.refreshUiState()
+    if (await this.promoteIfReady()) return
     if (this.isBoardFull()) {
       this.endGame()
       return
@@ -1046,9 +1124,11 @@ export class PlayController extends Component {
    * @param initialChainDepth 从落地点局部连锁承接的下一层深度；技能结算默认从第一层开始。
    */
   private async settleBoard(preferredAnchor: PieceController | null, initialChainDepth = 1) {
+    const revision = this.stageRevision
     let chainDepth = Math.max(1, initialChainDepth)
     while (true) {
       const moved = await this.applyGravityAllColumns()
+      if (!this.stageIsAlive(revision)) return
       const groups = this.findMergeGroups(preferredAnchor)
       if (groups.length === 0) {
         if (!moved) {
@@ -1059,6 +1139,7 @@ export class PlayController extends Component {
       }
 
       await this.playMergeGroups(groups, chainDepth)
+      if (!this.stageIsAlive(revision)) return
       chainDepth += 1
       preferredAnchor = null
     }
@@ -1230,6 +1311,7 @@ export class PlayController extends Component {
 
   // 真正执行交换：先改棋盘数据，再播放双向移动，随后复用现有全盘消除结算。
   private async executeSwapSkill(dragState: SwapDragState, target: CellPosition) {
+    const revision = this.stageRevision
     const source = dragState.source
     const sourcePiece = this.board[source.row][source.column]
     const targetPiece = this.board[target.row][target.column]
@@ -1246,6 +1328,7 @@ export class PlayController extends Component {
       this.animateSwapMove(sourcePiece.node, this.getCellPosition(target.row, target.column), Vec3.ONE, 0.18),
       this.animateSwapMove(targetPiece.node, this.getCellPosition(source.row, source.column), Vec3.ONE, 0.18)
     ])
+    if (!this.stageIsAlive(revision)) return
 
     if (this.findMergeGroups(sourcePiece).length === 0 || !this.consumeSkillUse('swap')) {
       this.playSoundEffect(this.swapRollbackAudioClip)
@@ -1259,10 +1342,12 @@ export class PlayController extends Component {
     this.playSoundEffect(this.soundEffectClips.swapSkillAudioClip)
     this.refreshUiState()
     await this.settleBoard(sourcePiece)
+    if (!this.stageIsAlive(revision)) return
     this.restoreSwapPieceLayer(dragState)
     this.isResolving = false
     this.isSwapSkillActive = false
     this.refreshUiState()
+    await this.promoteIfReady()
   }
 
   // 交换后如果没有形成任何可消除连通组，需要把棋盘数据和视觉都回弹到交换前。
@@ -1382,6 +1467,7 @@ export class PlayController extends Component {
 
   // 执行锤子技能：先把目标棋子从棋盘数组移除，再播放碎裂动画并进入现有结算流程。
   private async executeHammerSkill(target: CellPosition, piece: PieceController) {
+    const revision = this.stageRevision
     if (!this.consumeSkillUse('hammer')) {
       return
     }
@@ -1391,11 +1477,14 @@ export class PlayController extends Component {
     this.refreshUiState()
 
     await this.animateHammerBreak(piece)
+    if (!this.stageIsAlive(revision)) return
     await this.settleBoard(null)
+    if (!this.stageIsAlive(revision)) return
 
     this.isResolving = false
     this.isHammerSkillActive = false
     this.refreshUiState()
+    await this.promoteIfReady()
   }
 
   // 锤子技能的表现先播放锤子敲击，再把棋子炸成碎片粒子。
@@ -1429,6 +1518,7 @@ export class PlayController extends Component {
 
   // 执行炸弹技能：以点选棋子为中心，移除九宫格范围内最多 9 个棋子。
   private async executeBombSkill(center: CellPosition) {
+    const revision = this.stageRevision
     const targets = this.collectBombTargets(center)
     if (targets.length === 0) {
       return
@@ -1442,6 +1532,7 @@ export class PlayController extends Component {
     this.refreshUiState()
     const centerPosition = this.getCellPosition(center.row, center.column)
     await this.playBombCast(centerPosition)
+    if (!this.stageIsAlive(revision)) return
 
     for (const target of targets) {
       this.board[target.row][target.column] = null
@@ -1449,12 +1540,16 @@ export class PlayController extends Component {
     this.refreshUiState()
 
     await this.shakeBombTargets(targets, centerPosition)
+    if (!this.stageIsAlive(revision)) return
     await this.animateBombBreakTargets(targets, centerPosition)
+    if (!this.stageIsAlive(revision)) return
     await this.settleBoard(null)
+    if (!this.stageIsAlive(revision)) return
 
     this.isResolving = false
     this.isBombSkillActive = false
     this.refreshUiState()
+    await this.promoteIfReady()
   }
 
   // 炸弹范围固定为中心格周围 3x3，边缘位置会自然少于 9 个。
@@ -1697,12 +1792,14 @@ export class PlayController extends Component {
    * @returns 本轮最终锚点、棋盘变化状态，以及重力结算需要承接的下一层连锁深度。
    */
   private async resolveLandingChain(anchor: PieceController): Promise<LandingChainResult> {
+    const revision = this.stageRevision
     let currentAnchor: PieceController | null = anchor
     let changed = false
     let chainDepth = 1
 
     while (currentAnchor) {
       const mergeResult = await this.mergeLandingComponent(currentAnchor, chainDepth)
+      if (!this.stageIsAlive(revision)) break
       if (mergeResult.anchor) {
         currentAnchor = mergeResult.anchor
         changed = true
@@ -1718,7 +1815,7 @@ export class PlayController extends Component {
   /**
    * 扫描全盘并收集所有可合并的同值连通块。
    *
-   * 使用 BFS/DFS 收集四向连通组件，长度大于 1 的组件会转成待合并组。
+   * 使用 BFS/DFS 按本局四向或八向规则收集连通组件，长度大于 1 时转成待合并组。
    * 当传入 preferredAnchor 时，所在组件会优先以它作为保留棋子，减少连锁结算的跳动感。
    *
    * @param preferredAnchor 当前结算流程希望优先保留的锚点棋子。
@@ -1773,7 +1870,7 @@ export class PlayController extends Component {
     return groups
   }
 
-  // 通过广度优先搜索收集一个连通块，连通规则只看上下左右四个方向。
+  // 默认检查四向；选择斜向后统一改用八向，局部与全盘结算共享规则。
   private collectComponent(startRow: number, startColumn: number, visited: boolean[][]) {
     const startPiece = this.board[startRow][startColumn]
     if (!startPiece) {
@@ -1789,12 +1886,9 @@ export class PlayController extends Component {
       const current = queue.shift()!
       component.push(current)
 
-      const neighbors = [
-        { row: current.row - 1, column: current.column },
-        { row: current.row + 1, column: current.column },
-        { row: current.row, column: current.column - 1 },
-        { row: current.row, column: current.column + 1 }
-      ]
+      const neighbors = mergeNeighbors(this.progression.choice).map(([row, column]) => ({
+        row: current.row + row, column: current.column + column
+      }))
 
       for (const neighbor of neighbors) {
         if (!this.isInsideBoard(neighbor.row, neighbor.column) || visited[neighbor.row][neighbor.column]) {
@@ -1859,6 +1953,7 @@ export class PlayController extends Component {
   }
   // 并发播放当前批次的所有合并动画，等全部完成后再进入下一轮结算。
   private async playMergeGroups(groups: MergeGroup[], chainDepth: number) {
+    const revision = this.stageRevision
     const animations: Promise<void>[] = []
     const rewards: ScoreRewardEvent[] = []
     const consumedGroups: PieceController[][] = []
@@ -1878,6 +1973,7 @@ export class PlayController extends Component {
 
     this.applyScoreRewards(rewards)
     await Promise.all(animations)
+    if (!this.stageIsAlive(revision)) return
     // 动画播完后再真正从棋盘数据里移除被消除的棋子，保证结算前后的棋盘总和一致。
     for (const consumed of consumedGroups) {
       for (const piece of consumed) {
@@ -1901,6 +1997,7 @@ export class PlayController extends Component {
    * @returns 合并后保留的锚点，以及本轮是否改变棋盘。
    */
   private async mergeLandingComponent(anchorPiece: PieceController, chainDepth: number): Promise<DirectedMergeResult> {
+    const revision = this.stageRevision
     const anchorPos = this.findPiece(anchorPiece)
     if (!anchorPos) {
       return { anchor: null, changed: false }
@@ -1949,6 +2046,7 @@ export class PlayController extends Component {
       true,
       true
     )
+    if (!this.stageIsAlive(revision)) return { anchor: null, changed: false }
     // 动画结束后再清理被消除的棋子引用，后续重力和二次结算才能拿到稳定棋盘。
     for (const piece of consumed) {
       const piecePos = this.findPiece(piece)
@@ -2328,9 +2426,20 @@ export class PlayController extends Component {
     const boardScore = this.scoreManager.getBoardScore(this.board)
     const economy = this.economy.getSnapshot()
     return {
-      currentValue: this.currentPiece?.getValue() ?? null,
+      currentValue: this.currentPieceKind === 'wildcard' ? null : this.currentPiece?.getValue() ?? null,
       nextValue: this.nextPieceValue,
       currentColumn: this.currentColumn,
+      stage: {
+        phase: this.progression.phase,
+        target: this.progression.target,
+        highestMergeValue: this.progression.highestMergeValue,
+        choice: this.progression.choice,
+        pendingChoice: this.isWaitingForStageChoice() && !this.isResolving,
+        canShuffle: canShuffle(this.board, piece => piece.getValue()),
+        wildcardInterval: this.progression.wildcardInterval,
+        spawnedSinceChoice: this.progression.spawnedSinceChoice
+      },
+      nextIsWildcard: this.nextKind === 'wildcard',
       score: boardScore + this.scoreManager.getBonusScore(),
       overtake: OvertakeRivalStore.getInstance().resolveOvertake(boardScore + this.scoreManager.getBonusScore()),
       settlementRank: this.settlementRank,
@@ -2366,6 +2475,7 @@ export class PlayController extends Component {
 
   // 奖励分累计已交给 ScoreManager，这里负责根据结果刷新 UI。
   private applyScoreRewards(rewards: ScoreRewardEvent[]) {
+    for (const reward of rewards) this.progression.highestMergeValue = Math.max(this.progression.highestMergeValue, reward.resultValue)
     if (this.scoreManager.applyScoreRewards(rewards)) {
       this.refreshUiState()
     }
@@ -2377,7 +2487,7 @@ export class PlayController extends Component {
       return
     }
 
-    if (this.isResolving || this.isGameOver || this.skillAdLoading || this.isConsumingRestartEnergy) {
+    if (this.isResolving || this.isGameOver || this.skillAdLoading || this.isConsumingRestartEnergy || this.isWaitingForStageChoice()) {
       return
     }
 
@@ -2525,6 +2635,7 @@ export class PlayController extends Component {
 
   // UI 层第三技能按钮通过这个入口切换交换技能，技能态只冻结下落，不打开暂停弹窗。
   private toggleSwapSkillFromUi() {
+    if (this.isWaitingForStageChoice()) return
     if (!this.hasStartedSession || this.firstEntryTutorialStep > 0 || this.skillAdLoading) {
       return
     }
@@ -2550,6 +2661,7 @@ export class PlayController extends Component {
 
   // UI 层第二技能按钮通过这个入口切换锤子技能，技能态只等待点选棋子。
   private toggleHammerSkillFromUi() {
+    if (this.isWaitingForStageChoice()) return
     if (!this.hasStartedSession || this.firstEntryTutorialStep > 0 || this.skillAdLoading) {
       return
     }
@@ -2575,6 +2687,7 @@ export class PlayController extends Component {
 
   // UI 层第一个技能按钮通过这个入口切换炸弹技能，等待玩家点选爆炸中心。
   private toggleBombSkillFromUi() {
+    if (this.isWaitingForStageChoice()) return
     if (!this.hasStartedSession || this.firstEntryTutorialStep > 0 || this.skillAdLoading) {
       return
     }
@@ -2689,6 +2802,167 @@ export class PlayController extends Component {
     }
   }
 
+  private isWaitingForStageChoice() {
+    return this.progression.phase === 2 && this.progression.choice === null
+  }
+
+  private stageIsAlive(revision: number) {
+    return !this.stageDisposed && this.isValid && this.node?.isValid
+      && this.hasStartedSession && revision === this.stageRevision
+  }
+
+  private saveStageOnBackground() {
+    if (this.stageDisposed || !this.hasStartedSession || this.isGameOver || (this.isResolving && !this.stageCheckpoint)) return
+    OngoingGameSession.save(this.buildOngoingGameSnapshot())
+  }
+
+  private async resumeStageOrSpawn() {
+    if (this.stageDisposed || this.isGameOver || !this.hasStartedSession) return
+    if (await this.promoteIfReady()) return
+    if (this.isWaitingForStageChoice()) { this.refreshUiState(); return }
+    if (this.progression.choice && !this.progression.choiceApplied) {
+      this.stageCheckpoint = this.buildOngoingGameSnapshot()
+      await this.finishStageEffect(null)
+      return
+    }
+    if (!this.currentPiece) this.spawnPiece()
+  }
+
+  /** 底边锚定，新增行在上方；镜头变化期间旧棋子没有瞬间位移。 */
+  private getStageBoardY(progress = 1) {
+    if (this.progression.phase !== 2) return -60
+    const baseStep = this.originalPieceSize + this.originalSpacing
+    const factor = 1 + (this.progression.baseConfig.columns / this.boardwidth - 1) * progress
+    const bottom = -60 - this.progression.baseConfig.rows * baseStep / 2
+    return bottom + this.boardheight * baseStep * factor / 2
+  }
+
+  private applyStageLayout(progress: number) {
+    const factor = this.progression.phase === 2
+      ? 1 + (this.progression.baseConfig.columns / this.boardwidth - 1) * progress : 1
+    this.pieceSize = this.originalPieceSize * factor
+    this.spacing = this.originalSpacing * factor
+    this.spawnOffsetY = this.originalSpawnOffset * factor
+    const boardY = this.getStageBoardY(progress)
+    const boardNode = this.node.getChildByName('board')
+    if (boardNode?.isValid) {
+      boardNode.setPosition(0, boardY, 0)
+      const width = this.boardwidth * (this.pieceSize + this.spacing), height = this.boardheight * (this.pieceSize + this.spacing)
+      boardNode.getChildByName('BoardFill')?.getComponent(UITransform)?.setContentSize(width, height)
+      boardNode.getComponent(UITransform)?.setContentSize(width + 16, height + 16)
+    }
+    this.boardGeometry?.updateOptions(this.buildBoardGeometryOptions())
+    if (this.uiController?.isValid) this.uiController.updateBoardLayout({
+      boardwidth: this.boardwidth, boardheight: this.boardheight, pieceSize: this.pieceSize,
+      spacing: this.spacing, spawnOffsetY: this.spawnOffsetY, boardY
+    })
+    this.playEffects?.setPieceSize(this.pieceSize)
+    for (let row = 0; row < this.board.length; row++) for (let column = 0; column < this.board[row].length; column++) {
+      const piece = this.board[row][column]
+      if (!piece?.isValid || !piece.node?.isValid) continue
+      piece.node.getComponent(UITransform)?.setContentSize(this.pieceSize, this.pieceSize)
+      piece.node.setPosition(this.getCellPosition(row, column))
+      piece.syncLayout()
+    }
+    if (this.currentPiece?.isValid && this.currentPiece.node?.isValid) {
+      this.currentPiece.node.getComponent(UITransform)?.setContentSize(this.pieceSize, this.pieceSize)
+      if (this.zoomCurrentHeight !== null) {
+        const bottom = -60 - this.progression.baseConfig.rows * (this.originalPieceSize + this.originalSpacing) / 2
+        this.currentPiece.node.setPosition(this.getCellPosition(0, this.currentColumn).x, bottom + this.zoomCurrentHeight * this.getStepSize(), 0)
+      }
+      this.currentPiece.syncLayout()
+    }
+  }
+
+  private cancelStageZoom() {
+    if (this.zoomState) Tween.stopAllByTarget(this.zoomState)
+    this.zoomState = null
+    const done = this.zoomDone; this.zoomDone = null; done?.(false)
+  }
+
+  /** 先提交最终尺寸的纯数据，再用同一坐标换算逐帧缩放，输入在演出结束前冻结。 */
+  private async promoteIfReady(): Promise<boolean> {
+    if (!shouldPromote(this.progression) || this.stageDisposed) return false
+    const revision = ++this.stageRevision
+    this.isResolving = true; this.isFastDropping = false
+    this.clearTransientEffects()
+    const oldStep = this.originalPieceSize + this.originalSpacing
+    const bottom = -60 - this.progression.baseConfig.rows * oldStep / 2
+    this.zoomCurrentHeight = this.currentPiece ? (this.currentPiece.node.position.y - bottom) / oldStep : null
+    const config = this.progression.expandedConfig
+    const expanded = this.boardModel.createEmptyBoard(config.rows, config.columns)
+    for (let r = 0; r < this.boardheight; r++) for (let c = 0; c < this.boardwidth; c++) expanded[r][c + 1] = this.board[r][c]
+    this.board = expanded; this.currentColumn++
+    this.progression.phase = 2
+    this.applyBoardConfig(config)
+    OngoingGameSession.resizeBoard(config)
+    this.applyStageLayout(1)
+    this.stageCheckpoint = this.buildOngoingGameSnapshot()
+    OngoingGameSession.save(this.stageCheckpoint)
+    this.applyStageLayout(0)
+    this.refreshUiState()
+    this.zoomState = { progress: 0 }
+    const state = this.zoomState
+    const completed = await new Promise<boolean>(resolve => {
+      this.zoomDone = resolve
+      tween(state).to(0.80, { progress: 1 }, { easing: 'sineInOut', onUpdate: () => {
+        if (this.stageIsAlive(revision)) this.applyStageLayout(state.progress)
+      } }).call(() => {
+        if (!this.stageIsAlive(revision)) { resolve(false); return }
+        this.applyStageLayout(1)
+        this.zoomState = null; this.zoomDone = null; resolve(true)
+      }).start()
+    })
+    if (!completed || !this.stageIsAlive(revision)) return true
+    this.zoomCurrentHeight = null; this.stageCheckpoint = null; this.isResolving = false
+    this.refreshUiState()
+    return true
+  }
+
+  private async chooseStageEffect(choice: StageChoice) {
+    if (!this.isWaitingForStageChoice() || this.isResolving || this.stageDisposed) return
+    const shuffled = choice === 'shuffle' ? shuffleBoard(this.board, piece => piece.getValue()) : null
+    if (choice === 'shuffle' && !shuffled) return
+    this.isResolving = true; this.isFastDropping = false
+    this.progression.choice = choice
+    this.progression.choiceApplied = choice === 'wildcard'
+    this.progression.spawnedSinceChoice = 0
+    if (shuffled) this.board = shuffled.board
+    this.stageCheckpoint = this.buildOngoingGameSnapshot()
+    OngoingGameSession.save(this.stageCheckpoint)
+    const revision = this.stageRevision
+    const closed = await this.uiController?.closeStageChoice()
+    if (closed === false || !this.stageIsAlive(revision)) return
+    await this.finishStageEffect(shuffled?.drops ?? null)
+  }
+
+  /** 首次效果恢复时使用已固定的棋盘与奖励起点，不再随机打乱或补发选择。 */
+  private async finishStageEffect(shuffleDrops: CellPosition[] | null) {
+    const revision = this.stageRevision
+    this.isResolving = true
+    if (shuffleDrops) {
+      const targets: { node: Node; position: Vec3 }[] = []
+      for (const { row, column } of shuffleDrops) {
+        const piece = this.board[row][column]
+        if (piece) targets.push({ node: piece.node, position: this.getCellPosition(row, column) })
+      }
+      const top = this.getCellPosition(this.boardheight - 1, Math.floor(this.boardwidth / 2))
+      const completed = await this.playEffects.playShuffleRedeal(
+        targets, new Vec3(top.x, top.y + this.getStepSize(), 0),
+        () => this.stageIsAlive(revision)
+      )
+      if (!completed || !this.stageIsAlive(revision)) return
+    }
+    if (this.progression.choice !== 'wildcard') await this.settleBoard(null)
+    if (!this.stageIsAlive(revision)) return
+    this.progression.choiceApplied = true
+    this.stageCheckpoint = null; this.isResolving = false
+    this.refreshUiState()
+    OngoingGameSession.save(this.buildOngoingGameSnapshot())
+    if (this.isBoardFull()) this.endGame()
+    else if (!this.currentPiece) this.spawnPiece()
+  }
+
   // 进入游戏结束流程
   private endGame() {
     if (this.isGameOver) {
@@ -2769,8 +3043,10 @@ export class PlayController extends Component {
     }
 
     // 重开沿用当前关卡尺寸；例如 3×7 关卡不会退回默认 5×7。
-    OngoingGameSession.beginNewGame(this.buildBoardConfig())
+    const restartConfig = this.progression.phase === 2 ? this.progression.baseConfig : this.buildBoardConfig()
     this.clearBoardPieces()
+    OngoingGameSession.beginNewGame(restartConfig)
+    this.applyBoardConfig(restartConfig)
     this.clearTransientEffects()
     const previousAppearance = this.gameAppearance
     this.gameAppearance = new GameAppearance(previousAppearance?.lease.retain() ?? appearanceRuntime.acquireBase('game'))
@@ -2789,6 +3065,7 @@ export class PlayController extends Component {
     this.isBombSkillActive = false
     this.swapDragState = null
     this.resetBoard()
+    this.applyStageLayout(1)
     this.beginOvertakeSession()
     this.audioManager?.playGameplayBackgroundMusic(this.gameplayBgmClip)
     this.spawnPiece()
